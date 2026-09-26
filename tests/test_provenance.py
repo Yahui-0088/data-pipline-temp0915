@@ -229,7 +229,7 @@ def test_merged_sam_baseline_keeps_original_labels_separate(block):
     assert report(block, 0)["sources"]["sam"]["label_pixels"] == 1
 
 
-@pytest.mark.parametrize("log", ["null\n", '{"n":1,"kind":"sam","z":"0"}\n', '{"n":1,'])
+@pytest.mark.parametrize("log", ["null\n", '{"n":1,"kind":"sam","z":"0"}\n', '{"n":1,\n{"n":2}\n', '{"n":1,\n'])
 def test_invalid_log_cannot_invent_sources(block, log):
     block.work.mkdir(parents=True)
     (block.work / "edits.jsonl").write_text(log)
@@ -262,7 +262,7 @@ def test_comparison_discovery_never_migrates_legacy_and_survives_bad_logs(block,
             assert client.get(root + "/provenance?z=0").status_code == 200
             assert not block.work.exists()
             assert original == {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in paths}
-            (block.path / "edits.jsonl").write_text('{"n":1,')
+            (block.path / "edits.jsonl").write_text('{"n":1,\n')      # 坏在中间（带换行），不是追加中断留下的半行
             annotate.reset_store()  # Include discovery on a fresh server.
             assert client.get("/api/v1/annotate/comparison-blocks").status_code == 200
             response = client.get(root + "/compare/0")
@@ -340,7 +340,7 @@ def test_block_list_handles_unreadable_history(block, monkeypatch):
     from emqc.api.routers import annotate
     from emqc.annotate.store import AnnotateStore
     block.work.mkdir(parents=True)
-    (block.work / "edits.jsonl").write_text('{"n":1,')
+    (block.work / "edits.jsonl").write_text('{"n":1,\n')          # 坏在中间（带换行），不是追加中断留下的半行
     store = AnnotateStore(block.path.parent, block.work.parent)
     store._blocks[block.id] = block
     monkeypatch.setattr(annotate, "get_store", lambda **kwargs: store)
@@ -349,7 +349,7 @@ def test_block_list_handles_unreadable_history(block, monkeypatch):
         assert response.status_code == 200
         row = next(b for b in response.json()["blocks"] if b["block_id"] == block.id)
         assert row["history_error"] and row["n_edits"] is None, "a corrupt history is reported, not counted"
-        assert (block.work / "edits.jsonl").read_text() == '{"n":1,', "reading the list never rewrites the history"
+        assert (block.work / "edits.jsonl").read_text() == '{"n":1,\n', "reading the list never rewrites the history"
 
 
 def test_slice_undo_trims_per_voxel_labels_in_legacy_block_record(block):

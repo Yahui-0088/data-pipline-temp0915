@@ -262,8 +262,11 @@ def start_export_async(dataset_id: str, out_dir: str | None = None, run_id: int 
     job_id = create_export_job(dataset_id, out_dir, run_id, **params)
 
     def _target():
+        from emqc.jobslots import slot
+
         try:
-            ExportRunner(job_id).run()
+            with slot("export"):                # 同一时间只跑一个导出，其余排队（见 emqc.jobslots）
+                ExportRunner(job_id).run()
         except Exception:
             log.exception("export job %s failed", job_id)
 

@@ -8,11 +8,22 @@ import urllib.request
 H01_PROPS_URL = "https://storage.googleapis.com/h01-release/data/20210601/c3/segment_properties/info"
 
 
-def load_properties(url: str = H01_PROPS_URL, timeout: float = 120) -> dict:
+MAX_PROPS_BYTES = 64 * 1024 * 1024       # H01 的表压缩后几 MB；再大就不是它了，别把内存读爆
+
+
+def load_properties(url: str = H01_PROPS_URL, timeout: float = 120, allow_local: bool = False) -> dict:
+    """读 segment_properties 表。接口调用（allow_local=False）只允许 https；命令行可以读本地文件或 http。"""
+    if not allow_local and not url.startswith("https://"):
+        raise ValueError("segment_properties 只能从 https 地址读")
     with urllib.request.urlopen(url, timeout=timeout) as r:
-        raw = r.read()
+        raw = r.read(MAX_PROPS_BYTES + 1)
+    if len(raw) > MAX_PROPS_BYTES:
+        raise ValueError(f"segment_properties 超过 {MAX_PROPS_BYTES // 2**20} MB，拒绝读取")
     if raw[:2] == b"\x1f\x8b":
-        raw = gzip.decompress(raw)
+        with gzip.GzipFile(fileobj=__import__("io").BytesIO(raw)) as g:
+            raw = g.read(MAX_PROPS_BYTES * 4 + 1)
+        if len(raw) > MAX_PROPS_BYTES * 4:
+            raise ValueError("segment_properties 解压后太大，拒绝读取")
     return json.loads(raw.decode("utf-8"))
 
 

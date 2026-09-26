@@ -63,14 +63,18 @@ class SAMService:
             raise SAMUnavailable(f"SAM 加载失败: {exc}") from exc
 
     def predict(self, block, z, points, labels, box, only_background=True, snap_boundary=False, boundary_sensitivity=0.5):
-        # Same lock order in predict and apply. Each proposal is tied to a source and revision.
-        with block.lock, self.lock:
+        # 块锁只用来拍一张这一片的快照（图像、标签、版本号）：加载模型和推理要好几秒，期间不能让这块上所有人
+        # 都等着。预览带着快照时的版本号，apply 时在块锁里再核对一次，这一片被人改过就让重新预测。
+        with block.lock:
+            frame = block.em_slice(z)
+            seg_now = block.seg_slice(z) if (only_background and block.has_seg) else None
+            srev, frev = block.slice_rev(z), revision(block)
+        if frame.dtype != np.uint8:
+            raise ValueError("SAM 当前要求 uint8 电镜切片")
+        with self.lock:
             self._load()
             import torch
 
-            frame = block.em_slice(z)
-            if frame.dtype != np.uint8:
-                raise ValueError("SAM 当前要求 uint8 电镜切片")
             rgb = np.repeat(frame[..., None], 3, axis=2)
             key = (str(block.path.resolve()), z, hashlib.sha256(rgb.tobytes()).hexdigest())
             started = time.perf_counter()
@@ -102,13 +106,13 @@ class SAMService:
                     snapped = True
                 except Exception as exc:  # never lose the raw SAM result over a post-processing problem
                     self.error = f"boundary snap skipped: {exc}"
-            if only_background and block.has_seg:
-                mask = mask & (block.seg_slice(z) == 0)
+            if seg_now is not None:
+                mask = mask & (seg_now == 0)
             token = uuid.uuid4().hex
             now = time.monotonic()
             self.proposals = OrderedDict((k, v) for k, v in self.proposals.items() if now - v["created"] < 900)
             self.proposals[token] = {"path": str(block.path.resolve()), "work": str(block.work.resolve()), "z": z, "mask": mask,
-                                     "revision": revision(block), "slice_rev": block.slice_rev(z), "created": now,
+                                     "revision": frev, "slice_rev": srev, "created": now,
                                      "score": float(scores[best]), "points": points, "labels": labels, "box": box,
                                      "only_background": only_background, "candidate": best,
                                      "snap_boundary": snapped, "boundary_sensitivity": float(boundary_sensitivity)}

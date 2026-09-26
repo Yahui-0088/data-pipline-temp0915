@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head"><div class="grow"><div class="eyebrow">Dataset · {{ ds.project or 'project_terminal' }}</div><h1>{{ ds.dataset_id }}</h1>
 <p class="sub">{{ ds.name }} · {% if ds.source == 'sftp' %}<span class="pill on">远程 · {{ ds.host }}</span>{% else %}<span class="pill">本地</span>{% endif %}</p></div>
-<div class="actions"><button class="primary" onclick="runQC('{{ ds.dataset_id }}', this)">运行 QC</button><a class="btn" href="/delivery?dataset={{ ds.dataset_id }}">导出训练分片 / 推理流</a><a class="btn" href="/patches?dataset={{ ds.dataset_id }}">Patch Factory</a><button class="danger" onclick="deleteDataset('{{ ds.dataset_id }}', this)">删除数据集</button></div></div>
+<div class="actions"><button class="primary" data-ds="{{ ds.dataset_id }}" onclick="runQC(this.dataset.ds, this)">运行 QC</button><a class="btn" href="/delivery?dataset={{ ds.dataset_id }}">导出训练分片 / 推理流</a><a class="btn" href="/patches?dataset={{ ds.dataset_id }}">Patch Factory</a><button class="danger" data-ds="{{ ds.dataset_id }}" onclick="deleteDataset(this.dataset.ds, this)">删除数据集</button></div></div>
 
 <div class="tiles">
   <div class="tile"><div class="k">等级</div><div class="v">{{ m.grade(ds.latest_grade) }}{% if run and run.grade_counts %}<small>{% for g, n in run.grade_counts|dictsort %}{{ g }}×{{ n }} {% endfor %}</small>{% endif %}</div></div>

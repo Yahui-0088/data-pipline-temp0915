@@ -21,9 +21,17 @@ _store: AnnotateStore | None = None
 _comparison_store: AnnotateStore | None = None
 
 
+# 很重的只读请求（整块溯源导出、对比页预热）同时跑几个就够了：每个都占一个工作线程几十秒，
+# 不限的话几个人同时点就把线程池占满，整个服务（包括登录）都不响应
+_heavy = threading.BoundedSemaphore(2)
+_warm = threading.BoundedSemaphore(1)
+
+
 def _roots() -> list:
     extra = [Path(x.strip()).resolve() for x in settings.annotate_extra_roots.split(";") if x.strip()]
-    if settings.sam_blocks_dir and Path(settings.sam_blocks_dir).exists():
+    # 不管目录现在在不在都算进去（不在就是没有块）：以前只在目录存在时才算，服务运行中这个目录第一次出现，
+    # 块列表就整个重建，同一个块有了两个 Block 对象
+    if settings.sam_blocks_dir:
         extra.append(Path(settings.sam_blocks_dir).resolve())
     return extra
 
@@ -252,12 +260,16 @@ class WarmIn(BaseModel):
 def compare_warm(block_id: str, body: WarmIn):
     """Pre-build the label indices for a z-range in one pass, so the ±10 playback's 21 light frames are cheap."""
     b = _block(block_id, read_only=True)
-    if body.z1 - body.z0 > 60:
-        raise HTTPException(422, "一次最多预热 61 片")
+    if body.z1 - body.z0 > 20:
+        raise HTTPException(422, "一次最多预热 21 片")
+    if not _warm.acquire(timeout=20):
+        raise HTTPException(429, "别人正在预热，请稍后再播放")
     try:
         return b.warm_labels(body.z0, body.z1)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    finally:
+        _warm.release()
 
 
 @router.get("/blocks/{block_id}/compare/{z}")
@@ -280,12 +292,18 @@ def provenance_report(block_id: str, z: int | None = None, format: Literal["json
     from fastapi.responses import JSONResponse
     from emqc.annotate.provenance import csv_report, report
 
+    b = _block(block_id, read_only=True)
+    if z is None and not _heavy.acquire(blocking=False):
+        raise HTTPException(429, "已经有两份整块溯源在导出，请等它们完成后再试")
     try:
-        data = report(_block(block_id, read_only=True), z)
+        data = report(b, z)
     except IndexError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         raise HTTPException(422, str(e))
+    finally:
+        if z is None:
+            _heavy.release()
     headers = {"Cache-Control": "no-store"}
     if format == "csv":
         headers["Content-Disposition"] = 'attachment; filename="annotation-provenance.csv"'
@@ -313,7 +331,8 @@ def labels_png(block_id: str, z: int):
     if not b.has_seg:
         raise HTTPException(404, "block has no segmentation")
     try:
-        data = b.labels_png(z)
+        with b.lock:                               # 和 labels.json 一样在锁里取：不会拿到写了一半的这一片
+            data = b.labels_png(z)
     except IndexError as e:
         raise HTTPException(404, str(e))
     return Response(data, media_type="image/png", headers={"Cache-Control": "no-cache"})
@@ -413,7 +432,8 @@ class MergePairIn(EditIn):
 
 class PaintIn(EditIn):
     z: int
-    points: list[list[int]] = Field(min_length=1)
+    # 一笔的点数有上限（正常一笔几十到几百个点）；总长度另在 Block.paint 里限制
+    points: list[list[int]] = Field(min_length=1, max_length=10000)
     radius: int = Field(default=3, ge=0, le=200)
     new_id: str | int
     only_id: str | int | None = None               # 橡皮（new_id 0）时：只擦这个颜色
@@ -478,7 +498,9 @@ def paint(block_id: str, body: PaintIn, user=Depends(require_user)):
     Z, H, W = b.shape_zyx
     if not 0 <= body.z < Z:
         raise HTTPException(404, "z outside the block")
-    pts = [(min(max(int(p[0]), 0), W - 1), min(max(int(p[1]), 0), H - 1)) for p in body.points if len(p) >= 2]
+    if any(len(p) != 2 for p in body.points):
+        raise HTTPException(422, "每个点必须是 [x, y]")
+    pts = [(min(max(int(p[0]), 0), W - 1), min(max(int(p[1]), 0), H - 1)) for p in body.points]
     actor = _who(body, user)
     try:
         with b.lock:

@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head"><div class="grow"><div class="eyebrow">QC run · {{ run.pipeline_version }}</div><h1>运行 <span class="mono">#{{ run.run_id }}</span> · <a href="/datasets/{{ run.dataset_id }}">{{ run.dataset_id }}</a></h1>
 <p class="sub">开始 {{ (run.started_at or '')|replace('T',' ') }} · 结束 {{ (run.finished_at or '–')|replace('T',' ') }} · <span id="run-status">{{ run.status }} · {{ run.stage }} · {{ run.n_blocks_done }}/{{ run.n_blocks }} blocks</span></p></div>
-<div class="actions">{% if run.status in ['queued','running'] %}<button class="danger" onclick="cancelRun({{ run.run_id }}, this)">取消</button>{% else %}<button onclick="rerun('{{ run.dataset_id }}', this)">再跑一次</button>{% endif %}</div></div>
+<div class="actions">{% if run.status in ['queued','running'] %}<button class="danger" onclick="cancelRun({{ run.run_id }}, this)">取消</button>{% else %}<button data-ds="{{ run.dataset_id }}" onclick="rerun(this.dataset.ds, this)">再跑一次</button>{% endif %}</div></div>
 {% if run.status in ['queued','running'] %}<progress id="run-progress" max="100" value="{{ (run.progress * 100)|int if run.progress is not none else 0 }}" style="margin-bottom:14px"></progress>{% endif %}
 {% if run.error %}<div class="note" style="border-color:var(--high)"><b>错误</b><pre class="json" style="max-width:none">{{ run.error }}</pre></div>{% endif %}
 

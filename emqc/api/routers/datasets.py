@@ -13,6 +13,8 @@ from emqc.registry.scanner import delete_dataset, scan
 
 from ..serializers import asset_to_dict, block_to_dict, dataset_to_dict, run_to_dict, version_to_dict
 
+from .auth import require_admin_role, require_reviewer
+
 router = APIRouter(prefix="/api/v1/datasets", tags=["datasets"])
 
 LAST_SCAN: dict = {}  # in-process memory of the most recent scan (shown on the pipeline page)
@@ -35,7 +37,7 @@ def list_datasets(size_class: str | None = None, status: str | None = None, s: S
     return [dataset_to_dict(d) for d in s.scalars(q)]
 
 
-@router.post("/scan")
+@router.post("/scan", dependencies=[Depends(require_reviewer)])
 def scan_datasets(s: Session = Depends(get_session)):
     from .data import invalidate_readers
 
@@ -58,7 +60,7 @@ def get_dataset(dataset_id: str, s: Session = Depends(get_session)):
     return d
 
 
-@router.delete("/{dataset_id}")
+@router.delete("/{dataset_id}", dependencies=[Depends(require_admin_role)])
 def remove_dataset(dataset_id: str, remove_files: bool = False, s: Session = Depends(get_session)):
     """Unregister a dataset and delete its QC results, previews and (optionally) files under data_root."""
     from .data import invalidate_readers
@@ -94,7 +96,7 @@ class AssetIn(BaseModel):
     extra: dict = {}
 
 
-@router.post("/{dataset_id}/assets", status_code=201)
+@router.post("/{dataset_id}/assets", status_code=201, dependencies=[Depends(require_reviewer)])
 def add_asset(dataset_id: str, body: AssetIn, s: Session = Depends(get_session)):
     """Register a new prediction / skeleton / trace file produced by an algorithm run.
 
@@ -136,7 +138,7 @@ class VersionIn(BaseModel):
     note: str = ""
 
 
-@router.post("/{dataset_id}/versions", status_code=201)
+@router.post("/{dataset_id}/versions", status_code=201, dependencies=[Depends(require_reviewer)])
 def add_version(dataset_id: str, body: VersionIn, s: Session = Depends(get_session)):
     _get(s, dataset_id)
     existing = s.scalar(select(DatasetVersion).where(DatasetVersion.dataset_id == dataset_id, DatasetVersion.kind == body.kind, DatasetVersion.version == body.version))
@@ -161,7 +163,7 @@ class MetadataIn(BaseModel):
     size_class: str | None = None
 
 
-@router.patch("/{dataset_id}")
+@router.patch("/{dataset_id}", dependencies=[Depends(require_reviewer)])
 def patch_dataset(dataset_id: str, body: MetadataIn, s: Session = Depends(get_session)):
     ds = _get(s, dataset_id)
     for k in ("name", "species", "brain_region", "staining", "imaging_modality", "acquisition_batch"):

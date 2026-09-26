@@ -5,9 +5,14 @@ Cookie 里是随机会话令牌（HttpOnly、SameSite=Lax），库里只存哈�
 """
 from __future__ import annotations
 
+import hmac
+import logging
+import threading
+import time
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,11 +27,29 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 def client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+    """请求来自哪个 IP。只认 TCP 连接的对端：前面没有反向代理，客户端自己填的 X-Forwarded-For 一律不信
+    （信了的话登录限流、日志里的 IP 都能随便伪造）。以后前面加了反代，再在这里按反代的地址放行。"""
+    return request.client.host if request.client else ""
+
+
+def _throttle_keys(username: str, ip: str) -> tuple[str, ...]:
+    """登录失败按登录名计，也按来源 IP 计。经 SSH 隧道进来的人来源都是 127.0.0.1——按它计的话一个人输错几次，
+    所有人都要等一分钟，所以本机地址不参与按 IP 计数。"""
+    keys = [f"u:{username.strip().lower()}"]
+    if ip and ip not in ("127.0.0.1", "::1", "localhost"):
+        keys.append(f"ip:{ip}")
+    return tuple(keys)
 
 
 # ---------------------------------------------------------------- 依赖
+# 数据库短暂连不上（重启、卡住）时，最近验过的登录还能用一会：标注写的是文件，不该因为验不了登录就全部失败。
+# 只在查库报错时才用；账号被停用、会话被踢，查库正常时立刻生效。
+_SESSION_GRACE_S = 600
+_recent_sessions: dict[str, tuple[User, float]] = {}
+_recent_lock = threading.Lock()
+_log = logging.getLogger("emqc.auth")
+
+
 def current_user(request: Request) -> User | None:
     """Cookie → 用户；没登录是 None。一个请求里只查一次。"""
     if settings.auth_disabled:
@@ -37,10 +60,109 @@ def current_user(request: Request) -> User | None:
     request.state.user = None
     token = request.cookies.get(COOKIE)
     if token:
-        with session_scope() as s:
-            request.state.user = auth.resolve_session(s, token)
-            request.state.username = request.state.user.username if request.state.user is not None else None   # 给请求日志用，不再碰 ORM 对象
+        from sqlalchemy.exc import SQLAlchemyError
+
+        key = auth._token_hash(token) if len(token) <= 128 else None
+        try:
+            with session_scope() as s:
+                request.state.user = auth.resolve_session(s, token)
+        except SQLAlchemyError:
+            hit = _recent_sessions.get(key) if key else None
+            if hit is None or time.monotonic() - hit[1] > _SESSION_GRACE_S:
+                raise
+            _log.warning("数据库连不上，沿用 %s 最近一次验过的登录", hit[0].username)
+            request.state.user = hit[0]
+        else:
+            if key:
+                with _recent_lock:
+                    if request.state.user is not None:
+                        _recent_sessions[key] = (request.state.user, time.monotonic())
+                        if len(_recent_sessions) > 2000:
+                            for k in sorted(_recent_sessions, key=lambda k: _recent_sessions[k][1])[:1000]:
+                                _recent_sessions.pop(k, None)
+                    else:
+                        _recent_sessions.pop(key, None)
+        request.state.username = request.state.user.username if request.state.user is not None else None   # 给请求日志用，不再碰 ORM 对象
     return request.state.user
+
+
+def forget_sessions() -> None:
+    """登出、踢人、停用、改密码之后调用：宽限缓存里的旧登录一并作废。"""
+    with _recent_lock:
+        _recent_sessions.clear()
+
+
+# ---------------------------------------------------------------- 全站登录关卡
+# 不登录就能打开的只有这些：登录页和它要用的静态文件、登录 / 登录状态接口、探活，以及前端报错上报（登录页自己也会出错）。
+# 其余所有页面和接口——包括数据清洗工作区、数据下载、QC 结果图——都要先登录。
+PUBLIC_PATHS = frozenset({"/login", "/favicon.ico", "/api/v1/auth/login", "/api/v1/auth/status", "/api/v1/auth/logout",
+                          "/api/v1/auth/me", "/api/v1/health", "/api/v1/logs/client"})
+PUBLIC_PREFIXES = ("/static/",)
+ROLE_RANK = {"annotator": 0, "reviewer": 1, "admin": 2}
+SERVICE_NAME = "service-token"
+
+
+def service_token_ok(request: Request) -> bool:
+    """训练 / 推理脚本（emqc.loader）不走浏览器登录：请求头 X-EMQC-Token 带上服务器配置的 EMQC_API_TOKEN。
+    没配令牌时这条路是关着的。令牌只能读数据、跑任务（相当于审核员），不能改标注、不能删东西、不能管账号。"""
+    want = (settings.api_token or "").strip()
+    if not want:
+        return False
+    got = request.headers.get("x-emqc-token", "")
+    if not got:
+        authz = request.headers.get("authorization", "")
+        got = authz[7:].strip() if authz.lower().startswith("bearer ") else ""
+    return bool(got) and hmac.compare_digest(got.encode(), want.encode())
+
+
+def gate(request: Request) -> Response | None:
+    """全站登录关卡（在 app.py 的中间件里跑，所以也管到 /previews 这类静态目录）。放行返回 None，否则返回要回给浏览器的响应。"""
+    if settings.auth_disabled:
+        return None
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES):
+        return None
+    api = path.startswith("/api/") or path == "/openapi.json"
+    if service_token_ok(request):
+        request.state.service = True
+        request.state.username = SERVICE_NAME
+        return None
+    user = current_user(request)
+    if user is None:
+        if api or request.method not in ("GET", "HEAD"):
+            return JSONResponse({"detail": {"code": "auth", "message": "请先登录"}}, status_code=401)
+        nxt = path + (f"?{request.url.query}" if request.url.query else "")
+        return RedirectResponse(f"/login?next={quote(nxt, safe='')}", status_code=303)
+    if user.must_change_password:
+        if api and not path.startswith("/api/v1/auth/"):
+            return JSONResponse({"detail": {"code": "password", "message": "请先修改初始密码（右上角「账号」）"}}, status_code=403)
+        if not api and path != "/account":
+            return RedirectResponse("/account?force=1", status_code=303)
+    return None
+
+
+def require_role(role: str):
+    """接口依赖：至少是这个角色（管理员 > 审核员 > 标注员）。服务令牌算审核员。没开登录时不拦。"""
+    need = ROLE_RANK[role]
+    label = auth.ROLE_NAMES[role]
+
+    def dep(request: Request) -> User | None:
+        if settings.auth_disabled:
+            return None
+        if getattr(request.state, "service", False) or service_token_ok(request):
+            if need <= ROLE_RANK["reviewer"]:
+                return None
+            raise HTTPException(403, {"code": "forbidden", "message": f"服务令牌不能做这件事，要{label}登录后操作"})
+        user = require_user(request)
+        if ROLE_RANK.get(user.role, -1) < need:
+            raise HTTPException(403, {"code": "forbidden", "message": f"要{label}{'或管理员' if role == 'reviewer' else ''}才能做这件事"})
+        return user
+
+    return dep
+
+
+require_reviewer = require_role("reviewer")
+require_admin_role = require_role("admin")
 
 
 def require_user(request: Request) -> User | None:
@@ -108,6 +230,10 @@ def login(body: LoginIn, request: Request, response: Response, s: Session = Depe
     existing = auth.find_user(s, body.username)
     if auth.login_mode(s) == "open" and (existing is None or not auth.has_password(existing)):
         # 试用模式：没有真正密码的账号不看密码，账号不存在就建；只有停用的账号进不来
+        if existing is None:
+            wait = auth.new_account_throttled()
+            if wait:
+                raise HTTPException(429, {"code": "throttled", "message": f"最近自动建的账号太多了，请 {wait} 秒后再试，或请管理员直接建号"})
         user = auth.open_login(s, body.username)
         if user is None:
             auth.record_event(s, "login_failed", target=existing, target_name=None if existing else body.username[:64],
@@ -115,7 +241,7 @@ def login(body: LoginIn, request: Request, response: Response, s: Session = Depe
             s.commit()
             raise HTTPException(401, {"code": "bad_login", "message": "这个账号已停用，或者名字是空的"})
     else:
-        keys = (f"u:{body.username.strip().lower()}", f"ip:{ip}")
+        keys = _throttle_keys(body.username, ip)
         wait = auth.throttled(*keys)
         if wait:
             raise HTTPException(429, {"code": "throttled", "message": f"尝试太频繁，请 {wait} 秒后再试"})
@@ -129,10 +255,13 @@ def login(body: LoginIn, request: Request, response: Response, s: Session = Depe
                 raise HTTPException(401, {"code": "need_password", "message": "这个账号设了密码，请输入密码"})
             raise HTTPException(401, {"code": "bad_login", "message": "登录名或密码不对"})
         auth.clear_failures(*keys)
+    created = existing is None
     token = auth.open_session(s, user, request.headers.get("user-agent", ""), ip)
     auth.record_event(s, "login", actor=user, target=user, ip=ip)
-    auth.purge_expired_sessions(s)
     s.commit()
+    if created:
+        auth.note_new_account()
+    auth.purge_expired_sessions_best_effort()     # 另开一个小事务：清理失败不能让这次登录失败
     _set_cookie(response, token)
     return {"user": user_dict(user)}
 
@@ -144,6 +273,7 @@ def logout(request: Request, response: Response, s: Session = Depends(get_sessio
     if user is not None:
         auth.record_event(s, "logout", actor=user, target=user, ip=client_ip(request))
     s.commit()
+    forget_sessions()
     response.delete_cookie(COOKIE, path="/")
     return {"ok": True}
 
@@ -179,6 +309,7 @@ def change_password(body: PasswordIn, request: Request, s: Session = Depends(get
         raise HTTPException(422, str(e))
     auth.record_event(s, "change_password", actor=u, target=u, ip=client_ip(request))
     s.commit()
+    forget_sessions()
     return {"ok": True, "user": user_dict(u)}
 
 
@@ -308,6 +439,7 @@ def patch_user(uid: int, body: UserPatch, request: Request, admin: User | None =
     if changes:
         auth.record_event(s, "update", actor=admin, target=u, detail="；".join(changes), ip=client_ip(request))
     s.commit()
+    forget_sessions()               # 停用、改角色立刻生效，数据库连不上时的宽限缓存也不再认旧的
     return {"user": user_dict(u), "temp_password": issued}
 
 
@@ -320,6 +452,7 @@ def reset_password(uid: int, request: Request, admin: User | None = Depends(requ
     auth.set_password(s, u, temp, must_change=True)
     auth.record_event(s, "reset_password", actor=admin, target=u, ip=client_ip(request))
     s.commit()
+    forget_sessions()
     return {"user": user_dict(u), "temp_password": temp}
 
 
@@ -333,6 +466,7 @@ def revoke_sessions(uid: int, request: Request, admin: User | None = Depends(req
     n = auth.revoke_user_sessions(s, u.id, keep=keep)
     auth.record_event(s, "revoke", actor=admin, target=u, detail=f"{n} 个登录", ip=client_ip(request))
     s.commit()
+    forget_sessions()
     return {"user": user_dict(u), "n_revoked": n}
 
 

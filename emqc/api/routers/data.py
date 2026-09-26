@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,9 +24,26 @@ from emqc.qc.preview import downsample, to_uint8
 from emqc.qc.runner import open_dataset_volume
 from emqc.registry.readers import SliceReadError, VolumeReader
 
+from .auth import require_reviewer
+
 router = APIRouter(prefix="/api/v1/data", tags=["data"])
 
 MAX_CUTOUT_BYTES = 512 * 1024 * 1024
+# 同时在内存里拼的大块下载（超过 BIG_CUTOUT_BYTES 的）最多这么多个：每个最多 512 MB，编码时还要再复制一份，
+# 不限的话几个并发请求就把内存吃光。训练 / 推理取的小块不排队——它们量大、一个个都很小，排队只会让任务超时
+_cutout_slots = threading.BoundedSemaphore(2)
+BIG_CUTOUT_BYTES = 64 * 1024 * 1024
+
+
+def _big_slot(s: Session, nbytes: int) -> bool:
+    """大块下载先占一个名额；小块直接放行。排队之前先结束这个请求的数据库事务、把连接还回连接池：
+    否则排队的请求每个都攥着一个连接，十几个就把连接池占满，整个服务跟着卡住。返回是否占了名额（占了要释放）。"""
+    if nbytes <= BIG_CUTOUT_BYTES:
+        return False
+    s.commit()
+    if not _cutout_slots.acquire(timeout=60):
+        raise HTTPException(429, "服务器正在处理别的大块下载，请稍后重试")
+    return True
 _readers: dict[str, VolumeReader] = {}
 _lock = threading.Lock()
 
@@ -160,7 +177,8 @@ def preview_slice(dataset_id: str, z: int, s: Session = Depends(get_session)):
     dmax = float(np.iinfo(arr.dtype).max) if arr.dtype.kind in "ui" else 1.0
     thumb = to_uint8(downsample(arr, settings.preview_max_px * 2, dmax))
     body, media = _encode(thumb, "png")
-    return Response(body, media_type=media, headers={"Cache-Control": "max-age=3600"})
+    # private：要登录才能看的图，只许浏览器自己缓存，前面以后加了反向代理 / CDN 也不能替别人存一份
+    return Response(body, media_type=media, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/{dataset_id}/cutout")
@@ -171,15 +189,20 @@ def cutout(dataset_id: str, request: Request, z0: int, z1: int, y0: int, y1: int
     nbytes = (z1 - z0) * (y1 - y0) * (x1 - x0) * np.dtype(ds.dtype).itemsize
     if nbytes > MAX_CUTOUT_BYTES:
         raise HTTPException(413, f"cutout is {nbytes} bytes; limit {MAX_CUTOUT_BYTES}")
-    arr = get_reader(ds).read_cutout(z0, z1, y0, y1, x0, x1)
-    body, media = _encode(arr, fmt)
+    big = _big_slot(s, nbytes)
+    try:
+        arr = get_reader(ds).read_cutout(z0, z1, y0, y1, x0, x1)
+        body, media = _encode(arr, fmt)
+    finally:
+        if big:
+            _cutout_slots.release()
     _log(s, ds, "cutout", {"z0": z0, "z1": z1, "y0": y0, "y1": y1, "x0": x0, "x1": x1}, len(body), fmt, request, t0, stream_id=stream_id)
     return Response(body, media_type=media, headers={"X-Shape": "x".join(map(str, arr.shape)), "X-Dtype": str(arr.dtype)})
 
 
 class PatchSampleIn(BaseModel):
-    size: list[int] = Field(default=[16, 256, 256], description="patch size (dz, dy, dx)")
-    n: int = 16
+    size: list[int] = Field(default=[16, 256, 256], min_length=3, max_length=3, description="patch size (dz, dy, dx)")
+    n: int = Field(default=16, ge=1, le=10000)
     seed: int | None = None
     only_passed: bool = True  # only z windows whose slices all passed the latest QC run
     min_quality: float | None = None  # additionally require slice quality_score >= this
@@ -187,7 +210,7 @@ class PatchSampleIn(BaseModel):
     block_ids: list[str] | None = None
 
 
-@router.post("/{dataset_id}/patches/sample")
+@router.post("/{dataset_id}/patches/sample", dependencies=[Depends(require_reviewer)])
 def sample_patches(dataset_id: str, body: PatchSampleIn, request: Request, s: Session = Depends(get_session)):
     """Pick random patch coordinates that satisfy the QC filter. Returns coordinates + cutout URLs (no pixels).
 
@@ -197,6 +220,8 @@ def sample_patches(dataset_id: str, body: PatchSampleIn, request: Request, s: Se
     t0 = time.perf_counter()
     ds = _ds(s, dataset_id)
     dz, dy, dx = body.size
+    if min(body.size) < 1:
+        raise HTTPException(422, "patch size must be at least 1 in every axis")
     if dz > ds.size_z or dy > ds.size_y or dx > ds.size_x:
         raise HTTPException(422, "patch larger than the volume")
     blocks = list(s.scalars(select(Block).where(Block.dataset_id == dataset_id).order_by(Block.z_start, Block.y_start, Block.x_start)))
@@ -248,17 +273,24 @@ class ExportIn(BaseModel):
     run_id: int | None = None
     block_ids: list[str] | None = None
     with_assets: list[str] | None = None
-    out_dir: str | None = None  # default var/exports (server side)
+    out_dir: str | None = None  # 不再接受：固定写到服务器的导出目录（EMQC_EXPORT_DIR）
+
+    @field_validator("out_dir")
+    @classmethod
+    def _no_out_dir(cls, v):
+        if v is not None:
+            raise ValueError("不再支持指定输出目录：导出固定写到服务器的导出目录（EMQC_EXPORT_DIR）")
+        return v
 
 
-@router.post("/{dataset_id}/export")
+@router.post("/{dataset_id}/export", dependencies=[Depends(require_reviewer)])
 def export_dataset(dataset_id: str, body: ExportIn, request: Request, s: Session = Depends(get_session)):
     """Write the QC-passing sections to files on the platform host and return the export manifest."""
     from emqc.qc.export import export_passed
 
     t0 = time.perf_counter()
     ds = _ds(s, dataset_id)
-    out = body.out_dir or str(settings.export_dir)
+    out = str(settings.export_dir)
     try:
         m = export_passed(dataset_id, out, run_id=body.run_id, fmt=body.fmt, min_run=body.min_run, block_ids=body.block_ids, min_quality=body.min_quality, with_assets=body.with_assets or [])
     except RuntimeError as e:
@@ -268,29 +300,35 @@ def export_dataset(dataset_id: str, body: ExportIn, request: Request, s: Session
 
 
 class BatchIn(BaseModel):
-    bboxes: list[list[int]] = Field(description="list of [z0, z1, y0, y1, x0, x1]")
+    bboxes: list[list[int]] = Field(max_length=10000, description="list of [z0, z1, y0, y1, x0, x1]")
 
 
-@router.post("/{dataset_id}/cutouts/batch")
+@router.post("/{dataset_id}/cutouts/batch", dependencies=[Depends(require_reviewer)])
 def cutouts_batch(dataset_id: str, body: BatchIn, request: Request, s: Session = Depends(get_session)):
     """Many cutouts in one response: an .npz with arrays patch_0, patch_1, ... and a `bboxes` array."""
     t0 = time.perf_counter()
     ds = _ds(s, dataset_id)
     reader = get_reader(ds)
     total = 0
-    arrays: dict[str, np.ndarray] = {}
-    for i, bb in enumerate(body.bboxes):
+    boxes = []
+    for bb in body.bboxes:
         if len(bb) != 6:
             raise HTTPException(422, "each bbox must be [z0, z1, y0, y1, x0, x1]")
         z0, z1, y0, y1, x0, x1 = _bounds(ds, *bb)
         total += (z1 - z0) * (y1 - y0) * (x1 - x0) * np.dtype(ds.dtype).itemsize
         if total > MAX_CUTOUT_BYTES:
             raise HTTPException(413, f"batch exceeds {MAX_CUTOUT_BYTES} bytes")
-        arrays[f"patch_{i}"] = reader.read_cutout(z0, z1, y0, y1, x0, x1)
-    arrays["bboxes"] = np.asarray(body.bboxes, dtype=np.int64)
-    buf = io.BytesIO()
-    np.savez(buf, **arrays)
-    data = buf.getvalue()
+        boxes.append((z0, z1, y0, y1, x0, x1))
+    big = _big_slot(s, total)
+    try:
+        arrays: dict[str, np.ndarray] = {f"patch_{i}": reader.read_cutout(*bb) for i, bb in enumerate(boxes)}
+        arrays["bboxes"] = np.asarray(body.bboxes, dtype=np.int64)
+        buf = io.BytesIO()
+        np.savez(buf, **arrays)
+        data = buf.getvalue()
+    finally:
+        if big:
+            _cutout_slots.release()
     _log(s, ds, "batch", {"n": len(body.bboxes)}, len(data), "npz", request, t0)
     return Response(data, media_type="application/octet-stream", headers={"X-Count": str(len(body.bboxes))})
 

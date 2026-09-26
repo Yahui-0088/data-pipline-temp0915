@@ -89,7 +89,9 @@ def setup_logging() -> None:
     app_file.setLevel(logging.INFO)
     ring = _Ring(level=logging.WARNING)
     console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
+    # 由守护脚本拉起时，控制台输出是重定向进 serve.log 的，那个文件不轮转：只往里写警告以上，
+    # 完整的 INFO 在会轮转的 emqc.log 里，serve.log 就不会一直长到把盘写满
+    console.setLevel(logging.WARNING if os.environ.get("EMQC_SUPERVISED") else logging.INFO)
     for h in (app_file, ring, console):
         h.setFormatter(fmt)
         h.addFilter(rid)
@@ -107,6 +109,18 @@ def setup_logging() -> None:
     acc_file = logging.handlers.RotatingFileHandler(d / "access.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
     acc_file.setFormatter(logging.Formatter("%(message)s"))
     acc.addHandler(acc_file)
+
+
+def oneline(text, limit: int = 1000) -> str:
+    """用户填的东西（报错信息、名字、页面地址）写进日志前压成一行：带换行就能在 emqc.log 里伪造出一条假的日志记录。"""
+    s = str(text if text is not None else "")[:limit]
+    return "".join(c if c >= " " and c != "\x7f" else ("⏎" if c in "\r\n" else "?") for c in s)
+
+
+def indented(text, limit: int = 4000) -> str:
+    """多行的（浏览器报来的堆栈）每行前面加竖线缩进，看得出是上一条记录的附件，不会被当成新的一条。"""
+    lines = str(text or "")[:limit].splitlines()
+    return "\n".join("    | " + oneline(ln, 500) for ln in lines)
 
 
 # ---------------------------------------------------------------- 请求记录

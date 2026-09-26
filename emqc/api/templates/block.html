@@ -10,7 +10,7 @@
     <rect x="0" y="0" width="120" height="{{ (120 * ds.shape.y / ds.shape.x)|round|int }}" class="f-surface s-border"/>
     {% for b in siblings if b.z_start == block.z_start %}<a href="/datasets/{{ ds.dataset_id }}/blocks/{{ b.block_id }}"><rect x="{{ (b.x_start * 120 / ds.shape.x)|round(1) }}" y="{{ (b.y_start * 120 / ds.shape.x)|round(1) }}" width="{{ ((b.x_end - b.x_start) * 120 / ds.shape.x)|round(1) }}" height="{{ ((b.y_end - b.y_start) * 120 / ds.shape.x)|round(1) }}" class="{{ 'f-accent' if b.block_id == block.block_id else 'f-pending' }} s-border"><title>{{ b.block_id }}</title></rect></a>{% endfor %}
   </svg>
-  <button class="primary" onclick="runQC('{{ ds.dataset_id }}', this, ['{{ block.block_id }}'])">重跑此 block</button></div></div>
+  <button class="primary" data-ds="{{ ds.dataset_id }}" data-block="{{ block.block_id }}" onclick="runQC(this.dataset.ds, this, [this.dataset.block])">重跑此 block</button></div></div>
 
 {% if qcb %}
 <div class="tiles">
@@ -66,6 +66,6 @@
 <h2>ETL 指标 <span class="cnt">block</span></h2>
 <div class="tiles">{% for k, v in metrics.items() %}<div class="tile"><div class="k">{{ k }}</div><div class="v" style="font-size:15px">{% if v is mapping %}{% for a, b in v.items() %}{{ a }} {{ b }}<br>{% endfor %}{% elif k == 'bytes_read' %}{{ v|bytes }}{% elif k == 'retention_rate' %}{{ v|pct }}{% else %}{{ v|fmt(2) }}{% endif %}</div></div>{% endfor %}</div>
 {% else %}
-<div class="empty">这个 block 还没有 QC 结果。<button class="primary" style="margin-left:10px" onclick="runQC('{{ ds.dataset_id }}', this, ['{{ block.block_id }}'])">现在运行</button></div>
+<div class="empty">这个 block 还没有 QC 结果。<button class="primary" style="margin-left:10px" data-ds="{{ ds.dataset_id }}" data-block="{{ block.block_id }}" onclick="runQC(this.dataset.ds, this, [this.dataset.block])">现在运行</button></div>
 {% endif %}
 {% endblock %}

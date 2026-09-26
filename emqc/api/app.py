@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from emqc import __version__, logs
 from emqc.config import settings
@@ -21,6 +22,16 @@ log = logging.getLogger(__name__)
 HERE = Path(__file__).resolve().parent
 
 app = FastAPI(title="EM Image QC platform", version=__version__, description="Dataset registry, slice/serial-section QC pipeline, algorithm-facing data API")
+# 中间件后声明的在外层：请求先进 _request_log（编号、出错兜底、记日志），再进 _login_gate
+
+
+@app.middleware("http")
+async def _login_gate(request: Request, call_next):
+    """全站登录关卡，见 auth.gate。放在中间件里而不是路由依赖里，/previews 这类挂载的静态目录也一并管到。"""
+    blocked = await run_in_threadpool(auth.gate, request)       # 查会话要访问数据库，不能在事件循环里做
+    if blocked is not None:
+        return blocked
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -47,6 +58,15 @@ async def _request_log(request: Request, call_next):
         logs.request_id.reset(token)
     response.headers["X-Request-Id"] = rid
     return response
+
+
+@app.on_event("startup")
+async def _threads() -> None:
+    # 同步接口都跑在 anyio 的线程池里，默认只有 40 个线程：几个慢请求（整块溯源、预热、SAM）占住之后，
+    # 连登录都排不上队。调大一些当缓冲；真正的防线是那些重请求各自的并发上限。
+    import anyio
+
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 100
 
 
 @app.on_event("startup")
@@ -99,10 +119,12 @@ def deployment():
 
 @app.get("/api/v1/health")
 def health():
-    """给外部探活用（定时 curl 这个地址，连不上就是挂了）：进程在不在、跑了多久、数据库通不通。"""
+    """给外部探活用（定时 curl 这个地址，连不上就是挂了）：进程在不在、跑了多久、数据库通不通、盘够不够。
+    不用登录，所以不报任何路径。"""
     from sqlalchemy import text
 
     from emqc.db.base import engine
+    from emqc.sysmon import disk_report
 
     db_ok = True
     try:
@@ -110,5 +132,11 @@ def health():
             c.execute(text("SELECT 1"))
     except Exception:
         db_ok = False
-    return {"status": "ok" if db_ok else "degraded", "db": db_ok, "version": __version__, "uptime_s": round(time.time() - logs.STARTED_AT),
-            "pipeline_version": settings.pipeline_version, "data_root": str(settings.data_root)}
+    try:
+        disks = disk_report()          # 只看不报：告警由监控线程每分钟发一次，探活被人一秒钟调十次也不会刷屏
+    except Exception:
+        disks = []
+    disk_ok = all(d["ok"] for d in disks)
+    return {"status": "ok" if db_ok and disk_ok else "degraded", "db": db_ok, "disk_ok": disk_ok,
+            "disk_free_gb": min((d["free_gb"] for d in disks), default=None),
+            "version": __version__, "uptime_s": round(time.time() - logs.STARTED_AT), "pipeline_version": settings.pipeline_version}

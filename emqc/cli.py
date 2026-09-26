@@ -186,7 +186,7 @@ def cmd_cloud(args):
         print(json.dumps(volume_info(args.url, args.mip), indent=1, ensure_ascii=False))
         return
     if args.action == "index":
-        rows, tags = parse(load_properties(args.props or H01_PROPS_URL))
+        rows, tags = parse(load_properties(args.props or H01_PROPS_URL, allow_local=True))   # 命令行是自己人，可读本地文件
         if args.list_tags:
             print(f"{len(rows)} 个 segment，{len(tags)} 个标签:")
             print("  " + ", ".join(tags))
@@ -256,7 +256,9 @@ def cmd_checks(_):
 def cmd_serve(args):
     import uvicorn
 
-    uvicorn.run("emqc.api.app:app", host=args.host or settings.api_host, port=args.port or settings.api_port, reload=args.reload, log_level="info")
+    # 与 scripts/serve.py 相同的加固：不信客户端填的 X-Forwarded-For（前面没有反代），停机最多等 20 秒
+    uvicorn.run("emqc.api.app:app", host=args.host or settings.api_host, port=args.port or settings.api_port, reload=args.reload,
+                log_level="info", proxy_headers=False, timeout_graceful_shutdown=20)
 
 
 def cmd_make_sample(args):

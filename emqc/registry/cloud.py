@@ -55,6 +55,30 @@ def normalize_url(url: str) -> str:
     raise ValueError(f"not a cloud volume url: {url!r}")
 
 
+def check_source(url: str) -> str:
+    """接口传进来的云端地址必须落在 EMQC_CRAWL_ALLOWED_SOURCES 里（按桶 / 目录前缀比，gs:// 和
+    https://storage.googleapis.com/ 两种写法等价）。file://、别的主机一律拒绝：否则任何人都能借服务器去探内网、
+    读本机文件。返回原地址；不合格抛 ValueError。"""
+    from emqc.config import settings
+
+    try:
+        norm = normalize_url(url)
+        if norm.startswith("precomputed://https://storage.googleapis.com/"):     # 同一个桶的另一种写法
+            norm = normalize_url(norm[len("precomputed://"):])
+    except ValueError:
+        raise ValueError(f"不是云端数据地址：{url!r}")
+    if norm.startswith(("precomputed://file://", "precomputed://http://")):
+        raise ValueError("只允许 gs:// 或 https:// 的云端地址")
+    from urllib.parse import unquote
+
+    if any(seg in (".", "..") for seg in unquote(norm).split("/")) or "\\" in norm:
+        raise ValueError("云端地址里不能有 . / .. 这样的路径段")     # 免得借路径折叠跳到允许的桶外面
+    allowed = [normalize_url(p.strip()).rstrip("/") + "/" for p in settings.crawl_allowed_sources.split(";") if p.strip()]
+    if not any((norm.rstrip("/") + "/").startswith(a) for a in allowed):
+        raise ValueError(f"这个地址不在允许爬取的来源里（{settings.crawl_allowed_sources}）；要加来源请管理员设置 EMQC_CRAWL_ALLOWED_SOURCES")
+    return url
+
+
 def open_cv(url: str, mip: int = 0, fill_missing: bool = True, parallel: int = 1):
     """Open a CloudVolume. parallel stays 1: H01's scales are sharded, where CloudVolume drops the
     argument anyway, and on non-sharded volumes it forks subprocesses that break byte accounting."""

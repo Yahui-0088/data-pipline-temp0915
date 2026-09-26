@@ -393,8 +393,11 @@ def start_run_async(dataset_id: str, block_ids: list[str] | None = None, config:
         run_id = run.id
 
     def _target():
+        from emqc.jobslots import slot
+
         try:
-            QCRunner(config).run_dataset(dataset_id, block_ids, run_id=run_id)
+            with slot("qc"):                    # 同一时间只跑一个 QC，其余排队（见 emqc.jobslots）
+                QCRunner(config).run_dataset(dataset_id, block_ids, run_id=run_id)
         except Exception:
             log.exception("qc run %s failed", run_id)
 

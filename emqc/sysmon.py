@@ -18,6 +18,46 @@ except Exception:  # pragma: no cover
     psutil = None
 
 
+def disk_report() -> list[dict]:
+    """标注工作目录和日志目录所在的盘还剩多少。低于 EMQC_DISK_ALERT_GB 算不够（ok=False）。
+    同一块盘只报一次。目录还不存在时看它最近一级存在的上级目录。"""
+    from pathlib import Path
+
+    from emqc.config import settings
+
+    out, seen = [], set()
+    for label, p in (("标注工作目录", settings.annotate_workdir), ("日志", settings.log_dir)):
+        q = Path(p)
+        while not q.exists() and q != q.parent:
+            q = q.parent
+        try:
+            st = __import__("os").stat(q)
+            if st.st_dev in seen:
+                continue
+            seen.add(st.st_dev)
+            u = shutil.disk_usage(q)
+        except OSError:
+            continue
+        out.append({"label": label, "path": str(p), "free_gb": round(u.free / 2**30, 1), "total_gb": round(u.total / 2**30, 1),
+                    "used_pct": round(100 * (u.total - u.free) / u.total, 1) if u.total else None,
+                    "ok": u.free >= settings.disk_alert_gb * 2**30})
+    return out
+
+
+def check_disk() -> list[dict]:
+    """盘快满了就记一笔警告并推告警（同一类 5 分钟最多推一次，见 logs.alert）。"""
+    import logging
+
+    from emqc import logs
+
+    report = disk_report()
+    for d in report:
+        if not d["ok"]:
+            logging.getLogger("emqc.sysmon").warning("%s所在盘只剩 %.1f GB（%s）", d["label"], d["free_gb"], d["path"])
+            logs.alert("disk", f"服务器磁盘快满了：{d['label']}所在盘只剩 {d['free_gb']} GB。写满时标注会被拒绝保存，请尽快清理")
+    return report
+
+
 class SystemMonitor:
     def __init__(self, interval: float = 2.0, keep: int = 450):
         self.interval = interval
@@ -61,11 +101,18 @@ class SystemMonitor:
         return d
 
     def _loop(self) -> None:
+        n = 0
         while not self._stop.wait(self.interval):
             try:
                 self.samples.append(self.sample())
             except Exception:
                 pass
+            n += 1
+            if n % max(1, int(60 / self.interval)) == 0:           # 每分钟看一次磁盘
+                try:
+                    check_disk()
+                except Exception:
+                    pass
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():

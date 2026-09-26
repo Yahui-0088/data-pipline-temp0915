@@ -20,6 +20,8 @@ from emqc.registry.labels import boundary_map
 
 from ..serializers import asset_to_dict, block_to_dict, label_qc_to_dict, patch_to_dict, patchset_to_dict
 
+from .auth import require_admin_role, require_reviewer
+
 router = APIRouter(prefix="/api/v1", tags=["patch-factory"])
 
 _label_readers: dict[int, object] = {}
@@ -57,7 +59,7 @@ def list_labels(dataset_id: str, s: Session = Depends(get_session)):
     return out
 
 
-@router.post("/datasets/{dataset_id}/assets/{asset_id}/validate")
+@router.post("/datasets/{dataset_id}/assets/{asset_id}/validate", dependencies=[Depends(require_reviewer)])
 def validate_asset(dataset_id: str, asset_id: int, step: int = 1, max_sections: int | None = None, s: Session = Depends(get_session)):
     """Check a label asset against the EM: missing / empty sections, labels over fill regions, shape & z alignment."""
     ds = _ds(s, dataset_id)
@@ -75,7 +77,7 @@ class ExclusiveIn(BaseModel):
     max_sections: int | None = None
 
 
-@router.post("/datasets/{dataset_id}/assets/validate-exclusive")
+@router.post("/datasets/{dataset_id}/assets/validate-exclusive", dependencies=[Depends(require_reviewer)])
 def validate_exclusive(dataset_id: str, body: ExclusiveIn, s: Session = Depends(get_session)):
     """Class masks that must not overlap (label conflict)."""
     ds = _ds(s, dataset_id)
@@ -156,7 +158,7 @@ def get_partition(dataset_id: str, s: Session = Depends(get_session)):
     return _partition_summary(s, _ds(s, dataset_id))
 
 
-@router.post("/datasets/{dataset_id}/partition")
+@router.post("/datasets/{dataset_id}/partition", dependencies=[Depends(require_reviewer)])
 def set_partition(dataset_id: str, body: PartitionIn, s: Session = Depends(get_session)):
     """(Re)assign the holdout partition. Without force only unassigned eligible blocks are placed; force reshuffles all."""
     ds = _ds(s, dataset_id)
@@ -174,7 +176,7 @@ class PatchSetIn(BaseModel):
     dataset_id: str
     patch_type: str
     size: list[int] = Field(default=[16, 256, 256], min_length=3, max_length=3)
-    n: int = 64
+    n: int = Field(default=64, ge=1, le=100000)
     seed: int = 0
     partitions: list[str] | None = None
     block_ids: list[str] | None = None
@@ -184,7 +186,7 @@ class PatchSetIn(BaseModel):
     params: dict = Field(default_factory=dict)
     preprocessing: dict | None = None
     augmentation: dict | None = None
-    candidate_factor: int = 8
+    candidate_factor: int = Field(default=8, ge=1, le=32)
 
 
 @router.get("/data/{dataset_id}/patch-readiness")
@@ -193,7 +195,7 @@ def patch_readiness(dataset_id: str, s: Session = Depends(get_session)):
     return {"dataset_id": dataset_id, "types": readiness(s, ds), "partition": {k: v for k, v in _partition_summary(s, ds).items() if k != "blocks"}}
 
 
-@router.post("/patchsets", status_code=201)
+@router.post("/patchsets", status_code=201, dependencies=[Depends(require_reviewer)])
 def create_patchset(body: PatchSetIn, s: Session = Depends(get_session)):
     ds = _ds(s, body.dataset_id)
     if body.patch_type not in PATCH_TYPES:
@@ -256,7 +258,7 @@ def patchset_manifest(set_id: int, s: Session = Depends(get_session)):
             "patches": items, "how_to_load": "GET url_em -> npy (dz, dy, dx) EM; GET url_label -> npy labels of the same bbox (ids uint32 | boundary uint8 | mask uint8). See emqc/loader.py PatchSetClient."}
 
 
-@router.delete("/patchsets/{set_id}")
+@router.delete("/patchsets/{set_id}", dependencies=[Depends(require_admin_role)])
 def delete_patchset(set_id: int, s: Session = Depends(get_session)):
     p = _pset(s, set_id)
     s.execute(Patch.__table__.delete().where(Patch.set_id == p.id))

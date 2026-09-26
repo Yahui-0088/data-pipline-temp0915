@@ -161,10 +161,12 @@ def test_labels_baseline_and_warm(block):
     r = block.warm_labels(0, 2)
     assert r["z0"] == 0 and r["z1"] == 2 and 0 <= r["warmed_baseline"] <= 3
     for z in range(3):
-        assert z in block._label_cache and z in block._label_cache_ro
+        assert (z, block._gen(z)) in block._label_cache and z in block._label_cache_ro
         ib, jb = block.labels_baseline(z); assert np.array_equal(jb[ib], seg0[:, :, z].T)
+    gen = block._gen(1)
     block.undo()
-    assert 1 not in block._label_cache and 1 in block._label_cache_ro, "撤销只作废当前缓存，基线缓存永不作废"
+    assert block._gen(1) == gen + 1, "撤销后这一片的像素版本加一"
+    assert not any(k[0] == 1 for k in block._label_cache) and 1 in block._label_cache_ro, "撤销只作废当前缓存，基线缓存永不作废"
 
 
 def test_compare_light_returns_images_only(client_tools):

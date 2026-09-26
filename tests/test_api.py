@@ -195,10 +195,15 @@ def test_run_graph_events_and_system_metrics(client, registered, qc_run):
 def test_export_passed_sections(client, registered, qc_run, data_root, tmp_path):
     import json
 
-    r = client.post(f"/api/v1/data/{registered}/export", json={"min_run": 3, "run_id": qc_run, "with_assets": ["gt_segmentation"], "out_dir": str(tmp_path)})
+    from emqc.config import settings
+
+    body = {"min_run": 3, "run_id": qc_run, "with_assets": ["gt_segmentation"]}
+    bad = client.post(f"/api/v1/data/{registered}/export", json={**body, "out_dir": str(tmp_path)})
+    assert bad.status_code == 422, "调用方不能再指定输出目录（否则能往服务器任意目录写文件）"
+    r = client.post(f"/api/v1/data/{registered}/export", json=body)
     assert r.status_code == 200, r.text
     m = r.json()
-    out = tmp_path / registered
+    out = settings.export_dir / registered
     assert (out / "export_manifest.json").is_file() and m["run_id"] == qc_run
     # failing sections 5 / 9 / 13 / 20 / 27 never appear inside a chunk; every chunk is >= 3 long
     for c in m["shards"]:
@@ -213,7 +218,14 @@ def test_export_passed_sections(client, registered, qc_run, data_root, tmp_path)
 
 
 def test_export_jobs_shards_and_resume(client, registered, qc_run, tmp_path):
-    body = {"dataset_id": registered, "run_id": qc_run, "min_run": 2, "shard_z": 4, "out_dir": str(tmp_path), "sync": True}
+    from emqc.config import settings
+
+    body = {"dataset_id": registered, "run_id": qc_run, "min_run": 2, "shard_z": 4, "sync": True}
+    assert client.post("/api/v1/exports", json={**body, "out_dir": str(tmp_path)}).status_code == 422
+    tmp_path = settings.export_dir                      # 导出固定写到这里
+    import shutil
+
+    shutil.rmtree(tmp_path / registered, ignore_errors=True)   # 上一个测试的导出也在这里，清掉才能验证"第一次不复用"
     j = client.post("/api/v1/exports", json=body).json()
     assert j["status"] == "done" and j["n_blocks_done"] == 2 and j["n_shards"] > 0 and j["n_shards_reused"] == 0
     m = client.get(f"/api/v1/exports/{j['job_id']}/manifest").json()

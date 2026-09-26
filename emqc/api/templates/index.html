@@ -30,7 +30,7 @@
   <td style="min-width:120px"><div class="row" style="display:flex;gap:8px;align-items:center">{{ m.meter(d.latest_retention_rate) }}<span class="mono">{{ d.latest_retention_rate|pct }}</span></div></td>
   <td>{% if d.strip %}{{ m.strip(d.strip, d.dataset_id, d.strip[0].block_id, axis=false) }}{% else %}<span class="muted">未运行</span>{% endif %}</td>
   <td>{% if d.latest_run_id %}<a href="/runs/{{ d.latest_run_id }}" class="mono">#{{ d.latest_run_id }}</a>{% if d.n_findings is defined and d.n_findings is not none %}<div class="muted" style="font-size:11px">{{ d.n_findings|int }} findings</div>{% endif %}{% else %}<span class="pill">{{ d.status }}</span>{% endif %}</td>
-  <td><button onclick="runQC('{{ d.dataset_id }}', this)">运行 QC</button></td>
+  <td><button data-ds="{{ d.dataset_id }}" onclick="runQC(this.dataset.ds, this)">运行 QC</button></td>
 </tr>{% endfor %}
 </tbody></table></div>
 {% else %}<div class="empty">还没有注册的数据集。点右上角"扫描"发现新数据。</div>{% endif %}

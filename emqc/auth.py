@@ -172,6 +172,27 @@ def clear_failures(*keys: str) -> None:
             _FAILS.pop(k, None)
 
 
+# 试用模式下填个名字就自动建号：不限的话一个脚本就能建出成千上万个账号（每个还要算一次 bcrypt）。
+# 一小时内最多自动建这么多个，够一个班的人第一次进来；再多请管理员在「用户管理」里批量建。
+NEW_ACCOUNT_LIMIT, NEW_ACCOUNT_WINDOW_S = 30, 3600.0
+_NEW_ACCOUNTS: list[float] = []
+
+
+def new_account_throttled() -> int:
+    """试用模式还要等几秒才能再自动建号；0 = 现在可以。"""
+    now = time.monotonic()
+    with _FAILS_LOCK:
+        _NEW_ACCOUNTS[:] = [t for t in _NEW_ACCOUNTS if now - t < NEW_ACCOUNT_WINDOW_S]
+        if len(_NEW_ACCOUNTS) >= NEW_ACCOUNT_LIMIT:
+            return int(NEW_ACCOUNT_WINDOW_S - (now - _NEW_ACCOUNTS[0])) + 1
+        return 0
+
+
+def note_new_account() -> None:
+    with _FAILS_LOCK:
+        _NEW_ACCOUNTS.append(time.monotonic())
+
+
 def username_for(typed: str) -> tuple[str, str]:
     """登录框里填的 → (登录名, 显示名)。合规的登录名原样用；填的是中文名之类不合规的，就把它当显示名，
     登录名由它的哈希生成——同一个名字永远对上同一个账号，试用模式和正式密码登录都认。"""
@@ -292,6 +313,22 @@ def purge_expired_sessions(s: Session) -> int:
         s.delete(sess)
         n += 1
     return n
+
+
+def purge_expired_sessions_best_effort() -> int:
+    """登录成功后顺手清掉过期的会话：单独一个事务、一条 DELETE。和别人的登录撞上报错只记一笔，不影响这次登录。"""
+    from sqlalchemy import delete
+
+    from emqc.db.base import session_scope
+
+    try:
+        with session_scope() as w:
+            return w.execute(delete(AuthSession).where(AuthSession.expires_at <= _now())).rowcount or 0
+    except Exception as e:  # noqa: BLE001 - best effort by design
+        import logging
+
+        logging.getLogger("emqc.auth").info("清理过期会话没做成（不影响登录）：%s", str(e).splitlines()[0][:200])
+        return 0
 
 
 def count_users(s: Session) -> int:

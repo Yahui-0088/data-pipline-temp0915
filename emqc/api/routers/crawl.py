@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,9 +12,12 @@ from emqc.crawl.precheck import H01_MASK_URL, tissue_profile
 from emqc.crawl.register import CrawlRunner, create_crawl_job, register_cloud_roi, request_cancel_crawl, start_crawl_async
 from emqc.db.base import get_session
 from emqc.db.models import CrawlEvent, CrawlJob, Dataset
-from emqc.registry.cloud import CloudVolumeReader, roi_dict, volume_info
+from emqc.ids import check_dataset_id
+from emqc.registry.cloud import CloudVolumeReader, check_source, roi_dict, volume_info
 
 from ..serializers import crawl_event_to_dict, crawl_job_to_dict, dataset_to_dict
+
+from .auth import require_reviewer
 
 router = APIRouter(prefix="/api/v1/crawl", tags=["acquisition"])
 
@@ -41,11 +44,11 @@ def presets():
     return PRESETS
 
 
-@router.get("/volume")
+@router.get("/volume", dependencies=[Depends(require_reviewer)])
 def volume(url: str, mip: int = 0):
     """Shape, chunk grid, resolution and encoding of a cloud volume — no voxels downloaded."""
     try:
-        return volume_info(url, mip)
+        return volume_info(check_source(url), mip)
     except Exception as e:
         raise HTTPException(422, f"{type(e).__name__}: {e}")
 
@@ -57,8 +60,10 @@ class PrecheckIn(BaseModel):
     min_wanted: float = 0.5
     max_defect: float = 0.02
 
+    _src = field_validator("mask_url")(lambda cls, v: check_source(v))
 
-@router.post("/precheck")
+
+@router.post("/precheck", dependencies=[Depends(require_reviewer)])
 def precheck(body: PrecheckIn):
     """Judge an ROI from the tissue-type mask before spending bandwidth on voxels."""
     try:
@@ -68,11 +73,11 @@ def precheck(body: PrecheckIn):
         raise HTTPException(422, f"{type(e).__name__}: {e}")
 
 
-@router.get("/index")
+@router.get("/index", dependencies=[Depends(require_reviewer)])
 def index(props_url: str = H01_PROPS_URL, tag: str | None = None, min_voxels: float = 0.0, top: int = 20, list_tags: bool = False):
     """Candidate segments from the volume's segment_properties table (a few MB)."""
     try:
-        rows, tags = parse(load_properties(props_url))
+        rows, tags = parse(load_properties(check_source(props_url)))
     except Exception as e:
         raise HTTPException(422, f"{type(e).__name__}: {e}")
     if list_tags:
@@ -93,8 +98,20 @@ class RegisterIn(BaseModel):
     mask_url: str = H01_MASK_URL
     require_precheck_ok: bool = False
 
+    _id = field_validator("dataset_id")(lambda cls, v: check_dataset_id(v))
+    _src = field_validator("url", "mask_url")(lambda cls, v: check_source(v))
 
-@router.post("/register", status_code=201)
+    @field_validator("assets")
+    @classmethod
+    def _asset_urls(cls, v):
+        for a in v or []:
+            if not isinstance(a, dict) or not isinstance(a.get("url"), str):
+                raise ValueError("每个 asset 都要有 url")
+            check_source(a["url"])
+        return v
+
+
+@router.post("/register", status_code=201, dependencies=[Depends(require_reviewer)])
 def register(body: RegisterIn, s: Session = Depends(get_session)):
     """Register an ROI as a dataset. Nothing is downloaded — QC and patches read it on demand."""
     roi = body.roi.model_dump()
@@ -119,16 +136,28 @@ class CrawlIn(BaseModel):
     dataset_id: str
     url: str
     roi: RoiIn
-    mip: int = 0
-    out_dir: str | None = None
+    mip: int = Field(default=0, ge=0, le=16)
+    out_dir: str | None = None          # 不再接受：固定写到 data_root 下的 cloud 目录（见 create_crawl_job）
     align: bool = True
     resume: bool = True
     sync: bool = False
 
+    _id = field_validator("dataset_id")(lambda cls, v: check_dataset_id(v))
+    _src = field_validator("url")(lambda cls, v: check_source(v))
 
-@router.post("/jobs", status_code=202)
+    @field_validator("out_dir")
+    @classmethod
+    def _no_out_dir(cls, v):
+        if v is not None:
+            raise ValueError("不再支持指定输出目录：爬下来的数据固定放在数据根目录的 cloud 项目下")
+        return v
+
+
+@router.post("/jobs", status_code=202, dependencies=[Depends(require_reviewer)])
 def create_job(body: CrawlIn, s: Session = Depends(get_session)):
     """Materialise an ROI into data_root as an image stack (resumable)."""
+    if body.sync and not settings.auth_disabled:
+        raise HTTPException(422, "正式部署里不能在请求里同步爬取（会一直占着一个工作线程），去掉 sync 走后台任务")
     if body.sync:
         job_id = create_crawl_job(body.dataset_id, body.url, body.roi.model_dump(), body.mip, body.out_dir, align=body.align, resume=body.resume)
         try:
@@ -167,7 +196,7 @@ def job_events(job_id: int, after_id: int = 0, limit: int = 300, s: Session = De
     return [crawl_event_to_dict(e) for e in s.scalars(select(CrawlEvent).where(CrawlEvent.job_id == job_id, CrawlEvent.id > after_id).order_by(CrawlEvent.id).limit(limit))]
 
 
-@router.post("/jobs/{job_id}/cancel")
+@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(require_reviewer)])
 def cancel_job(job_id: int, s: Session = Depends(get_session)):
     j = _job(s, job_id)
     if not request_cancel_crawl(job_id):

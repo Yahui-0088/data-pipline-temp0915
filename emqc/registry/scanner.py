@@ -117,6 +117,9 @@ def register_manifest(session: Session, m: DatasetManifest) -> tuple[Dataset, bo
     """Insert or update a dataset (+assets, versions, blocks) from a manifest. Returns (row, created)."""
     if not m.em_path:
         raise FileNotFoundError(f"{m.fs.url(m.root)}: no EM volume found (set em.path in dataset.json)")
+    from emqc.ids import check_scanned_id
+
+    check_scanned_id(m.dataset_id)
     reader = open_volume(m.full(m.em_path), m.em_format, m.em_axes, m.z_offset, fs=m.fs)
     info = reader.info
     n_z, n_y, n_x = info.shape

@@ -1,6 +1,11 @@
 # HTTP API（v1）
 
-启动：`.venv/bin/python -m emqc serve`（默认 `127.0.0.1:8765`），交互式文档在 `/docs`。
+启动：`.venv/bin/python -m emqc serve`（默认 `127.0.0.1:8765`），交互式文档在 `/docs`（要先登录）。
+
+**登录与权限**（`EMQC_AUTH_DISABLED=1` 时全部不拦）：除登录、探活外所有接口都要登录会话（浏览器 Cookie）或服务令牌
+（请求头 `X-EMQC-Token: <EMQC_API_TOKEN>`，脚本用；见 `emqc.loader`）。GET 登录即可；启动任务、扫描、改元信息、登记资产 /
+版本、建流会话、爬取相关接口要**审核员以上**（令牌算审核员）；DELETE 数据集 / patch 集只有**管理员**。没登录 401，
+权限不够 403。`out_dir` 参数已不再接受（传了返回 422）；正式部署里 `sync=true` 返回 422。
 
 ## 数据集注册表 `/api/v1/datasets`
 | 方法 | 路径 | 说明 |
@@ -18,7 +23,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/qc/checks` | 16 个检查的目录（是否实现、阈值、参数） |
-| POST | `/api/v1/qc/runs` `{dataset_id, block_ids?, config?, sync?}` | 启动一次 QC（默认后台线程，返回 run_id）；`config` 可覆盖 `checks_enabled`、`thresholds`、`params`、`pass_max_severity` 等 |
+| POST | `/api/v1/qc/runs` `{dataset_id, block_ids?, config?, sync?}` | 启动一次 QC（后台线程，同一时间只跑一个、其余排队，返回 run_id；`sync` 只在关了登录的本地开发里可用）；`config` 可覆盖 `checks_enabled`、`thresholds`、`params`、`pass_max_severity` 等 |
 | POST | `/api/v1/qc/runs/batch` `{dataset_ids, block_ids?, config?}` | 一次启动多个数据集的运行（控制台用） |
 | POST | `/api/v1/qc/runs/{run_id}/cancel` | 请求取消，当前 block 组结束后停止；已结束的运行返回 409 |
 | GET | `/api/v1/qc/runs/active` | 排队 / 运行中的任务，带每个 block 的完成状态与当前阶段 |
@@ -41,7 +46,7 @@
 | POST | `/api/v1/data/{id}/patches/sample` | 按 QC 过滤随机采样 patch **坐标**（`only_passed`、`min_quality`、`split`、`block_ids`）；patch 不跨 block，z 窗口内所有切片在该 tile 通过；返回 block、grade 与 cutout URL |
 | POST | `/api/v1/data/{id}/cutouts/batch` `{bboxes: [[z0,z1,y0,y1,x0,x1], …]}` | 一次取多个子块（npz） |
 | GET | `/api/v1/data/{id}/preview/z/{z}.png` | 即时缩略图 |
-| POST | `/api/v1/data/{id}/export` `{min_run, min_quality?, run_id?, block_ids?, with_assets?, fmt, out_dir?}` | 把通过 QC 的切片按 block 内的连续段导出为 npy 栈（或 png），写到平台主机的 `var/exports/<dataset>/`，返回 `export_manifest.json` 的内容（每段的来源 run、z 范围、bbox、等级、被排除的切片与原因）；`with_assets` 同时拷贝相同 z 的资产文件（如 `gt_segmentation`） |
+| POST | `/api/v1/data/{id}/export` `{min_run, min_quality?, run_id?, block_ids?, with_assets?, fmt}` | 把通过 QC 的切片按 block 内的连续段导出为 npy 栈（或 png），写到平台主机的 `var/exports/<dataset>/`，返回 `export_manifest.json` 的内容（每段的来源 run、z 范围、bbox、等级、被排除的切片与原因）；`with_assets` 同时拷贝相同 z 的资产文件（如 `gt_segmentation`） |
 | GET | `/api/v1/data/training/manifest` | 训练 / 推理清单：小数据集整体进训练；大数据集按等级分层抽出的 train_sample 块进训练（`sampling` 字段给出配额、实际选择、种子）、整卷进推理；`policy` 字段说明当前策略 |
 
 所有取数请求都写入 `serve_log`。
@@ -68,7 +73,7 @@ requests.post(f"{API}/api/v1/traces", json={"dataset_id": ds, "agent": "seg-agen
 ## 数据交付 `/api/v1/exports` 与 `/api/v1/streams`
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/exports` `{dataset_id, run_id?, min_run, shard_z, min_quality?, with_assets?, block_ids?, resume, out_dir?, sync?}` | 新建导出任务（默认后台），写训练分片到 `var/exports/<dataset>/` |
+| POST | `/api/v1/exports` `{dataset_id, run_id?, min_run, shard_z, min_quality?, with_assets?, block_ids?, resume, sync?}` | 新建导出任务（后台，同一时间只跑一个），写训练分片到 `EMQC_EXPORT_DIR/<dataset>/`（默认 `var/exports`） |
 | GET | `/api/v1/exports?dataset_id=&status=` · `/api/v1/exports/{id}` · `/{id}/events?after_id=` · `/{id}/manifest` · POST `/{id}/cancel` | 任务列表、进度、实时日志、清单、取消 |
 | POST | `/api/v1/streams` `{dataset_id, z_chunk, order: z|grade, skip_failed, block_ids?, client?}` | 新建推理流会话：生成覆盖整卷、按 block 顺序的子块计划 |
 | POST | `/api/v1/streams/{id}/next?n=` | 领取下 n 个子块（坐标 + 取数 URL），远程源顺带预取后续 |

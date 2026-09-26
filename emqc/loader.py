@@ -14,15 +14,50 @@ Inference side (stream session: whole volume block by block, nothing copied):
     for item, arr in StreamClient("http://127.0.0.1:8765", "mouse_30um", z_chunk=16, client="unet-infer").items():
         pred = model(arr)                     # arr: (z1-z0, H, W) of one tile
         ...                                   # items are acked as you go; the session is closed at the end
+
+平台开了登录时，脚本不走浏览器登录：服务器配置 EMQC_API_TOKEN，脚本这边把同一个值放进环境变量 EMQC_API_TOKEN
+（或构造时传 token=...），每个请求都会带上 X-EMQC-Token 请求头。
 """
 from __future__ import annotations
 
 import io
 import json
+import os
 import urllib.request
 from pathlib import Path
 
 import numpy as np
+
+
+def _headers(token: str | None, extra: dict | None = None) -> dict:
+    h = dict(extra or {})
+    token = token if token is not None else os.environ.get("EMQC_API_TOKEN")
+    if token:
+        h["X-EMQC-Token"] = token
+    return h
+
+
+RETRY_WAITS = (2, 5, 15, 30)             # 服务器忙（429 / 503）时依次等这么多秒再试
+
+
+def _open(req: urllib.request.Request, timeout: float = 600) -> bytes:
+    """发请求、读完响应；服务器说忙（429 排队满、503 暂不可用）就按 RETRY_WAITS 退避重试，别的错误照常抛。"""
+    import time
+    import urllib.error
+
+    for wait in (*RETRY_WAITS, None):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 503) or wait is None:
+                raise
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
+def _get(url: str, token: str | None, timeout: float = 600) -> bytes:
+    return _open(urllib.request.Request(url, headers=_headers(token)), timeout)
 
 
 class ShardStore:
@@ -74,21 +109,22 @@ class ShardStore:
 
 
 class StreamClient:
-    def __init__(self, api: str, dataset_id: str, z_chunk: int = 16, client: str | None = None, order: str = "z", skip_failed: bool = False, block_ids: list[str] | None = None, batch: int = 2):
+    def __init__(self, api: str, dataset_id: str, z_chunk: int = 16, client: str | None = None, order: str = "z", skip_failed: bool = False, block_ids: list[str] | None = None, batch: int = 2,
+                 token: str | None = None):
         self.api = api.rstrip("/")
         self.batch = batch
+        self.token = token
         body = {"dataset_id": dataset_id, "z_chunk": z_chunk, "client": client, "order": order, "skip_failed": skip_failed, "block_ids": block_ids}
         self.session = self._post("/api/v1/streams", body)
         self.stream_id = self.session["stream_id"]
 
     def _post(self, path: str, body: dict | None = None) -> dict:
-        req = urllib.request.Request(self.api + path, data=json.dumps(body or {}).encode(), headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=600) as r:
-            return json.loads(r.read().decode())
+        req = urllib.request.Request(self.api + path, data=json.dumps(body or {}).encode(),
+                                     headers=_headers(self.token, {"Content-Type": "application/json"}), method="POST")
+        return json.loads(_open(req).decode())
 
     def fetch(self, item: dict) -> np.ndarray:
-        with urllib.request.urlopen(self.api + item["url"], timeout=600) as r:
-            return np.load(io.BytesIO(r.read()))
+        return np.load(io.BytesIO(_get(self.api + item["url"], self.token)))
 
     def items(self):
         """Yield (item, array) for the whole plan, acking each item after the caller consumed it."""
@@ -122,19 +158,18 @@ class PatchSetClient:
     serves raw voxels and the training code applies them, so the declaration is the lineage record, not a transform.
     """
 
-    def __init__(self, api: str, set_id: int):
+    def __init__(self, api: str, set_id: int, token: str | None = None):
         self.api = api.rstrip("/")
         self.set_id = set_id
-        with urllib.request.urlopen(f"{self.api}/api/v1/patchsets/{set_id}/manifest", timeout=600) as r:
-            self.manifest = json.loads(r.read().decode())
+        self.token = token
+        self.manifest = json.loads(_get(f"{self.api}/api/v1/patchsets/{set_id}/manifest", token).decode())
 
     @property
     def patches(self) -> list[dict]:
         return self.manifest["patches"]
 
     def _get_npy(self, url: str) -> np.ndarray:
-        with urllib.request.urlopen(self.api + url, timeout=600) as r:
-            return np.load(io.BytesIO(r.read()))
+        return np.load(io.BytesIO(_get(self.api + url, self.token)))
 
     def fetch(self, patch: dict, with_label: bool = True) -> tuple[np.ndarray, np.ndarray | None]:
         em = self._get_npy(patch["url_em"])

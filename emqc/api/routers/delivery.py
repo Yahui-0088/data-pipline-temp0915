@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,8 @@ from emqc.db.models import Block, Dataset, ExportEvent, ExportJob, QCBlock, QCSl
 from emqc.qc.export import ExportRunner, create_export_job, request_cancel_export, start_export_async
 
 from ..serializers import export_event_to_dict, export_job_to_dict, stream_to_dict
+
+from .auth import require_reviewer
 
 exports = APIRouter(prefix="/api/v1/exports", tags=["delivery"])
 streams = APIRouter(prefix="/api/v1/streams", tags=["delivery"])
@@ -39,14 +41,23 @@ class ExportIn(BaseModel):
     with_assets: list[str] | None = None
     block_ids: list[str] | None = None
     resume: bool = True
-    out_dir: str | None = None
+    out_dir: str | None = None          # 不再接受：导出固定写到服务器的导出目录（EMQC_EXPORT_DIR）
     sync: bool = False
 
+    @field_validator("out_dir")
+    @classmethod
+    def _no_out_dir(cls, v):
+        if v is not None:
+            raise ValueError("不再支持指定输出目录：导出固定写到服务器的导出目录（EMQC_EXPORT_DIR）")
+        return v
 
-@exports.post("", status_code=202)
+
+@exports.post("", status_code=202, dependencies=[Depends(require_reviewer)])
 def create_export(body: ExportIn, s: Session = Depends(get_session)):
     if s.get(Dataset, body.dataset_id) is None:
         raise HTTPException(404, f"unknown dataset {body.dataset_id}")
+    if body.sync and not settings.auth_disabled:
+        raise HTTPException(422, "正式部署里不能在请求里同步导出（会一直占着一个工作线程），去掉 sync 走后台任务")
     params = dict(fmt=body.fmt, min_run=body.min_run, shard_z=body.shard_z, min_quality=body.min_quality, with_assets=body.with_assets or [], block_ids=body.block_ids, resume=body.resume)
     if body.sync:
         job_id = create_export_job(body.dataset_id, body.out_dir, body.run_id, **params)
@@ -97,7 +108,7 @@ def export_manifest(job_id: int, s: Session = Depends(get_session)):
     return json.loads(p.read_text())
 
 
-@exports.post("/{job_id}/cancel")
+@exports.post("/{job_id}/cancel", dependencies=[Depends(require_reviewer)])
 def cancel_export(job_id: int, s: Session = Depends(get_session)):
     j = _job(s, job_id)
     if not request_cancel_export(job_id):
@@ -115,8 +126,15 @@ class StreamIn(BaseModel):
     block_ids: list[str] | None = None
     order: str = "z"  # z (spatial) | grade (best blocks first)
     skip_failed: bool = False  # inference normally covers the whole volume; True drops chunks containing failed sections
-    client: str | None = None
-    purpose: str = "inference"
+    client: str | None = Field(default=None, max_length=64)
+    purpose: str = Field(default="inference", max_length=64)
+
+    @field_validator("client", "purpose")
+    @classmethod
+    def _names(cls, v):
+        from emqc.ids import check_client
+
+        return check_client(v)
 
 
 def build_plan(s: Session, ds: Dataset, z_chunk: int, block_ids: list[str] | None, order: str, skip_failed: bool) -> tuple[list[dict], int | None]:
@@ -156,7 +174,7 @@ def _with_urls(sess: StreamSession, items: list[dict]) -> list[dict]:
     return out
 
 
-@streams.post("", status_code=201)
+@streams.post("", status_code=201, dependencies=[Depends(require_reviewer)])
 def create_stream(body: StreamIn, s: Session = Depends(get_session)):
     ds = s.get(Dataset, body.dataset_id)
     if ds is None:
@@ -201,7 +219,7 @@ def stream_plan(stream_id: int, s: Session = Depends(get_session)):
     return {"stream_id": sess.id, "items": _with_urls(sess, sess.plan_json)}
 
 
-@streams.post("/{stream_id}/next")
+@streams.post("/{stream_id}/next", dependencies=[Depends(require_reviewer)])
 def stream_next(stream_id: int, n: int = 1, s: Session = Depends(get_session)):
     """Hand out the next n cutouts of the plan (and warm the cache for the ones after them on remote sources)."""
     sess = _sess(s, stream_id)
@@ -230,7 +248,7 @@ class AckIn(BaseModel):
     note: str | None = None
 
 
-@streams.post("/{stream_id}/ack")
+@streams.post("/{stream_id}/ack", dependencies=[Depends(require_reviewer)])
 def stream_ack(stream_id: int, body: AckIn, s: Session = Depends(get_session)):
     sess = _sess(s, stream_id)
     if body.ok:
@@ -245,7 +263,7 @@ class CloseIn(BaseModel):
     status: str = "done"  # done | aborted
 
 
-@streams.post("/{stream_id}/close")
+@streams.post("/{stream_id}/close", dependencies=[Depends(require_reviewer)])
 def stream_close(stream_id: int, body: CloseIn, s: Session = Depends(get_session)):
     sess = _sess(s, stream_id)
     sess.status = body.status if body.status in ("done", "aborted") else "done"

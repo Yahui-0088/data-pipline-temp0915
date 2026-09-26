@@ -456,7 +456,9 @@
     let done = 0;
     try {
       info.textContent = "预热…";                                   // 一次读完这段 z 的两份体数据，比逐片读快一个量级
-      await json(`${API}/${encodeURIComponent(state.block)}/compare/warm`, play.controller.signal, {z0: play.lo, z1: play.hi});
+      // 预热只是加速：服务器忙（别人在预热）时跳过，逐片预载照样能播，只是慢一点
+      await json(`${API}/${encodeURIComponent(state.block)}/compare/warm`, play.controller.signal, {z0: play.lo, z1: play.hi})
+        .catch(e => { if (e.name === "AbortError") throw e; });
       // 4 路并发预载，顺序仍是先中间再两边
       const queue = order.slice();
       const worker = async () => { while (queue.length) { if (play.controller.signal.aborted) return; const z = queue.shift(); await fetchFrame(z, play.controller.signal); done++; info.textContent = `预载 ${done}/${order.length}`; } };

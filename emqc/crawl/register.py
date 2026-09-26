@@ -197,8 +197,11 @@ def start_crawl_async(dataset_id: str, url: str, roi, mip: int = 0, out_dir: str
     job_id = create_crawl_job(dataset_id, url, roi, mip, out_dir, **kw)
 
     def _target():
+        from emqc.jobslots import slot
+
         try:
-            CrawlRunner(job_id).run()
+            with slot("crawl"):                 # 同一时间只跑一个爬取，其余排队（见 emqc.jobslots）
+                CrawlRunner(job_id).run()
         except Exception:
             log.exception("crawl job %s failed", job_id)
 

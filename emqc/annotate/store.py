@@ -40,6 +40,8 @@ import os
 import shutil
 import threading
 import time
+import uuid
+import zipfile
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +60,8 @@ CREATED_LABELS = "created_labels.json"
 AUDIT_LOG = "audit.jsonl"
 WORKDIR_LOCK = ".server.lock"
 MAX_LABELS_PER_SLICE = 65535
+UNDONE_DIR = "undone"            # edits/undone/：撤销掉的改动文件挪到这里，不删（误撤、事后追查都还找得到）
+MAX_PAINT_STEPS = 200_000        # 一笔画笔插值后的总步数上限：正常一笔几百到几千步，再大就是脚本或异常请求
 _BLOCK_LOCKS = WeakValueDictionary()
 _BLOCK_LOCKS_GUARD = threading.Lock()
 _HELD_WORKDIRS: dict[str, object] = {}
@@ -143,6 +147,120 @@ def hold_workdir(root: Path) -> None:
         _HELD_WORKDIRS[key] = fh
 
 
+class _Shared:
+    """同一个块在本进程里的共享状态：锁，以及每一片的"像素版本"（写完像素加一）。
+
+    工作台（写）和对比页（只读）各有一个 Block 对象，缓存各管各的；缓存键里带上像素版本，
+    谁的缓存都不会在别人写完之后还拿旧图出来。"""
+    __slots__ = ("lock", "gen", "__weakref__")
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.gen: dict[int, int] = {}
+
+
+def _stat_key(p: Path):
+    """文件变没变：inode、大小、修改时间。追加改大小，撤销时整文件替换换 inode。"""
+    try:
+        st = p.stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _whole_record(raw: bytes) -> bool:
+    try:
+        return isinstance(json.loads(raw.decode("utf-8")), dict)
+    except ValueError:                                  # 含 UnicodeDecodeError（断在一个汉字的中间）
+        return False
+
+
+def _append_line(p: Path, line: str) -> int:
+    """往只追加的日志末尾写一行并落盘。返回追加前的文件长度——后面的步骤失败时截回去，日志里就不会留下
+    一条没有真正发生的记录。
+
+    文件末尾没有换行时：那一行要是残缺的（上一次追加断在半路），切掉它；要是一条完整的记录只是缺了换行
+    （比如手工修过文件），补上换行、保留它——和 _parse_log 的读法一致，读的时候算数的记录，写的时候也不会删。
+    这一次追加自己失败了（磁盘满），把写了一半的内容截掉再报错，不留半行。"""
+    fd = os.open(p, os.O_RDWR | os.O_CREAT, 0o644)
+    with os.fdopen(fd, "r+b") as f:
+        end = f.seek(0, os.SEEK_END)
+        if end:
+            f.seek(end - 1)
+            if f.read(1) != b"\n":
+                cut, pos = 0, end
+                while pos > 0:
+                    step = min(65536, pos)
+                    pos -= step
+                    f.seek(pos)
+                    k = f.read(step).rfind(b"\n")
+                    if k >= 0:
+                        cut = pos + k + 1
+                        break
+                f.seek(cut)
+                if _whole_record(f.read(end - cut)):
+                    log.warning("%s: 最后一条记录缺换行，已补上", p)
+                    f.seek(end)
+                    f.write(b"\n")
+                    end += 1
+                else:
+                    log.warning("%s: 末尾有半行（上次追加中断），追加前已切掉", p)
+                    f.truncate(cut)
+                    end = cut
+        f.seek(end)
+        try:
+            f.write(line.encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+        except OSError:
+            try:
+                f.truncate(end)
+            except OSError:
+                pass
+            raise
+    return end
+
+
+def _parse_log(p: Path, what: str) -> list[dict]:
+    """逐行读只追加的日志。最后一行残缺而且文件不以换行结尾 = 上次追加断在半路（这种日志唯一合理的损坏方式），
+    丢掉那半行继续；别的地方坏了说明文件被人改过，拒绝读取，宁可停下也不给出错的记录。
+
+    按字节切行、每行单独解码：半行可能正好断在一个汉字中间，整文件解码会在读到任何一行之前就失败；
+    也不能按 str.splitlines 切——它把名字里的 U+2028 之类也当换行。"""
+    data = p.read_bytes()
+    lines = data.split(b"\n")
+    out = []
+    for i, raw in enumerate(lines):
+        if not raw.strip():
+            continue
+        try:
+            out.append(json.loads(raw.decode("utf-8")))
+        except ValueError:                              # 含 UnicodeDecodeError
+            if i == len(lines) - 1 and not data.endswith(b"\n"):
+                log.warning("%s: 末尾一行残缺（上次追加中断），已忽略", p)
+                break
+            raise ValueError(f"{what}格式损坏，无法可靠读取操作顺序")
+    return out
+
+
+def disk_free(path: Path) -> int:
+    """path 所在盘剩多少字节（path 不存在就往上找存在的那一级）。"""
+    p = Path(path)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return shutil.disk_usage(p).free
+
+
+def _check_free(path: Path, need: int = 0) -> None:
+    """写之前工作目录所在的盘至少要剩 need + EMQC_ANNOTATE_MIN_FREE_MB：磁盘写满时 memmap 写入会让整个进程
+    收到 SIGBUS 直接死掉，改动记录也会写一半——宁可提前拒绝这一笔、提示管理员清盘。"""
+    from emqc.config import settings
+
+    free = disk_free(path)
+    if free < need + settings.annotate_min_free_mb * 1024 * 1024:
+        raise ValueError(f"服务器磁盘空间不足（{path} 所在盘只剩 {free / 2**30:.1f} GB），为免数据写坏已暂停写入，请联系管理员清理")
+
+
 def label_color(label: int) -> tuple[int, int, int]:
     """Match the browser's FNV-1a/HSL palette, including Math.round rounding."""
     h = 2166136261
@@ -180,7 +298,10 @@ class Block:
         # Comparison and editing stores share a lock, even when they use separate read-only handles.
         key = (self.path.resolve(), self.work.resolve())
         with _BLOCK_LOCKS_GUARD:
-            self.lock = _BLOCK_LOCKS.setdefault(key, threading.RLock())
+            self._shared = _BLOCK_LOCKS.get(key)
+            if self._shared is None:
+                self._shared = _BLOCK_LOCKS[key] = _Shared()
+        self.lock = self._shared.lock
         self.em = np.load(self.path / "em.npy", mmap_mode="r")  # (rows, cols, z)
         if self.em.ndim != 3:
             raise ValueError(f"{self.path}/em.npy must be 3-D, got {self.em.shape}")
@@ -193,9 +314,11 @@ class Block:
             with self.lock:
                 self._migrate_legacy()
         self._max_id: int | None = None
-        self._audit: list[dict] | None = None   # audit.jsonl 的内存副本，只有写入方缓存（见 audit_entries）
+        # audit.jsonl / edits.jsonl 解析结果，连同解析时文件的 (inode, 大小, 修改时间)：文件没变就不重读
+        self._audit: tuple | None = None
+        self._edits: tuple | None = None
         self._png_cache: OrderedDict[tuple, bytes] = OrderedDict()
-        self._label_cache: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+        self._label_cache: OrderedDict[tuple, tuple[np.ndarray, np.ndarray]] = OrderedDict()   # (z, 像素版本) -> 索引
         # same thing for the DELIVERED labels: never invalidated (seg.npy is read-only), used by the compare page
         # to rebuild a baseline plane with a 5 ms gather instead of a 250 ms strided read of the whole file
         self._label_cache_ro: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
@@ -268,8 +391,10 @@ class Block:
         # 旧式无工作目录的调用者直接写在数据目录旁边——那里一个锁文件都不该留
         if self.work != self.path:
             hold_workdir(self.work.parent)
-        # 先把审计流水读进来：它要是坏了，就在写任何像素之前失败，而不是像素和 edits.jsonl 都写完了才在追加流水时抛错
+        # 先把两份日志读进来：哪份坏了，都在写任何像素之前失败，而不是像素写完了才在记录时抛错
         self.audit_entries()
+        self.edits()
+        _check_free(self.work)
 
     def _seg_writable(self) -> np.ndarray:
         """Copy-on-write: materialise seg_edit.npy from seg.npy on first edit; seg.npy is never modified."""
@@ -282,14 +407,23 @@ class Block:
         if self._seg_rw is None:
             if not p.exists():
                 self.work.mkdir(parents=True, exist_ok=True)
-                src = self._seg_ro
+                src = self.path / "seg.npy"
+                _check_free(self.work, src.stat().st_size)
                 tmp = self.work / (SEG_EDIT + ".part")
-                dst = np.lib.format.open_memmap(tmp, mode="w+", dtype=src.dtype, shape=src.shape)
-                step = max(1, src.shape[2] // 10)
-                for k in range(0, src.shape[2], step):  # chunked so an 800 MB volume never sits in RAM twice
-                    dst[:, :, k:k + step] = src[:, :, k:k + step]
-                dst.flush()
-                del dst
+                # 整文件逐字节复制，不用"建一个稀疏的 memmap 再往里填"：稀疏文件建出来不占盘，真正写的时候盘满了
+                # 进程直接收到 SIGBUS 死掉；复制则在盘满时老老实实抛 OSError，这一笔拒绝，服务照常
+                try:
+                    shutil.copyfile(src, tmp)
+                    with open(tmp, "rb+") as fh:
+                        os.fsync(fh.fileno())
+                    check = np.load(tmp, mmap_mode="r")
+                    if check.shape != self._seg_ro.shape or check.dtype != self._seg_ro.dtype:
+                        tmp.unlink(missing_ok=True)
+                        raise ValueError("工作副本和原始分割的形状或类型不一致")
+                    del check
+                except OSError as e:
+                    tmp.unlink(missing_ok=True)
+                    raise ValueError(f"建工作副本失败（{e.strerror or e}），多半是磁盘满了，请联系管理员") from e
                 tmp.rename(p)
             self._seg_rw = np.load(p, mmap_mode="r+")
         return self._seg_rw
@@ -351,27 +485,34 @@ class Block:
             raise ValueError(f"slice {z} has {ids.size} labels; the uint16 index map holds at most {MAX_LABELS_PER_SLICE}")
         return np.searchsorted(ids, s).astype(np.uint16), ids
 
-    def _labels_cached(self, cache: OrderedDict, z: int, plane) -> tuple[np.ndarray, np.ndarray]:
+    def _gen(self, z: int) -> int:
+        """第 z 片的像素版本：写入方每写完一次像素加一（见 _invalidate）。和工作台、对比页共享。"""
+        return self._shared.gen.get(z, 0)
+
+    def _labels_cached(self, cache: OrderedDict, key, z: int, plane) -> tuple[np.ndarray, np.ndarray]:
         with self.lock:
-            if z in cache:
-                cache.move_to_end(z)
-                return cache[z]
+            if key in cache:
+                cache.move_to_end(key)
+                return cache[key]
         got = self._index(plane(), z)
         with self.lock:
-            cache[z] = got
+            cache[key] = got
             while len(cache) > self.LABEL_CACHE_SIZE:
                 cache.popitem(last=False)
         return got
 
     def labels(self, z: int) -> tuple[np.ndarray, np.ndarray]:
-        """(idx16 (y, x), ids) of the CURRENT labels — idx 0 is always id 0 / background."""
+        """(idx16 (y, x), ids) of the CURRENT labels — idx 0 is always id 0 / background.
+
+        缓存键是 (z, 像素版本)，版本在读像素之前取：算到一半有人写了，缓存里至多是比键更新的图（下次版本变了重算），
+        绝不会是比键更旧的图——那样对比页会一直显示改动之前的结果。"""
         self._check_z(z)
-        return self._labels_cached(self._label_cache, z, lambda: self.seg_slice(z))
+        return self._labels_cached(self._label_cache, (z, self._gen(z)), z, lambda: self.seg_slice(z))
 
     def labels_baseline(self, z: int) -> tuple[np.ndarray, np.ndarray]:
         """Same for the DELIVERED labels (seg.npy). Cached for good — the delivery never changes."""
         self._check_z(z)
-        return self._labels_cached(self._label_cache_ro, z, lambda: np.ascontiguousarray(self._seg_ro[:, :, z].T))
+        return self._labels_cached(self._label_cache_ro, z, z, lambda: np.ascontiguousarray(self._seg_ro[:, :, z].T))
 
     def warm_labels(self, z0: int, z1: int) -> dict:
         """Fill both label caches for sections z0..z1 in ONE pass over each volume.
@@ -383,11 +524,12 @@ class Block:
         z0, z1 = max(0, int(z0)), min(self.shape_zyx[0] - 1, int(z1))
         if z1 < z0:
             raise ValueError("z1 must be >= z0")
-        todo_rw = [z for z in range(z0, z1 + 1) if z not in self._label_cache]
+        keys_rw = {z: (z, self._gen(z)) for z in range(z0, z1 + 1)}         # 版本在读体数据之前取，理由见 labels
+        todo_rw = [z for z in range(z0, z1 + 1) if keys_rw[z] not in self._label_cache]
         todo_ro = [z for z in range(z0, z1 + 1) if z not in self._label_cache_ro] if self.has_seg else []
         started = time.perf_counter()
-        for todo, vol, cache in ((todo_ro, (lambda: self._seg_ro), self._label_cache_ro),
-                                 (todo_rw, (lambda: self._seg()), self._label_cache)):
+        for todo, vol, cache, key in ((todo_ro, (lambda: self._seg_ro), self._label_cache_ro, (lambda z: z)),
+                                      (todo_rw, (lambda: self._seg()), self._label_cache, keys_rw.get)):
             if not todo or not self.has_seg:
                 continue
             lo, hi = min(todo), max(todo) + 1
@@ -395,21 +537,23 @@ class Block:
             for z in todo:
                 got = self._index(np.ascontiguousarray(slab[:, :, z - lo].T), z)
                 with self.lock:
-                    cache[z] = got
-                    cache.move_to_end(z)
+                    cache[key(z)] = got
+                    cache.move_to_end(key(z))
                     while len(cache) > self.LABEL_CACHE_SIZE:
                         cache.popitem(last=False)
         return {"z0": z0, "z1": z1, "warmed_current": len(todo_rw), "warmed_baseline": len(todo_ro),
                 "seconds": round(time.perf_counter() - started, 3)}
 
     def labels_png(self, z: int) -> bytes:
+        gen = self._gen(z)
+
         def make():
             idx, _ = self.labels(z)
             rgb = np.zeros(idx.shape + (3,), dtype=np.uint8)
             rgb[..., 0] = idx >> 8
             rgb[..., 1] = idx & 255
             return _png(Image.fromarray(rgb, mode="RGB"))
-        return self._cached(("labels", z), make)
+        return self._cached(("labels", z, gen), make)
 
     def labels_table(self, z: int) -> dict:
         idx, ids = self.labels(z)
@@ -422,9 +566,13 @@ class Block:
         return int(self._seg()[x, y, z])        # screen x -> axis 0, screen y -> axis 1
 
     def _invalidate(self, z: int) -> None:
+        """第 z 片的像素刚写完：版本加一（工作台、对比页的缓存都跟着失效），顺手丢掉自己这边的旧缓存省内存。"""
         with self.lock:
-            self._label_cache.pop(z, None)
-            self._png_cache.pop(("labels", z), None)
+            self._shared.gen[z] = self._shared.gen.get(z, 0) + 1
+            for k in [k for k in self._label_cache if k[0] == z]:
+                self._label_cache.pop(k, None)
+            for k in [k for k in self._png_cache if k[0] == "labels" and k[1] == z]:
+                self._png_cache.pop(k, None)
 
     # ------------------------------------------------------------------ ids
     def max_id(self) -> int:
@@ -473,23 +621,43 @@ class Block:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _load_edit(self, n: int, keys: tuple[str, ...] | None = None) -> dict:
+        """第 n 笔改动的像素记录（edits/<n>.npz）；给了 keys 就只解压这几个数组（没有的跳过）。
+        文件坏了抛 ValueError（接口返回 422），不让 EOFError / BadZipFile 变成 500。"""
+        try:
+            with np.load(self.work_path(f"{EDIT_DIR}/{n:06d}.npz"), allow_pickle=False) as data:
+                names = data.files if keys is None else [k for k in keys if k in data.files]
+                return {key: data[key] for key in names}
+        except FileNotFoundError as e:
+            raise ValueError(f"改动 #{n} 的像素记录文件不见了，这一笔无法撤销或溯源，请联系管理员") from e
+        except (EOFError, zipfile.BadZipFile, OSError, ValueError) as e:
+            raise ValueError(f"改动 #{n} 的像素记录文件已损坏（{e}），这一笔无法撤销，请联系管理员") from e
+
     def _edit_in_slice(self, rec: dict, z: int) -> dict | None:
         if rec.get("z") is not None:
             return rec if rec["z"] == z else None
-        with np.load(self.work_path(f"{EDIT_DIR}/{rec['n']:06d}.npz"), allow_pickle=False) as data:
-            zs = data["zs"] if "zs" in data.files else np.full(data["xs"].shape, int(data["z"]))
-            n_px = int(np.count_nonzero(zs == z))
+        d = self._load_edit(rec["n"], ("zs",))           # 列表和撤销每次都要问：只解压 zs，不碰其余几个大数组
+        if "zs" not in d:
+            d = self._load_edit(rec["n"], ("xs", "z"))
+        zs = d["zs"] if "zs" in d else np.full(d["xs"].shape, int(d["z"]))
+        n_px = int(np.count_nonzero(zs == z))
         return {**rec, "z": z, "n_px": n_px, "n_slices": 1} if n_px else None
 
     def edits(self, z: int | None = None) -> list[dict]:
+        """当前有效的改动记录，从旧到新。解析结果按文件的 (inode, 大小, 修改时间) 缓存：落一笔、心跳、溯源
+        都要读它，历史长了每次整文件重读很费；文件一变（追加、撤销时整文件替换）就重读。返回的是副本，可以随便改。"""
         if z is not None:
             self._check_z(z)
             with self.lock:
                 return [entry for rec in self.edits() if (entry := self._edit_in_slice(rec, z)) is not None]
         p = self.work_path(EDIT_LOG)
-        if not p.exists():
+        key = _stat_key(p)
+        if key is None:
             return []
-        records = [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+        cached = self._edits
+        if cached is not None and cached[0] == key:
+            return list(cached[1])
+        records = _parse_log(p, "编辑日志")
         previous = 0
         for rec in records:
             if (not isinstance(rec, dict) or type(rec.get("n")) is not int or rec["n"] <= previous
@@ -497,7 +665,8 @@ class Block:
                     or (rec.get("z") is not None and (type(rec["z"]) is not int or not 0 <= rec["z"] < self.nz))):
                 raise ValueError("编辑日志格式损坏，无法可靠读取操作顺序或切片坐标")
             previous = rec["n"]
-        return records
+        self._edits = (key, records)
+        return list(records)
 
     def edit_mask_png(self, n: int, z: int) -> bytes:
         """Read an active edit's footprint in display coordinates, including erased pixels."""
@@ -506,12 +675,12 @@ class Block:
             rec = next((rec for rec in self.edits() if rec["n"] == n), None)
             if rec is None or (rec.get("z") is not None and rec["z"] != z):
                 raise KeyError("本片没有这笔改动，可能已撤销")
-            with np.load(self.work_path(f"{EDIT_DIR}/{n:06d}.npz"), allow_pickle=False) as data:
-                xs, ys = data["xs"].astype(np.intp), data["ys"].astype(np.intp)
-                zs = data["zs"] if "zs" in data.files else np.full(xs.shape, int(data["z"]))
-                if xs.shape != ys.shape or xs.shape != zs.shape or xs.ndim != 1:
-                    raise ValueError("改动像素记录格式无效")
-                xs, ys = xs[zs == z], ys[zs == z]
+            data = self._load_edit(n)
+            xs, ys = data["xs"].astype(np.intp), data["ys"].astype(np.intp)
+            zs = data["zs"] if "zs" in data else np.full(xs.shape, int(data["z"]))
+            if xs.shape != ys.shape or xs.shape != zs.shape or xs.ndim != 1:
+                raise ValueError("改动像素记录格式无效")
+            xs, ys = xs[zs == z], ys[zs == z]
             if not xs.size:
                 raise KeyError("本片没有这笔改动")
             h, w = self.shape_zyx[1:]
@@ -529,14 +698,34 @@ class Block:
                 zs: np.ndarray | None = None, by: "str | Actor | None" = None) -> dict:
         """Persist one edit: every changed voxel (x, y, z) and the id it had before. `z` is the section shown in the
         UI (None for a 3-D edit spanning several sections); `zs` defaults to a constant z. `by` is who did it: the
-        logged-in user (an Actor with account name and id), or just a display name when running without accounts."""
+        logged-in user (an Actor with account name and id), or just a display name when running without accounts.
+
+        **必须在写像素之前调用**（每个写操作都是：算出要改哪些像素和它们的旧值 → _record → 写像素）。这样无论在哪一步
+        失败，都不会出现"像素改了却没有记录"——那种改动撤不掉、也查不到是谁改的。反过来"有记录、像素没写成"是无害的：
+        撤销时回填的旧值和现在的值一样。记录本身三步（像素文件、edits.jsonl、audit.jsonl），后面一步失败就把前面的撤回。"""
         actor = Actor.coerce(by)
-        log = self.edits()
-        n = (log[-1]["n"] + 1) if log else 1
+        edit_dir = self._edit_dir()
+        history = self.edits()
+        n = (history[-1]["n"] + 1) if history else 1
         if zs is None:
             zs = np.full(xs.shape, int(z), dtype=np.uint16)
-        np.savez_compressed(self._edit_dir() / f"{n:06d}.npz", z=-1 if z is None else int(z), xs=xs.astype(np.uint16), ys=ys.astype(np.uint16),
-                            zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id))
+        npz = edit_dir / f"{n:06d}.npz"
+        if npz.exists():
+            # 日志里没有第 n 笔、文件却在：上一次撤销收尾时没挪走的。别覆盖，挪进回收目录
+            try:
+                (edit_dir / UNDONE_DIR).mkdir(exist_ok=True)
+                os.replace(npz, edit_dir / UNDONE_DIR / f"{n:06d}-orphan-{uuid.uuid4().hex[:6]}.npz")
+            except OSError:
+                log.exception("没能把孤立的改动文件 %s 挪进回收目录，将被这一笔覆盖", npz)
+        try:
+            with open(npz, "wb") as fh:
+                np.savez_compressed(fh, z=-1 if z is None else int(z), xs=xs.astype(np.uint16), ys=ys.astype(np.uint16),
+                                    zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id))
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError as e:
+            npz.unlink(missing_ok=True)
+            raise ValueError(f"改动记录没写成（{e.strerror or e}），这一笔没有生效，多半是磁盘满了，请联系管理员") from e
         many = np.ndim(new_id) > 0                  # historical edits may write a different id per pixel
         rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size),
                "new_id": (f"{int(np.unique(new_id).size)} 个 id" if many else str(int(new_id))),
@@ -546,10 +735,25 @@ class Block:
         rec["source"] = source_for_edit(rec)
         rec["provenance_version"] = 1
         self.work.mkdir(parents=True, exist_ok=True)
-        with open(self.work / EDIT_LOG, "a") as f:
-            f.write(json.dumps(rec) + "\n")
-        self._audit_append({"action": "edit", "by": None, **(actor.stamp() if actor else {}), "n": n, "kind": kind, "z": rec["z"],
-                            "n_px": rec["n_px"], "new_id": rec["new_id"], "n_slices": rec["n_slices"]})
+        edit_log = self.work / EDIT_LOG
+        try:
+            before = _append_line(edit_log, json.dumps(rec) + "\n")
+        except OSError as e:
+            npz.unlink(missing_ok=True)
+            raise ValueError(f"改动记录没写成（{e.strerror or e}），这一笔没有生效，多半是磁盘满了，请联系管理员") from e
+        try:
+            self._audit_append({"action": "edit", "by": None, **(actor.stamp() if actor else {}), "n": n, "kind": kind, "z": rec["z"],
+                                "n_px": rec["n_px"], "new_id": rec["new_id"], "n_slices": rec["n_slices"]})
+        except (OSError, ValueError) as e:
+            # 流水没记上：把刚追加的那一行和像素文件都撤回，这一笔当作没发生（像素还没写）
+            try:
+                os.truncate(edit_log, before)
+                npz.unlink(missing_ok=True)
+            except OSError:
+                log.exception("撤回改动 #%s 的记录失败：edits.jsonl 里可能多出一条像素没写成的记录（无害，撤销时回填的是原值）", n)
+            if isinstance(e, ValueError):
+                raise
+            raise ValueError(f"操作流水没写成（{e.strerror or e}），这一笔没有生效，多半是磁盘满了，请联系管理员") from e
         if self._max_id is not None:
             self._max_id = max(self._max_id, int(np.max(new_id)) if many else int(new_id))
         return rec
@@ -557,55 +761,40 @@ class Block:
     # ------------------------------------------------------------------ 谁改的：审计流水、切片版本、改动人
     def _audit_append(self, entry: dict) -> dict:
         with self.lock:
-            entries = self.audit_entries()
+            entries = list(self.audit_entries())
             entry = {"seq": (int(entries[-1]["seq"]) + 1) if entries else 1, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **entry}
             self.work.mkdir(parents=True, exist_ok=True)
             p = self.work / AUDIT_LOG
-            # 上一次追加要是在半路断了（崩溃、磁盘满），文件末尾是半行：先把那半行切掉（audit_entries 读的时候已经
-            # 忽略了它），再追加，免得它留在文件中间变成一行读不出来的垃圾
-            if p.exists():
-                data = p.read_bytes()
-                if data and not data.endswith(b"\n"):
-                    with open(p, "r+b") as f:
-                        f.truncate(data.rfind(b"\n") + 1)
-            with open(p, "a") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            _append_line(p, json.dumps(entry, ensure_ascii=False) + "\n")   # 上次断在半路留下的半行会先切掉
             entries.append(entry)
+            self._audit = (_stat_key(p), entries)
             return entry
 
     def audit_entries(self) -> list[dict]:
-        """每一次写入和撤销，从旧到新。写入方缓存在内存里（本进程是唯一的写入者，见 hold_workdir）；
-        只读句柄（对比页）每次重读文件，才看得到工作台刚做的动作。
+        """每一次写入和撤销，从旧到新。解析结果按文件的 (inode, 大小, 修改时间) 缓存：写入方自己追加后直接更新缓存；
+        只读句柄（对比页）和同一个块的另一个 Block 对象（服务运行中块列表重建过）看到文件变了就重读，
+        不会拿着旧流水算出重复的流水号。返回值不要改。
 
         末尾那一行要是残缺的（追加时崩溃），丢掉它继续——这是追加日志唯一合理的损坏方式；
         中间坏了则说明文件被人改过，拒绝读取，宁可停下也不给出错的"谁改的"。"""
+        p = self.work_path(AUDIT_LOG)
+        key = _stat_key(p)
         cached = self._audit
-        if cached is not None:
-            return cached
+        if cached is not None and cached[0] == key:
+            return cached[1]
         with self.lock:
-            if self._audit is not None:
-                return self._audit
-            p = self.work_path(AUDIT_LOG)
+            key = _stat_key(p)
+            if self._audit is not None and self._audit[0] == key:
+                return self._audit[1]
             entries: list[dict] = []
-            if p.exists():
-                lines = p.read_text().splitlines()
+            if key is not None:
                 seq = 0
-                for i, line in enumerate(lines):
-                    if not line.strip():
-                        continue
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        if i == len(lines) - 1:
-                            log.warning("%s: 末尾一行残缺（上次追加中断），已忽略", p)
-                            break
-                        raise ValueError("审计日志格式损坏，无法可靠读取操作顺序")
+                for e in _parse_log(p, "审计日志"):
                     if not isinstance(e, dict) or type(e.get("seq")) is not int or e["seq"] <= seq:
                         raise ValueError("审计日志格式损坏，无法可靠读取操作顺序")
                     seq = e["seq"]
                     entries.append(e)
-            if not self.read_only:
-                self._audit = entries
+            self._audit = (key, entries)
             return entries
 
     def slice_rev(self, z: int) -> int:
@@ -653,6 +842,8 @@ class Block:
         return {k: log[-1].get(k) for k in ("n", "kind", "z", "n_px", "ts", "by")}
 
     def _check_id(self, new_id: int) -> int:
+        if not self.has_seg:
+            raise ValueError("block has no seg.npy")
         new_id = int(new_id)
         if not 0 <= new_id <= np.iinfo(self._seg_ro.dtype).max:
             raise ValueError("label id is outside the segmentation dtype range")
@@ -696,10 +887,11 @@ class Block:
             if not xs.size:
                 return None
             old = seg[xs, ys, z].copy()
+            rec = self._record("clear", z, xs, ys, old, 0, {"scope": "batch", "ids": [str(i) for i in ids], "n_ids": len(ids)}, by=by)
             plane[mask] = 0
             seg.flush()
             self._invalidate(z)
-            return self._record("clear", z, xs, ys, old, 0, {"scope": "batch", "ids": [str(i) for i in ids], "n_ids": len(ids)}, by=by)
+            return rec
 
     def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False, by: str | None = None) -> dict | None:
         """Bucket fill: relabel the connected component of the clicked pixel (4-connectivity within the slice) to
@@ -718,10 +910,11 @@ class Block:
                 lab, _ = ndimage.label(mask)
                 mask = lab == lab[y, x]
             xs, ys = self._disk_idx(mask)
+            rec = self._record("fill", z, xs, ys, old, new_id, {"x": int(x), "y": int(y), "whole_slice": bool(whole_slice)}, by=by)
             plane[mask] = new_id
             seg.flush()
             self._invalidate(z)
-            return self._record("fill", z, xs, ys, old, new_id, {"x": int(x), "y": int(y), "whole_slice": bool(whole_slice)}, by=by)
+            return rec
 
     def paint(self, z: int, points: list[tuple[int, int]], radius: int, new_id: int, by: str | None = None,
               only_id: int | None = None) -> dict | None:
@@ -737,23 +930,19 @@ class Block:
         if not points:
             return None
         radius = max(0, int(radius))
+        steps = sum(int(max(abs(x1 - x0), abs(y1 - y0))) for (x0, y0), (x1, y1) in zip(points, points[1:]))
+        if steps > MAX_PAINT_STEPS:
+            # 一笔的长度设上限：没有上限时一个 2 万点的请求能在锁里跑两分钟、吃掉几个 GB 内存，这块上所有人跟着卡住
+            raise ValueError(f"这一笔太长了（{steps} 步，上限 {MAX_PAINT_STEPS}），请分几笔画")
         with self.lock:
             seg = self._seg_writable()
             plane = self._plane(z)
             H, W = plane.shape
-            mask = np.zeros(plane.shape, dtype=bool)
-            yy, xx = np.ogrid[-radius:radius + 1, -radius:radius + 1]
-            disc = (xx * xx + yy * yy) <= radius * radius
             pts = [points[0]]
             for (x0, y0), (x1, y1) in zip(points, points[1:]):  # bridge gaps between sampled mouse positions
                 n = int(max(abs(x1 - x0), abs(y1 - y0)))
                 pts.extend((int(round(x0 + (x1 - x0) * t / n)), int(round(y0 + (y1 - y0) * t / n))) for t in range(1, n + 1))
-            for x, y in pts:  # x = column, y = row
-                c0, c1 = max(0, x - radius), min(W, x + radius + 1)
-                r0, r1 = max(0, y - radius), min(H, y + radius + 1)
-                if c1 <= c0 or r1 <= r0:
-                    continue
-                mask[r0:r1, c0:c1] |= disc[r0 - (y - radius):r1 - (y - radius), c0 - (x - radius):c1 - (x - radius)]
+            mask = self._stroke_mask(pts, radius, H, W)
             mask &= plane != new_id
             if new_id != 0:
                 mask &= plane == 0               # 所有画笔颜色都只补空白；橡皮仍可擦除已有标签
@@ -763,13 +952,39 @@ class Block:
             if xs.size == 0:
                 return None
             old = seg[xs, ys, z].copy()
-            plane[mask] = new_id
-            seg.flush()
-            self._invalidate(z)
             extra = {"radius": radius, "n_points": len(points)}
             if only_id is not None:
                 extra["only_id"] = str(only_id)
-            return self._record("paint", z, xs, ys, old, new_id, extra, by=by)
+            rec = self._record("paint", z, xs, ys, old, new_id, extra, by=by)
+            plane[mask] = new_id
+            seg.flush()
+            self._invalidate(z)
+            return rec
+
+    @staticmethod
+    def _stroke_mask(pts: list[tuple[int, int]], radius: int, H: int, W: int) -> np.ndarray:
+        """一笔盖到的像素：每个点半径 radius 的圆盘的并集 = 到最近一个点的距离不超过 radius 的像素。
+        用距离变换一次算完（耗时和点数、半径无关），不逐点盖章——逐点盖章在点多、半径大时要跑好几分钟。
+        圆盘外缘判定和逐点盖章完全一样：dx² + dy² ≤ r²。"""
+        mask = np.zeros((H, W), dtype=bool)
+        p = np.asarray(pts, dtype=np.int64).reshape(-1, 2)                     # (x = column, y = row)
+        # 离画面超过 radius 的点碰不到任何像素，丢掉；其余点放进一张四周各留 radius 的画布里
+        keep = (p[:, 0] >= -radius) & (p[:, 0] < W + radius) & (p[:, 1] >= -radius) & (p[:, 1] < H + radius)
+        p = p[keep]
+        if not p.size:
+            return mask
+        x0, x1 = max(0, int(p[:, 0].min()) - radius), min(W, int(p[:, 0].max()) + radius + 1)
+        y0, y1 = max(0, int(p[:, 1].min()) - radius), min(H, int(p[:, 1].max()) + radius + 1)
+        if x1 <= x0 or y1 <= y0:
+            return mask
+        ox, oy = x0 - radius, y0 - radius                                     # 画布左上角在画面坐标里的位置
+        centres = np.zeros((y1 - y0 + 2 * radius, x1 - x0 + 2 * radius), dtype=bool)
+        cx, cy = p[:, 0] - ox, p[:, 1] - oy
+        inside = (cx >= 0) & (cx < centres.shape[1]) & (cy >= 0) & (cy < centres.shape[0])
+        centres[cy[inside], cx[inside]] = True
+        d2 = ndimage.distance_transform_edt(~centres, return_distances=True) ** 2
+        mask[y0:y1, x0:x1] = (d2 <= radius * radius + 1e-6)[radius:radius + (y1 - y0), radius:radius + (x1 - x0)]
+        return mask
 
     def refine_edge(self, z: int, x: int, y: int, sensitivity: float = 0.5, reach: int = 4, by=None) -> dict | None:
         """修缮边缘：点到的那块标签如果压过了黑色的膜、跨到邻居身上，就往里收——收到膜为止。
@@ -799,11 +1014,12 @@ class Block:
                 return None
             seg = self._seg_writable()
             old = seg[xs, ys, z].copy()
+            rec = self._record("refine", z, xs, ys, old, 0, {"x": int(x), "y": int(y), "label": str(label),
+                                                           "sensitivity": float(sensitivity), "reach": int(reach)}, by=by)
             seg[xs, ys, z] = 0
             seg.flush()
             self._invalidate(z)
-            return self._record("refine", z, xs, ys, old, 0, {"x": int(x), "y": int(y), "label": str(label),
-                                                            "sensitivity": float(sensitivity), "reach": int(reach)}, by=by)
+            return rec
 
     def merge_pair(self, z: int, first: tuple[int, int], second: tuple[int, int], by: str | None = None) -> dict | None:
         """Relabel only the second clicked 4-connected region using the first's id.
@@ -828,38 +1044,43 @@ class Block:
             components, _ = ndimage.label(plane == from_id)
             xs, ys = self._disk_idx(components == components[sy, sx])
             seg = self._seg_writable()
+            rec = self._record("merge", z, xs, ys, from_id, to_id,
+                               {"scope": "component", "first": list(first), "second": list(second)}, by=by)
             seg[xs, ys, z] = to_id
             seg.flush()
             self._invalidate(z)
-            return self._record("merge", z, xs, ys, from_id, to_id,
-                                {"scope": "component", "first": list(first), "second": list(second)}, by=by)
+            return rec
 
     def merge(self, from_id: int, to_id: int, scope: str = "block", z: int | None = None, by: str | None = None) -> dict | None:
         """Give every voxel of `from_id` the id `to_id` — the two cells become one segment (one colour).
         scope "block": all sections; "slice": only section z. Returns the edit record, or None if nothing changed."""
+        from_id, to_id = self._check_id(from_id), self._check_id(to_id)
+        if from_id == 0:
+            raise ValueError("不能把背景合并到别的标签上")
         if from_id == to_id:
             return None
+        if scope == "slice":
+            if z is None:
+                raise ValueError("只合并本片时要给出是哪一片")
+            self._check_z(int(z))
         with self.lock:
             seg = self._seg_writable()
             ks = [int(z)] if scope == "slice" else range(seg.shape[2])
-            if scope == "slice":
-                self._check_z(int(z))
+            # 先只读扫一遍收集坐标，记录落盘之后再写像素（见 _record）
             xs_all, ys_all, zs_all = [], [], []
             for k in ks:
-                plane = seg[:, :, k]
-                m = plane == from_id
-                if not m.any():
-                    continue
-                xs, ys = np.nonzero(m)
-                plane[m] = to_id
-                xs_all.append(xs); ys_all.append(ys); zs_all.append(np.full(xs.shape, k, dtype=np.uint16))
+                xs, ys = np.nonzero(seg[:, :, k] == from_id)
+                if xs.size:
+                    xs_all.append(xs); ys_all.append(ys); zs_all.append(np.full(xs.shape, k, dtype=np.uint16))
             if not xs_all:
                 return None
-            seg.flush()
             xs, ys, zs = np.concatenate(xs_all), np.concatenate(ys_all), np.concatenate(zs_all)
+            rec = self._record("merge", (int(z) if scope == "slice" else None), xs, ys, from_id, to_id, {"scope": scope}, zs=zs, by=by)
+            seg[xs, ys, zs.astype(np.intp)] = to_id
+            seg.flush()
             for k in np.unique(zs):
                 self._invalidate(int(k))
-            return self._record("merge", (int(z) if scope == "slice" else None), xs, ys, from_id, to_id, {"scope": scope}, zs=zs, by=by)
+            return rec
 
     def undo(self, z: int | None = None, by: "str | Actor | None" = None, force: bool = False,
              expect_n: int | None = None) -> dict | None:
@@ -900,44 +1121,76 @@ class Block:
             if actor is not None and owner is not None and not same_actor(rec, actor) and not force and (verified or actor.id is None):
                 raise UndoForbidden(undone)
             f = self._edit_dir() / f"{rec['n']:06d}.npz"
-            with np.load(f, allow_pickle=False) as data:
-                d = {key: data[key] for key in data.files}
+            d = self._load_edit(int(rec["n"]))
             xs, ys = d["xs"].astype(np.intp), d["ys"].astype(np.intp)
             zs = d["zs"].astype(np.intp) if "zs" in d else np.full(xs.shape, int(d["z"]), dtype=np.intp)
             chosen = np.ones(xs.shape, dtype=bool) if z is None else zs == z
             remaining = ~chosen
-            if remaining.any():
-                rest = {key: (value[remaining] if key in {"xs", "ys", "zs", "old", "new"} and value.ndim else value)
-                        for key, value in d.items()}
-                partial = f.with_suffix(".npz.part")
-                with partial.open("wb") as out:
-                    np.savez_compressed(out, **rest)
-                log[index] = {**rec, "n_px": int(remaining.sum()), "n_slices": int(np.unique(zs[remaining]).size)}
-            else:
-                log.pop(index)
             seg = self._seg_writable()
-            for k in np.unique(zs[chosen]):
-                m = chosen & (zs == k)
-                seg[xs[m], ys[m], int(k)] = d["old"][m] if np.ndim(d["old"]) else d["old"]
-            seg.flush()
-            if remaining.any():
-                partial.replace(f)
-            else:
-                f.unlink()
-            log_path = self.work / (EDIT_LOG + ".part")
-            log_path.write_text("".join(json.dumps(r) + "\n" for r in log))
-            log_path.replace(self.work / EDIT_LOG)
-            for k in np.unique(zs[chosen]):
-                self._invalidate(int(k))
-            self._audit_append({"action": "undo", "by": None, **(actor.stamp() if actor else {}), "n": int(rec["n"]),
-                                "kind": rec.get("kind"), "z": (None if z is None else int(z)), "n_px": int(undone.get("n_px") or 0),
-                                "of": owner, "of_user": rec.get("by_user"), "of_id": rec.get("by_id"),
-                                "forced": bool(force and owner is not None and not same_actor(rec, actor))})
+            # 顺序决定中途失败（磁盘满、进程被杀）之后还能不能再撤。提交点是第 3 步 edits.jsonl 换成新版：
+            #   1. 只撤了多片记录中的一片：先把剩下那部分写成 .npz.part（还不替换原文件）；
+            #   2. 回填像素并落盘——做多少遍结果都一样；
+            #   3. 用 .part + 改名整体替换 edits.jsonl（提交）。
+            # 3 之前失败：日志和像素文件都原封不动，页面再点一次撤销会选中同一笔、回填同样的值，接着做完。
+            # 3 之后的收尾（像素文件换成剩下那部分 / 整笔挪进 edits/undone/、记操作流水）只尽力而为：撤销已经生效，
+            # 收尾失败只记日志，绝不能再告诉用户"没做完、再点一次"——那会把更早的一笔也撤掉。
+            try:
+                if remaining.any():
+                    rest = {key: (value[remaining] if key in {"xs", "ys", "zs", "old", "new"} and value.ndim else value)
+                            for key, value in d.items()}
+                    partial = f.with_suffix(".npz.part")
+                    with partial.open("wb") as out:
+                        np.savez_compressed(out, **rest)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    log[index] = {**rec, "n_px": int(remaining.sum()), "n_slices": int(np.unique(zs[remaining]).size)}
+                else:
+                    log.pop(index)
+                for k in np.unique(zs[chosen]):
+                    m = chosen & (zs == k)
+                    seg[xs[m], ys[m], int(k)] = d["old"][m] if np.ndim(d["old"]) else d["old"]
+                seg.flush()
+                for k in np.unique(zs[chosen]):
+                    self._invalidate(int(k))
+                log_path = self.work / (EDIT_LOG + ".part")
+                with open(log_path, "w") as out:
+                    out.write("".join(json.dumps(r) + "\n" for r in log))
+                    out.flush()
+                    os.fsync(out.fileno())
+                log_path.replace(self.work / EDIT_LOG)       # ← 提交点
+            except OSError as e:
+                raise ValueError(f"撤销没做完（{e.strerror or e}），多半是磁盘满了；这一笔的记录还在，清理磁盘后再点一次撤销即可") from e
+            try:
+                self._retire_edit_file(f, int(rec["n"]), partial if remaining.any() else None)
+            except OSError:
+                logging.getLogger(__name__).exception("撤销 #%s 已生效，但改动文件没挪进回收目录（不影响结果）", rec["n"])
+            try:
+                self._audit_append({"action": "undo", "by": None, **(actor.stamp() if actor else {}), "n": int(rec["n"]),
+                                    "kind": rec.get("kind"), "z": (None if z is None else int(z)), "n_px": int(undone.get("n_px") or 0),
+                                    "of": owner, "of_user": rec.get("by_user"), "of_id": rec.get("by_id"),
+                                    "forced": bool(force and owner is not None and not same_actor(rec, actor))})
+            except (OSError, ValueError):
+                logging.getLogger(__name__).exception("撤销 #%s 已生效，但操作流水没记上（这一片的版本号没有前进）", rec["n"])
             # deliberately NOT resetting _max_id: recomputing it rescans the whole volume (1.2 s on a 1024²x100
             # block) and it is only ever used to hand out an unused id. Staying high is safe — ids just skip —
             # and it also guarantees an undone id is never handed out again while its edit record still exists.
             return undone
 
+
+    def _retire_edit_file(self, f: Path, n: int, partial: Path | None) -> None:
+        """撤销提交之后的收尾：原来的像素文件在 edits/undone/ 留一份（不删）。只撤了多片记录中的一片时，
+        再把剩下那部分（partial）换上去；整笔撤掉时原文件直接挪走。"""
+        undone_dir = f.parent / UNDONE_DIR
+        undone_dir.mkdir(exist_ok=True)
+        keep = undone_dir / f"{n:06d}-{time.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:6]}.npz"
+        if partial is None:
+            os.replace(f, keep)
+            return
+        try:
+            os.link(f, keep)                                 # 硬链接，不占空间
+        except OSError:
+            shutil.copy2(f, keep)
+        partial.replace(f)
 
     def undo_all(self, z: int, by: "str | Actor | None" = None, force: bool = False) -> dict:
         """撤销本片全部有效改动——回到这一片标注前的样子。从最近一笔往前逐笔撤，直到本片没有记录；每一笔照样

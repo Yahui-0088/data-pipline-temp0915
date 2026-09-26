@@ -147,6 +147,8 @@ def client_error(body: ClientError, request: Request):
         if len(_client_hits) > 2000:
             _client_hits.clear()
     user = current_user(request)
-    log.warning("前端报错 [%s] %s（%s:%s:%s）页面 %s ua=%s\n%s", user.username if user else "未登录", body.message,
-                body.source, body.line, body.col, body.page, request.headers.get("user-agent", "")[:160], body.stack)
+    clean = logs.oneline
+    log.warning("前端报错 [%s] %s（%s:%s:%s）页面 %s ua=%s\n%s", user.username if user else "未登录", clean(body.message),
+                clean(body.source), body.line, body.col, clean(body.page), clean(request.headers.get("user-agent", ""), 160),
+                logs.indented(body.stack))
     return {"ok": True}

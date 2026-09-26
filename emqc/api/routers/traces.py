@@ -11,6 +11,8 @@ from emqc.db.models import AgentTrace, Dataset
 
 from ..serializers import trace_to_dict
 
+from .auth import require_reviewer
+
 router = APIRouter(prefix="/api/v1/traces", tags=["traces"])
 
 
@@ -41,7 +43,7 @@ class TraceIn(BaseModel):
     output: dict = {}
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(require_reviewer)])
 def add_trace(body: TraceIn, s: Session = Depends(get_session)):
     if s.get(Dataset, body.dataset_id) is None:
         raise HTTPException(404, f"unknown dataset {body.dataset_id}")

@@ -15,6 +15,8 @@ from emqc.qc.runner import request_cancel, run_sync, start_run_async
 
 from ..serializers import event_to_dict, finding_to_dict, metric_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict
 
+from .auth import require_reviewer
+
 router = APIRouter(prefix="/api/v1/qc", tags=["qc"])
 
 SEVERITY_ORDER = [s.label for s in Severity]
@@ -54,7 +56,7 @@ def _config(d: dict | None) -> QCConfig | None:
         raise HTTPException(422, f"invalid config: {e}")
 
 
-@router.post("/runs/batch", status_code=202)
+@router.post("/runs/batch", status_code=202, dependencies=[Depends(require_reviewer)])
 def create_runs(body: BatchRunIn, s: Session = Depends(get_session)):
     """Start one run per dataset (background threads). Used by the pipeline console."""
     missing = [d for d in body.dataset_ids if s.get(Dataset, d) is None]
@@ -87,10 +89,12 @@ def active_runs(s: Session = Depends(get_session)):
     return out
 
 
-@router.post("/runs", status_code=202)
+@router.post("/runs", status_code=202, dependencies=[Depends(require_reviewer)])
 def create_run(body: RunIn, s: Session = Depends(get_session)):
     if s.get(Dataset, body.dataset_id) is None:
         raise HTTPException(404, f"unknown dataset {body.dataset_id}")
+    if body.sync and not settings.auth_disabled:
+        raise HTTPException(422, "正式部署里不能在请求里同步跑 QC（会一直占着一个工作线程），去掉 sync 走后台任务")
     cfg = _config(body.config)
     run_id = run_sync(body.dataset_id, body.block_ids, cfg) if body.sync else start_run_async(body.dataset_id, body.block_ids, cfg)
     # the run row was committed by another session; end this request's REPEATABLE READ snapshot before re-reading
@@ -129,7 +133,7 @@ def get_run(run_id: int, s: Session = Depends(get_session)):
     return run_summary(s, _run(s, run_id))
 
 
-@router.post("/runs/{run_id}/cancel")
+@router.post("/runs/{run_id}/cancel", dependencies=[Depends(require_reviewer)])
 def cancel_run(run_id: int, s: Session = Depends(get_session)):
     run = _run(s, run_id)
     if not request_cancel(run_id):

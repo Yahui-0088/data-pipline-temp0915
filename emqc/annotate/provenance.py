@@ -202,46 +202,51 @@ def _snapshot(block, z):
 
 
 def report(block, z: int | None = None) -> dict:
-    with block.lock:
-        if z is not None:
+    """一片（给 z）或整块的溯源报告。
+
+    整块时逐片持锁：每一片内部仍是同一时刻的快照（每片的 revision 写在 slices 里），片与片之间放开锁，
+    别人在这块上的写入和翻片不用等整块导出（1024²×100 的块要一分多钟）。"""
+    if z is not None:
+        with block.lock:
             return _snapshot(block, z)[0]
-        # Slice at a time: never copy an entire uint64 volume into memory.
-        combined, labels, slices, warnings, editors = None, {}, [], set(), {}
-        for section in range(block.nz):
+    # Slice at a time: never copy an entire uint64 volume into memory.
+    combined, labels, slices, warnings, editors = None, {}, [], set(), {}
+    for section in range(block.nz):
+        with block.lock:
             part = _snapshot(block, section)[0]
-            if combined is None:
-                combined = {**part, "scope": "block", "z": None, "shape_zyx": list(block.shape_zyx)}
-                for key in ("revision", "shape_yx", "operations", "editors"):
-                    combined.pop(key)
-                for key in ("total_px", "changed_px", "added_px", "removed_px", "relabeled_px"):
-                    combined[key] = 0
-                combined["sources"] = {s: dict.fromkeys(("pixels", "label_pixels", "background_pixels"), 0) for s in SOURCES}
+        if combined is None:
+            combined = {**part, "scope": "block", "z": None, "shape_zyx": list(block.shape_zyx)}
+            for key in ("revision", "shape_yx", "operations", "editors"):
+                combined.pop(key)
             for key in ("total_px", "changed_px", "added_px", "removed_px", "relabeled_px"):
-                combined[key] += part[key]
+                combined[key] = 0
+            combined["sources"] = {s: dict.fromkeys(("pixels", "label_pixels", "background_pixels"), 0) for s in SOURCES}
+        for key in ("total_px", "changed_px", "added_px", "removed_px", "relabeled_px"):
+            combined[key] += part[key]
+        for s in SOURCES:
+            for key, value in part["sources"][s].items():
+                combined["sources"][s][key] += value
+        for e in part["editors"]:
+            d = editors.setdefault(e["by"], {"by": e["by"], "pixels": 0, "label_pixels": 0, "operations": 0})
+            for key in ("pixels", "label_pixels", "operations"):
+                d[key] += e[key]
+        for row in part["labels"]:
+            dest = labels.setdefault(row["id"], {"id": row["id"], "before_px": 0, "current_px": 0,
+                                                "changed_px": 0, "sources": dict.fromkeys(SOURCES, 0), "_editors": {}})
+            for key in ("before_px", "current_px", "changed_px"):
+                dest[key] += row[key]
             for s in SOURCES:
-                for key, value in part["sources"][s].items():
-                    combined["sources"][s][key] += value
-            for e in part["editors"]:
-                d = editors.setdefault(e["by"], {"by": e["by"], "pixels": 0, "label_pixels": 0, "operations": 0})
-                for key in ("pixels", "label_pixels", "operations"):
-                    d[key] += e[key]
-            for row in part["labels"]:
-                dest = labels.setdefault(row["id"], {"id": row["id"], "before_px": 0, "current_px": 0,
-                                                    "changed_px": 0, "sources": dict.fromkeys(SOURCES, 0), "_editors": {}})
-                for key in ("before_px", "current_px", "changed_px"):
-                    dest[key] += row[key]
-                for s in SOURCES:
-                    dest["sources"][s] += row["sources"][s]
-                for e in row.get("editors", []):
-                    dest["_editors"][e["by"]] = dest["_editors"].get(e["by"], 0) + e["px"]
-            slices.append({k: part[k] for k in ("z", "revision", "changed_px", "operations", "warnings")})
-            warnings.update(part["warnings"])
-        for row in labels.values():
-            row["mixed"] = sum(v > 0 for v in row["sources"].values()) > 1
-            row["editors"] = [{"by": by, "px": px} for by, px in sorted(row.pop("_editors").items(), key=lambda kv: -kv[1])]
-        combined.update(labels=sorted(labels.values(), key=lambda r: int(r["id"])), slices=slices, warnings=sorted(warnings),
-                        editors=sorted(editors.values(), key=lambda e: -e["pixels"]))
-        return combined
+                dest["sources"][s] += row["sources"][s]
+            for e in row.get("editors", []):
+                dest["_editors"][e["by"]] = dest["_editors"].get(e["by"], 0) + e["px"]
+        slices.append({k: part[k] for k in ("z", "revision", "changed_px", "operations", "warnings")})
+        warnings.update(part["warnings"])
+    for row in labels.values():
+        row["mixed"] = sum(v > 0 for v in row["sources"].values()) > 1
+        row["editors"] = [{"by": by, "px": px} for by, px in sorted(row.pop("_editors").items(), key=lambda kv: -kv[1])]
+    combined.update(labels=sorted(labels.values(), key=lambda r: int(r["id"])), slices=slices, warnings=sorted(warnings),
+                    editors=sorted(editors.values(), key=lambda e: -e["pixels"]))
+    return combined
 
 
 def _png_url(array):

@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     annotate_extra_roots: str = ""  # more block roots, semicolon separated (e.g. where SAM pre-labels are written)
     # 没开登录（auth_disabled）时的兜底：拒绝不带标注人的写入（工作台总是带；脚本要传 annotator）
     annotate_require_annotator: bool = False
+    # 工作目录所在盘低于这么多就拒绝写入（MB）：写满时进程会被 SIGBUS 直接杀掉，改动记录也会写一半
+    annotate_min_free_mb: int = 1024
 
     # 登录系统（切片标注工作区）。默认开：/annotate 页面和 /api/v1/annotate 接口都要先登录，
     # 每一笔改动记在登录用户名下。EMQC_AUTH_DISABLED=1 关掉（本地开发、测试），退回页面里自报姓名的方式。
@@ -80,6 +82,13 @@ class Settings(BaseSettings):
     # 运行日志（emqc.log、access.log、lifecycle.jsonl）放哪；告警推到哪个群机器人（企业微信 / 钉钉 / 飞书的 webhook 地址，空 = 不推）
     log_dir: Path = PROJECT_ROOT / "var" / "log"
     alert_webhook: str = ""
+    disk_alert_gb: float = 20.0         # 标注工作目录或日志所在盘低于这么多 GB 就告警、健康检查报 degraded
+
+    # 给训练 / 推理脚本用的服务令牌（请求头 X-EMQC-Token）：能读数据、跑任务，不能改标注、删东西、管账号。空 = 不开这条路
+    api_token: str = ""
+    # 爬取接口只允许访问这些来源（分号分隔的前缀，gs:// 和 https://storage.googleapis.com/ 两种写法等价）；
+    # file:// 和其他主机一律拒绝，免得有人借服务器去探内网或读本机文件
+    crawl_allowed_sources: str = "gs://h01-release/"
 
     api_host: str = "127.0.0.1"
     api_port: int = 8765

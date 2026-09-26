@@ -1,10 +1,12 @@
 /* EM Image QC · front-end behaviour. No framework: fetch + DOM. */
 
 // ---------------------------------------------------------------- helpers
+// 接口报错的说明文字：detail 可能是字符串，也可能是 {code, message}（登录、权限相关的都是后者）
+const errText = (d, r) => d && d.detail ? (typeof d.detail === "string" ? d.detail : d.detail.message || JSON.stringify(d.detail)) : r.statusText;
 async function postJSON(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : r.statusText);
+  if (!r.ok) throw new Error(errText(data, r));
   return data;
 }
 function flash(msg, isError) {
@@ -105,9 +107,9 @@ async function deleteDataset(datasetId, btn) {
   const files = confirm("同时删除磁盘上的数据文件？\n仅当目录在 data_root 之下才允许；选“取消”只删注册与结果。");
   btn.disabled = true;
   try {
-    const r = await fetch(`/api/v1/datasets/${datasetId}?remove_files=${files}`, { method: "DELETE" });
+    const r = await fetch(`/api/v1/datasets/${encodeURIComponent(datasetId)}?remove_files=${files}`, { method: "DELETE" });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.detail || r.statusText);
+    if (!r.ok) throw new Error(errText(data, r));
     flash(`已删除 ${datasetId}：${data.runs} 次运行` + (data.files_removed ? "，数据文件已删除" : ""));
     setTimeout(() => location.href = "/", 900);
   } catch (e) { flash("删除失败: " + e.message, true); btn.disabled = false; }
@@ -372,13 +374,13 @@ function renderExport(j) {
   const pct = j.progress == null ? 0 : Math.round(j.progress * 100);
   const running = j.status === "queued" || j.status === "running";
   return `<div class="run-card" id="export-${j.job_id}">
-    <div class="head"><b>导出 #${j.job_id} · <a href="/datasets/${j.dataset_id}">${j.dataset_id}</a></b> <span class="pill ${j.status === 'done' ? 'ok' : ''}">${j.status}${j.cancel_requested ? ' · cancelling' : ''}</span>
+    <div class="head"><b>导出 #${j.job_id} · <a href="/datasets/${encodeURIComponent(j.dataset_id)}">${esc(j.dataset_id)}</a></b> <span class="pill ${j.status === 'done' ? 'ok' : ''}">${esc(j.status)}${j.cancel_requested ? ' · cancelling' : ''}</span>
       <progress max="100" value="${pct}"></progress>
       <span class="mono">${j.n_blocks_done}/${j.n_blocks} blocks · ${j.n_shards} 分片 · ${j.n_sections} 张 · ${fmtBytes(j.n_bytes)}${j.n_shards_reused ? ' · ' + j.n_shards_reused + ' 复用' : ''}${j.n_asset_files ? ' · 资产 ' + j.n_asset_files : ''}</span>
       <span class="muted mono">QC run #${j.run_id} · min_run ${j.params.min_run} · shard_z ${j.params.shard_z}</span>
       ${running ? `<button onclick="cancelExport(${j.job_id}, this)" ${j.cancel_requested ? 'disabled' : ''}>取消</button>` : `<a class="btn" href="/api/v1/exports/${j.job_id}/manifest" target="_blank">清单</a>`}</div>
-    ${j.out_dir ? `<div class="muted mono" style="font-size:11px;margin-top:6px">${j.out_dir}</div>` : ''}
-    ${j.error ? `<pre class="json">${j.error.split("\n")[0]}</pre>` : ''}
+    ${j.out_dir ? `<div class="muted mono" style="font-size:11px;margin-top:6px">${esc(j.out_dir)}</div>` : ''}
+    ${j.error ? `<pre class="json">${esc(j.error.split("\n")[0])}</pre>` : ''}
     <pre class="log" id="export-log-${j.job_id}" style="max-height:140px;margin-top:8px"></pre></div>`;
 }
 
@@ -393,7 +395,7 @@ async function refreshExports() {
     const after = deliveryState.lastEvent[j.job_id] || 0;
     const ev = await (await fetch(`/api/v1/exports/${j.job_id}/events?after_id=${after}`)).json();
     const el = document.getElementById(`export-log-${j.job_id}`); if (!el || !ev.length) return;
-    for (const e of ev) { const line = document.createElement("div"); line.className = e.level; line.innerHTML = `<span class="ts">${(e.ts || '').replace('T', ' ')}</span> ${e.message}`; el.appendChild(line); deliveryState.lastEvent[j.job_id] = e.id; }
+    for (const e of ev) { const line = document.createElement("div"); line.className = e.level; line.innerHTML = `<span class="ts">${esc((e.ts || '').replace('T', ' '))}</span> ${esc(e.message)}`; el.appendChild(line); deliveryState.lastEvent[j.job_id] = e.id; }
     el.scrollTop = el.scrollHeight;
   }));
 }
@@ -418,10 +420,10 @@ async function refreshStreams() {
     const pct = x.progress == null ? 0 : Math.round(x.progress * 100);
     const secs = x.updated_at && x.created_at ? (new Date(x.updated_at) - new Date(x.created_at)) / 1000 : 0;
     const rate = secs > 0 && x.cursor ? (x.cursor / secs * 60).toFixed(1) + " 块/分" : "–";
-    return `<tr><td class="mono">#${x.stream_id}</td><td><a href="/datasets/${x.dataset_id}">${x.dataset_id}</a></td><td>${x.client || '–'}</td><td><span class="pill ${x.status === 'done' ? 'ok' : ''}">${x.status}</span></td>
+    return `<tr><td class="mono">#${x.stream_id}</td><td><a href="/datasets/${encodeURIComponent(x.dataset_id)}">${esc(x.dataset_id)}</a></td><td>${esc(x.client || '–')}</td><td><span class="pill ${x.status === 'done' ? 'ok' : ''}">${esc(x.status)}</span></td>
       <td><div style="display:flex;gap:8px;align-items:center"><progress max="100" value="${pct}" style="width:120px"></progress><span class="mono">${x.cursor}/${x.n_items}</span></div></td>
       <td class="num mono">${x.n_items}</td><td class="num mono">${x.n_acked}${x.n_failed_items ? ' <span class="s-bad">(' + x.n_failed_items + ' 失败)</span>' : ''}</td><td class="num mono">${fmtBytes(x.n_bytes)} / ${fmtBytes(x.est_bytes)}</td><td class="num mono">${rate}</td>
-      <td class="muted mono" style="font-size:11px">${(x.created_at || '').replace('T', ' ')}</td><td>${x.status === 'open' ? `<button onclick="closeStream(${x.stream_id}, this)">终止</button>` : ''}</td></tr>`;
+      <td class="muted mono" style="font-size:11px">${esc((x.created_at || '').replace('T', ' '))}</td><td>${x.status === 'open' ? `<button onclick="closeStream(${x.stream_id}, this)">终止</button>` : ''}</td></tr>`;
   }).join("") : '<tr><td colspan="11" class="muted">还没有推理流会话</td></tr>';
 }
 
@@ -482,7 +484,13 @@ async function pfCreate(ev) {
   await pfSets();
   return false;
 }
-async function pfDelete(id, btn) { if (!confirm(`删除 patch 集合 #${id}？`)) return; btn.disabled = true; await fetch(`/api/v1/patchsets/${id}`, { method: "DELETE" }); await pfSets(); }
+async function pfDelete(id, btn) {
+  if (!confirm(`删除 patch 集合 #${id}？`)) return;
+  btn.disabled = true;
+  const r = await fetch(`/api/v1/patchsets/${id}`, { method: "DELETE" });
+  if (!r.ok) { const d = await r.json().catch(() => ({})); flash("删除失败: " + errText(d, r), true); btn.disabled = false; return; }
+  await pfSets();
+}
 async function pfSets() {
   const rows = await (await fetch(`/api/v1/patchsets?dataset_id=${pfDs}&limit=50`)).json();
   document.getElementById("pf-count").textContent = rows.length;
@@ -505,8 +513,9 @@ async function cwVolume(ev) {
   ev.preventDefault(); const f = ev.target, msg = document.getElementById("cw-vol-msg");
   msg.textContent = "读取中…";
   try {
-    const d = await (await fetch(`/api/v1/crawl/volume?url=${encodeURIComponent(f.url.value)}&mip=${+f.mip.value||0}`)).json();
-    if (d.detail) throw new Error(d.detail);
+    const r = await fetch(`/api/v1/crawl/volume?url=${encodeURIComponent(f.url.value)}&mip=${+f.mip.value||0}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(errText(d, r));
     cwLast.url = f.url.value; cwLast.mip = +f.mip.value || 0;
     const um = d.size_xyz.map((v,i)=>(v*d.resolution_nm[i]/1000).toFixed(0));
     document.getElementById("cw-vol").innerHTML = `<table class="dense" style="margin-top:10px"><tbody>
@@ -551,7 +560,7 @@ async function cwRegister(ev) {
     b.species = f.species.value || null; b.brain_region = f.brain_region.value || null; b.require_precheck_ok = f.require_ok.checked;
     if (f.seg_url.value.trim()) b.assets = [{ type: "gt_segmentation", url: f.seg_url.value.trim(), mip: +f.seg_mip.value || 0, format: "precomputed_cloud", label_encoding: "gray" }];
     const d = await postJSON("/api/v1/crawl/register", b);
-    msg.innerHTML = `已注册 <a href="/datasets/${d.dataset_id}">${esc(d.dataset_id)}</a>：${d.shape.z}×${d.shape.y}×${d.shape.x}，可直接跑 QC`;
+    msg.innerHTML = `已注册 <a href="/datasets/${encodeURIComponent(d.dataset_id)}">${esc(d.dataset_id)}</a>：${d.shape.z}×${d.shape.y}×${d.shape.x}，可直接跑 QC`;
   } catch (e) { msg.textContent = "失败: " + e.message; }
   return false;
 }
