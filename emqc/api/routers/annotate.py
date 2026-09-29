@@ -246,6 +246,95 @@ def sam_apply(block_id: str, body: SAMApplyIn, user=Depends(require_user)):
     return _edit_response(b, rec, rev)
 
 
+# ---------------------------------------------------------------- 大块填充：点一下按膜找出整个大细胞，先预览、确认后才写
+class BigFillIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    z: int = Field(ge=0)
+    points: list[tuple[int, int]] = Field(min_length=1, max_length=10)
+
+
+class BigFillPropagateIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    z_from: int = Field(ge=0)
+    z_to: int = Field(ge=0)
+    label: str | int
+
+
+class BigFillApplyIn(EditIn):
+    token: str = Field(min_length=32, max_length=32)
+    new_id: str | int
+
+
+def _bigfill_who(user) -> str | None:
+    """同一个人的新点击取代旧的：按登录用户区分；没开登录时大家共用一个。"""
+    return f"u{user.id}" if user is not None else None
+
+
+@router.post("/blocks/{block_id}/bigfill/preview")
+def bigfill_preview(block_id: str, body: BigFillIn, user=Depends(require_user)):
+    from emqc.annotate.bigfill import Superseded, service
+
+    b = _block(block_id)
+    Z, H, W = b.shape_zyx
+    if not b.has_seg:
+        raise HTTPException(422, "这个数据块没有分割，不能填")
+    if body.z >= Z or any(not (0 <= x < W and 0 <= y < H) for x, y in body.points):
+        raise HTTPException(422, "点在数据块外面")
+    try:
+        return service.preview(b, body.z, body.points, who=_bigfill_who(user))
+    except Superseded:
+        raise HTTPException(409, {"code": "superseded", "message": "已被新的点击取代"})
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.post("/blocks/{block_id}/bigfill/propagate")
+def bigfill_propagate(block_id: str, body: BigFillPropagateIn, user=Depends(require_user)):
+    """把 z_from 上这个标签的区域接到相邻的 z_to 片，给出预览（不写入）。"""
+    from emqc.annotate.bigfill import Superseded, service
+
+    b = _block(block_id)
+    Z = b.shape_zyx[0]
+    if not b.has_seg:
+        raise HTTPException(422, "这个数据块没有分割，不能填")
+    if body.z_from >= Z or body.z_to >= Z or abs(body.z_to - body.z_from) != 1:
+        raise HTTPException(422, "只能接到相邻的一片")
+    label = _int_id(body.label)
+    if label == 0:
+        raise HTTPException(422, "背景不能往下接")
+    import numpy as np
+
+    if not 0 < label <= int(np.iinfo(b._seg_ro.dtype).max):
+        raise HTTPException(422, "标签编号超出范围")
+    try:
+        return service.propagate(b, body.z_from, body.z_to, label, who=_bigfill_who(user))
+    except Superseded:
+        raise HTTPException(409, {"code": "superseded", "message": "已被新的点击取代"})
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.post("/blocks/{block_id}/bigfill/apply")
+def bigfill_apply(block_id: str, body: BigFillApplyIn, user=Depends(require_user)):
+    from emqc.annotate.bigfill import service
+
+    b = _block(block_id)
+    actor = _who(body, user)
+    try:
+        with b.lock:
+            rec = service.apply(b, body.token, _int_id(body.new_id), by=actor)
+            rev = _rev(b, rec.get("z")) if isinstance(rec, dict) else None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return _edit_response(b, rec, rev)
+
+
 @router.get("/blocks/{block_id}")
 def block_info(block_id: str):
     return _block(block_id).info()

@@ -715,9 +715,16 @@ def test_supervisor_stops_cleanly_while_waiting_to_retry_a_failed_launch(tmp_pat
     p = subprocess.Popen([sys.executable, str(root / "scripts" / "supervise.py"), "--", str(tmp_path / "no-such-binary")],
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
-        time.sleep(1.5)
+        seen = []
+        deadline = time.time() + 30                    # 机器忙时守护脚本起得慢：等它真的进入重试等待再发信号
+        while time.time() < deadline:
+            line = p.stdout.readline()
+            seen.append(line)
+            if "启动服务失败" in line or not line:
+                break
         p.send_signal(signal.SIGTERM)
-        out, _ = p.communicate(timeout=10)
+        rest, _ = p.communicate(timeout=10)
+        out = "".join(seen) + rest
     finally:
         if p.poll() is None:
             p.kill()

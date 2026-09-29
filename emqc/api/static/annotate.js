@@ -21,6 +21,7 @@
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
     samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samRequest: null, samSequence: 0,
+    bfPoints: [], bfPreview: null, bfMask: null, bfRequest: null, bfSequence: 0, bfLast: null,
     samNeighbour: null, selection: null, selectionSequence: 0,
     historySequence: 0, ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
     who: "", hbTimer: null, revs: new Map(), undoTarget: null,
@@ -117,7 +118,7 @@
   // 平台没有账号，"谁"就是标注员在右上角填的名字：存在本机浏览器里，每次写入随请求带给服务端，写进每条记录。
   const WHO_KEY = "emqc.annotator";
   const when = ts => typeof ts === "string" && ts.length >= 16 ? ts.slice(11, 16) : "刚才";
-  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "插值（历史）" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
+  const editLabel = e => e.kind === "bigfill" ? "大块填充" : e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "插值（历史）" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
   function cleanWho(v) { return String(v || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64); }
   function setWho(v, save = true) {
     S.who = cleanWho(v);
@@ -187,6 +188,8 @@
     try {
       const force = !ME || ME.role !== "annotator";          // 审核员 / 管理员可以连别人的一起撤；标注员只能撤自己的
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo-all?z=${z}`, editBody(z, { force }));
+      if (S.bfLast?.z === z) S.bfLast = null;
+      clearBF();
       S.info.n_edits = r.n_edits;
       if (r.rev != null) S.revs.set(z, r.rev);
       invalidate(z); await goZ(z, true, true);
@@ -279,7 +282,7 @@
     drawSelection(e);
     if (pin) drawRegion(pin, [255, 214, 10], 90);
     if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
-    drawSAM();
+    drawSAM(); drawBF();
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -408,7 +411,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
+    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearBF(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -431,10 +434,11 @@
   function setTool(t) {
     if (S.mergeBusy) return;
     clear3D();
-    if (t.startsWith("sam") && S.tool === t) t = "pick";
+    if ((t.startsWith("sam") || t === "bigfill") && S.tool === t) t = "pick";
     if (!t.startsWith("sam")) clearSAM();
+    if (t !== "bigfill") clearBF();
     S.tool = t; mergeArm(null);
-    if ((t === "merge" || t === "ng" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    if ((t === "merge" || t === "ng" || t.startsWith("sam") || t === "bigfill") && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => { const active = b.dataset.tool === t; b.classList.toggle("active", active); b.setAttribute("aria-pressed", String(active)); });
     for (const p of P) { p.stage.classList.toggle("pan", t === "pan"); p.stage.dataset.tool = t; }   // 光标跟着工具走（见 style.css）
     renderHi();
@@ -445,7 +449,7 @@
     if (highlight && S.cur !== "0") S.selection = { kind: "label", id: S.cur };
     $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur;
     $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur));
-    status(); segList(); samButtons(); renderHi();
+    status(); segList(); samButtons(); bfButtons(); renderHi();
   }
   // 修缮边缘：点一下标签块，压过黑膜、跨到邻居身上的部分收回来（只收缩，收掉的清成背景，可撤销）
   async function refineAt(x, y) {
@@ -508,7 +512,7 @@
   function mergeBusy(on) {
     S.mergeBusy = on;
     document.querySelectorAll(".vast-tools button, .vast-tools input, .vast-tools select").forEach(el => el.disabled = on);
-    samButtons();
+    samButtons(); bfButtons();
   }
   async function mergeInto(x, y) {
     if (S.mergeBusy || !ensureWho()) return;
@@ -576,7 +580,7 @@
     } catch (err) { if (await stale(err, st.z)) return; flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
   async function afterEdit(r, z) {
-    clearSAM();
+    clearSAM(); clearBF();
     S.info.n_edits = r.n_edits;
     if (r.rev != null) S.revs.set(z, r.rev);
     invalidate(z); if (z === S.z) await goZ(z, true, true);
@@ -591,6 +595,8 @@
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo?z=${z}`, editBody(z, { force: !!force, n: n ?? undefined }));
       if (!r.undone) { flash("本片没有可撤销的改动"); await editList(); return; }
+      if (S.bfLast?.z === z) S.bfLast = null;
+      clearBF();
       S.info.n_edits = r.n_edits;
       if (r.rev != null) S.revs.set(z, r.rev);
       invalidate(z);
@@ -803,6 +809,92 @@
     } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; refreshIfConflict(err, z); }
     finally { mergeBusy(false); renderHi(); }
   }
+  // ---------------------------------------------------------------- 大块填充：点一下按膜找出整个大细胞；先预览，确认后才写
+  function bfButtons() {
+    const disabled = S.mergeBusy || !S.bfPreview?.n_px || !S.info?.has_seg;
+    $("an-bf-apply").disabled = disabled || S.cur === "0";
+    $("an-bf-new").disabled = disabled;
+    const nz = S.info?.shape_zyx?.[0] ?? 0, last = S.bfLast;
+    $("an-bf-up").disabled = S.mergeBusy || !last || last.z - 1 < 0;
+    $("an-bf-down").disabled = S.mergeBusy || !last || last.z + 1 >= nz;
+  }
+  function clearBF() {
+    S.bfSequence++; S.bfRequest?.abort(); S.bfRequest = null;
+    S.bfPoints = []; S.bfPreview = null; S.bfMask = null;
+    const el = $("an-bf-result"); if (el) el.textContent = S.bfLast?.msg ?? "";     // 进行中 / 预览的提示作废，只留上一次填入的结果
+    bfButtons();
+  }
+  function drawBF() {
+    if (S.blink || (S.bfPreview && S.bfPreview.z !== S.z)) return;
+    for (const p of panes()) {
+      const g = p.gHi;
+      if (S.bfMask) g.drawImage(S.bfMask, 0, 0);
+      g.save(); g.lineWidth = 2 / S.zoom;
+      for (const [x, y] of S.bfPoints) {
+        g.beginPath(); g.arc(x + .5, y + .5, 4 / S.zoom, 0, Math.PI * 2);
+        g.fillStyle = "#ff9600"; g.fill(); g.strokeStyle = "#111"; g.stroke();
+      }
+      g.restore();
+    }
+  }
+  async function bfRequest(url, body, what) {
+    S.bfRequest?.abort();
+    const request = new AbortController(), sequence = ++S.bfSequence, block = S.block; S.bfRequest = request;
+    S.bfPreview = null; S.bfMask = null; bfButtons();
+    $("an-bf-result").textContent = `正在${what}…`;
+    try {
+      const r = await postJSON(url, body, request.signal);
+      if (sequence !== S.bfSequence || block !== S.block || r.z !== S.z) return;   // 结果到的时候已经换了块 / 换了片：不要了
+      const mask = await loadImg(r.mask_png);
+      if (sequence !== S.bfSequence || block !== S.block || r.z !== S.z) return;
+      S.bfMask = mask; S.bfPreview = r;
+      $("an-bf-result").textContent = r.n_px
+        ? `预览 ${r.n_px} 像素（${r.seconds} 秒）· 确认后填入；不对就 ⌘/Ctrl+点击补一个点，或换个位置重点`
+        : "这里没找到可以填的区域：点在要填的细胞里面、离膜远一点的地方";
+    } catch (err) { if (sequence === S.bfSequence && err.name !== "AbortError" && err.code !== "superseded") $("an-bf-result").textContent = `${what}失败：` + err.message; }
+    finally { if (sequence === S.bfSequence) { S.bfRequest = null; bfButtons(); renderHi(); } }
+  }
+  function bfClick(x, y, add) {
+    if (!S.info?.has_seg) { flash("这个数据块没有分割，不能填", true); return; }
+    if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    if (!add) S.bfPoints = [];
+    if (S.bfPoints.length >= 10) { flash("最多 10 个点，请重新点"); return; }
+    S.bfPoints.push([x, y]); renderHi();
+    bfRequest(`${API}/blocks/${encodeURIComponent(S.block)}/bigfill/preview`, { z: S.z, points: S.bfPoints }, "找这个细胞");
+  }
+  async function bfPropagate(dir) {
+    const last = S.bfLast, block = S.block;
+    if (!last || S.mergeBusy) return;
+    const zTo = last.z + dir;
+    if (zTo < 0 || zTo >= S.info.shape_zyx[0]) return;
+    if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    if (S.z !== zTo) await goZ(zTo, true);
+    if (S.block !== block || S.z !== zTo || S.bfLast !== last || S.mergeBusy) return;    // 翻片途中又换了块 / 片 / 填了别的
+    setCur(last.id);
+    S.bfPoints = [];
+    await bfRequest(`${API}/blocks/${encodeURIComponent(S.block)}/bigfill/propagate`, { z_from: last.z, z_to: zTo, label: last.id },
+                    `把 ${last.id} 接到第 ${zTo} 片`);
+  }
+  async function applyBF(mode) {
+    if (S.mergeBusy || !S.bfPreview?.n_px) return;
+    if (mode === "cur" && S.cur === "0") { flash("请先选择标签"); return; }
+    if (!ensureWho()) return;
+    const z = S.bfPreview.z, token = S.bfPreview.token;
+    mergeBusy(true);
+    try {
+      const id = mode === "new" ? await reserveLabel() : S.cur;
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/bigfill/apply`, editBody(z, { token, new_id: id }));
+      S.bfLast = { z, id: String(id), msg: `已在第 ${z} 片填入标签 ${id}（${r.edit?.n_px || 0} 像素）· Ctrl/⌘+Z 撤销 · 可以「接着填上一片 / 下一片」` };
+      await afterEdit(r, z); setCur(id);
+      $("an-bf-result").textContent = S.bfLast.msg;
+    } catch (err) { S.bfPreview = null; S.bfMask = null; $("an-bf-result").textContent = "填入失败：" + err.message; refreshIfConflict(err, z); }
+    finally { mergeBusy(false); bfButtons(); renderHi(); }
+  }
+  $("an-bf-new").addEventListener("click", () => applyBF("new"));
+  $("an-bf-apply").addEventListener("click", () => applyBF("cur"));
+  $("an-bf-up").addEventListener("click", () => bfPropagate(-1));
+  $("an-bf-down").addEventListener("click", () => bfPropagate(1));
+
   $("an-sam-clear").addEventListener("click", clearSAM);
   $("an-sam-new").addEventListener("click", () => applySAM("new"));
   $("an-sam-apply").addEventListener("click", () => applySAM("cur"));
@@ -839,6 +931,7 @@
         discardSAMPreview(); S.samPoints.push([x,y]); S.samLabels.push(ev.shiftKey ? 0 : 1);
         renderHi(); predictSAM(); return;
       }
+      if (S.tool === "bigfill") { bfClick(x, y, ev.ctrlKey || ev.metaKey); return; }
       if (S.tool === "sam-box") {
         if (!ev.ctrlKey && !ev.metaKey) clearSAM();
         discardSAMPreview(); S.samStart = [x,y]; S.samBox = [x,y,x,y]; return;
@@ -893,7 +986,8 @@
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (k === "ArrowUp" || k.toLowerCase() === "a") { ev.preventDefault(); if (!ev.repeat) goZ(S.z - 1, true); }
     else if (k === "ArrowDown" || k.toLowerCase() === "z") { ev.preventDefault(); if (!ev.repeat) goZ(S.z + 1, true); }
-    else if (k === "Escape") { if (S.radiusDrag) { setBrush(S.radiusDrag.r0 ?? S.radiusDrag.r); endRadius(); } if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); renderHi(); }
+    else if (k === "Escape") { if (S.radiusDrag) { setBrush(S.radiusDrag.r0 ?? S.radiusDrag.r); endRadius(); } if (S.ngMode || S.tool.startsWith("sam") || S.tool === "bigfill") setTool("pick"); mergeArm(null); clearSAM(); clearBF(); clearSelection(); renderHi(); }
+    else if (k.toLowerCase() === "w" && !ev.repeat) setTool("bigfill");
     else if (k === "m") setTool("merge");
     else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
     // 右手握鼠标，高频工具放左手：Q 拾取、D 画笔，挨着 E 橡皮、F 填充、R 修缮。P、B 保留作旧键位
@@ -1118,6 +1212,7 @@
     if (S.mergeBusy) return;
     if (S.ngMode) setTool("pick");
     clearSAM(); clearSelection();
+    S.bfLast = null; clearBF();
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     S.block = id; S.createdIds = []; dropAll(); S.revs.clear(); S.hoverXY = null; mergeArm(null);
     const pr = $("an-presence"); pr.hidden = true; pr.innerHTML = ""; pr.classList.remove("same");

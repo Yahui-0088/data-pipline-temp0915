@@ -51,6 +51,15 @@
     <div class="vast-list" id="an-sam-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
     <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px"></div>
 
+    <div class="vast-sec">大块填充</div>
+    <div class="vast-toolgrid">
+      <button class="tool" data-tool="bigfill" aria-pressed="false" title="大块填充 (W)：在没标注的大细胞里点一下，按膜自动找出整个细胞，先预览，确认后才写入；⌘/Ctrl+点击再补一个点">大块填充 <kbd>W</kbd></button>
+    </div>
+    <p class="muted" style="font-size:12px">点一下出橙色预览 · ⌘/Ctrl 补点 · 只填没标注的地方</p>
+    <div class="actions"><button id="an-bf-new" class="primary" disabled>填为新标签</button><button id="an-bf-apply" disabled>填为当前标签</button></div>
+    <div class="actions" style="margin-top:6px"><button id="an-bf-up" disabled title="把刚填好的这个细胞接到上一片：先预览，确认后才写">↑ 接着填上一片</button><button id="an-bf-down" disabled title="把刚填好的这个细胞接到下一片：先预览，确认后才写">↓ 接着填下一片</button></div>
+    <div class="muted" id="an-bf-result" role="status" style="font-size:12px;margin-top:6px"></div>
+
     <div class="vast-sec">3D</div>
     <div class="actions"><button id="an-ng" aria-pressed="false" title="启用后点击图像查看；再次点击取消 (U)">看这一点 <kbd>U</kbd></button><button id="an-ng-block" aria-pressed="false" title="打开整块 3D；再次点击关闭">看整块</button></div>
     <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px"></div>
@@ -156,6 +165,7 @@
       <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
       <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧；膜和细胞内部的黑色细胞器都不动</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
+      <div class="kbd-row"><kbd>W</kbd> 大块填充：在没标注的大细胞里点一下出橙色预览，Ctrl/⌘ 补点，确认后才写；填好后「接着填上一片 / 下一片」</div>
       <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · 「全部撤销」一次撤掉本片全部改动（先确认）</div>
       <div class="kbd-row">标注人：右上角填名字，每笔改动记下是谁改的 · 有人同时改这一片会提醒并自动刷新 · 只能撤销自己的改动</div>
     </section>
