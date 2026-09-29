@@ -185,3 +185,25 @@ def test_a_newer_click_supersedes_the_older_one(bf_block, tmp_path, monkeypatch)
     assert svc.slots.acquire(blocking=False) and svc.slots.acquire(blocking=False), "名额都还回来了"
     svc.slots.release(); svc.slots.release()
     assert svc._run(lambda: bigfill.segment(em, seg, [(120, 25)], []), new).any(), "新的那次照常算完"
+
+
+def test_the_watershed_result_is_dropped_when_it_runs_away(bf_block, tmp_path, monkeypatch):
+    """两套择优：分水岭的结果比随机游走的大出一半以上（旁边没什么标注时会一下填满大半片）或是空的，就用随机游走的。"""
+    from emqc.annotate import bigfill, bigfill_ws
+
+    b = Block(bf_block, tmp_path / "work")
+    em, seg = b.em_slice(0), b.seg_slice(0)
+    rw = bigfill.segment_rw(em, seg, [(120, 25)], [])
+    monkeypatch.setattr(bigfill_ws, "segment", lambda em, labels, pos, check=None: np.ones(labels.shape, bool))
+    assert (bigfill.segment(em, seg, [(120, 25)], []) == rw).all(), "填满整片的那个不要"
+    monkeypatch.setattr(bigfill_ws, "segment", lambda em, labels, pos, check=None: np.zeros(labels.shape, bool))
+    assert (bigfill.segment(em, seg, [(120, 25)], []) == rw).all(), "空的也不要"
+    close = rw & ~np.roll(rw, 3, axis=0)
+    monkeypatch.setattr(bigfill_ws, "segment", lambda em, labels, pos, check=None: rw | close)
+    assert (bigfill.segment(em, seg, [(120, 25)], []) == (rw | close)).all(), "差不多大小就用分水岭的"
+    assert not bigfill.segment(em, seg, [(25, 20)], []).any(), "点在已标注的细胞上：什么都不填"
+
+    def broken(em, labels, pos, check=None):
+        raise IndexError("bug")
+    monkeypatch.setattr(bigfill_ws, "segment", broken)
+    assert (bigfill.segment(em, seg, [(120, 25)], []) == rw).all(), "分水岭出错：退回随机游走的结果，工具照样能用"

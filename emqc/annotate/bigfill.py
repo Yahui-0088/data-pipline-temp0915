@@ -1,34 +1,43 @@
 """大块填充：在没标注的大细胞里点一下，按电镜上的膜找出整个细胞；先预览，确认后才写入。numpy + scipy，不用模型、不用 GPU。
 
 为什么不用 SAM：SAM 一次只看一张切片、按「像不像一个物体」出掩膜，对很大、质地均匀、只靠又长又细的膜隔开的细胞，
-它要么只圈出一部分，要么选中里面的细胞器。这里反过来只看「哪里是膜」：
-  1. 膜强度 = 每个像素比它周围暗多少（按局部标准差计），不用全局阈值——拼接数据各块明暗不一；
-  2. 在点击处和其他区域的「内部核心」各放种子，已有标签整块当作别人的种子，解随机游走（每个像素先走到谁的种子，
-     过膜的代价按膜强度指数增加）：一两个像素的膜缺口挡不住整体的解，边界自然落在膜中线上；
-  3. 窗口随细胞放大：区域碰到窗口边就把窗口加倍重算（256 → 512 → 整片），大细胞不会被截断
-     （删掉的旧「智能填充」固定只算点击点周围 256×256，这正是它在大细胞上不行的原因）；
-  4. 点在线粒体、细胞核上时自动改成包住它的那片胞质；一块区域经膜上缺口连到隔壁时，按「窄通道 + 边界在膜上」判为漏，
-     退回严格结果；细胞里的洞（细胞器）一律填上；
-  5. 传到上 / 下一片：上一片的区域内缩 8 像素当种子，其他细胞的核心和已有标签当别人的种子，同样解一遍。
+它要么只圈出一部分，要么选中里面的细胞器。这里反过来只看「哪里是膜」。点一下时两套各算一遍，择优（segment）：
+  * 标记分水岭（bigfill_ws.py）：旁边的小细胞都标好时更准，但挡漏几乎全靠这些标签；
+  * 随机游走（本文件）：
+    1. 膜强度 = 每个像素比它周围暗多少（按局部标准差计），不用全局阈值——拼接数据各块明暗不一；
+    2. 在点击处和其他区域的「内部核心」各放种子，已有标签整块当作别人的种子，解随机游走（每个像素先走到谁的种子，
+       过膜的代价按膜强度指数增加）：一两个像素的膜缺口挡不住整体的解，边界自然落在膜中线上；
+    3. 窗口随细胞放大：区域碰到窗口边就把窗口加倍重算（256 → 512 → 整片），大细胞不会被截断
+       （删掉的旧「智能填充」固定只算点击点周围 256×256，这正是它在大细胞上不行的原因）；
+    4. 点在线粒体、细胞核上时自动改成包住它的那片胞质；一块区域经膜上缺口连到隔壁时，按「窄通道 + 边界在膜上」判为漏，
+       退回严格结果；细胞里的洞（细胞器）一律填上；
+    5. 传到上 / 下一片（propagate，只用这一套）：上一片的区域内缩 8 像素当种子，其他细胞的核心和已有标签当别人的种子。
+  分水岭的结果是空的、或比随机游走的大出一半以上，就用随机游走的。
 
 实测（H01 四个 512² 块，把一片里所有 ≥3000 像素的细胞一起抹掉当作「一大片没标」，逐个在细胞最深处点击还原，
-和原始分割比；数字见 docs/ANNOTATE.md「大块填充」）：点 1 下平均 IoU 0.80、点 3 下 0.83，≥2 万像素的细胞 0.74 / 0.75；
-传播 8 片后仍有 0.86；没参与调参的切片上是 0.77 / 0.82、0.63 / 0.79、0.78。现在的「填充」点在空白上是 0.08（整片空白一起填满），删掉的旧智能填充是 0.67 / 0.43（大细胞）。
-
-算法与测评时冻结的那一版逐行一致，只改了接口；要改参数，先按上面的做法在同一批切片上重测，数字不降再改。
+和原始分割比；没参与调参的切片上）：点 1 下平均 IoU 0.82、点 3 下 0.87，≥2 万像素的细胞 0.68 / 0.84，传播 8 片后 0.78；
+一片里没有标注时 0.75。只用随机游走是 0.77 / 0.82，只用分水岭 0.85 / 0.88 但没有标注时掉到 0.43。
+数字和做法见 docs/ANNOTATE.md「大块填充」。两套算法都与测评时冻结的版本逐行一致，只改了接口；
+要改参数或择优规则，先按同样的做法在调参切片上重测，数字不降再改。
 """
 from __future__ import annotations
 
 import base64
 import io
+import logging
 import threading
 import time
 import uuid
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import numpy as np
 from PIL import Image
 from scipy import ndimage, sparse
+
+from emqc.annotate import bigfill_ws
+
+log = logging.getLogger(__name__)
 
 S4 = ndimage.generate_binary_structure(2, 1)
 # 缓存按线程分开：同时算两个预览时（两个名额），各用各的，互不清空、也不会凭内存地址拿到对方的中间结果
@@ -418,7 +427,8 @@ def _segment(M, free, seeds, p):
     return _keep_seeded(reg & free, seeds)
 
 
-def segment(em, labels, pos, neg):
+def segment_rw(em, labels, pos, neg):
+    """随机游走这套：点击 → 区域。"""
     p = P
     free = np.asarray(labels) == 0
     H, W = free.shape
@@ -434,6 +444,44 @@ def segment(em, labels, pos, neg):
     if len(seeds) > 1 and p["union_first"]:
         reg = fill_holes(reg | _segment(M, free, seeds[:1], p)) & free
     return reg
+
+
+# 两套择优：标记分水岭（bigfill_ws）在旁边标注齐全时更准，但一片里几乎没有标注时会一下填满大半片；随机游走这套稳。
+# 分水岭的结果是空的、或比随机游走的大出一半以上，就用随机游走的。这条规则在调参切片上定下后没有再改。
+FALLBACK_RATIO = 1.5
+# 分水岭在另一个线程里和随机游走同时算（numpy / scipy 算的时候放开 GIL），1024² 的片上等待约减半。两个线程对应两个名额
+_WS_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bigfill-ws")
+
+
+def segment(em, labels, pos, neg):
+    """点击点（屏幕坐标 x, y）→ 要填的区域（只含没标注的像素）。"""
+    free = np.asarray(labels) == 0
+    H, W = free.shape
+    pos = [(x, y) for x, y in ((int(np.clip(x, 0, W - 1)), int(np.clip(y, 0, H - 1))) for x, y in pos) if free[y, x]]
+    if not pos:
+        return np.zeros((H, W), bool)
+    stop = getattr(_TLS, "stop", None)          # 线程局部的，要显式交给另一个线程
+
+    def check():
+        if stop is not None and stop():
+            raise Superseded()
+
+    job = _WS_POOL.submit(bigfill_ws.segment, em, labels, pos, check)
+    try:
+        rw = segment_rw(em, labels, pos, neg)
+    finally:
+        wait([job])                             # 不论成败都等它算完或停下，名额才真正空出来
+    try:
+        ws = job.result() & free
+    except Superseded:
+        raise
+    except Exception:                           # 分水岭出错不该让工具不能用：退回随机游走的结果
+        log.exception("大块填充：标记分水岭出错，改用随机游走的结果")
+        return rw
+    n_ws, n_rw = int(ws.sum()), int(rw.sum())
+    if n_ws == 0 or (n_rw > 0 and n_ws > FALLBACK_RATIO * n_rw):
+        return rw
+    return ws
 
 
 # ------------------------------------------------------------------ propagation
