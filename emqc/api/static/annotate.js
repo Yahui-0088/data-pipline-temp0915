@@ -879,6 +879,7 @@
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     if (S.z !== zTo) await goZ(zTo, true);
     if (S.block !== block || S.z !== zTo || S.bfLast !== last || S.mergeBusy) return;    // 翻片途中又换了块 / 片 / 填了别的
+    if (S.tool !== "bigfill") setTool("bigfill");      // 切到大块填充：种子 / SAM 的预览作废，补点也归大块填充
     setCur(last.id);
     S.bfPoints = [];
     await bfRequest(`${API}/blocks/${encodeURIComponent(S.block)}/bigfill/propagate`, { z_from: last.z, z_to: zTo, label: last.id },

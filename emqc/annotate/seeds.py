@@ -130,13 +130,16 @@ class SeedService:
 
     def predict(self, block, z, box, strokes, scale=1.2, by=None):
         started = time.perf_counter()
+        # 块锁里只拍快照（em_slice / seg_slice 都是拷贝）；分水岭在锁外算，别人在这块上照常翻片、落笔。
+        # 应用时在锁里再核对这一片的版本号，并重新只补标签 0。
         with block.lock:
             image = block.em_slice(z)
             existing = block.seg_slice(z) if block.has_seg else np.zeros(image.shape, np.uint64)
-            mask, warnings = segment(image, existing, box, strokes, scale)
-            proposal = dict(path=str(block.path.resolve()), work=str(block.work.resolve()), z=z,
-                            box=list(box), strokes=strokes, scale=scale, mask=mask,
-                            slice_rev=block.slice_rev(z), owner=_owner(by), created=time.monotonic())
+            slice_rev = block.slice_rev(z)
+        mask, warnings = segment(image, existing, box, strokes, scale)
+        proposal = dict(path=str(block.path.resolve()), work=str(block.work.resolve()), z=z,
+                        box=list(box), strokes=strokes, scale=scale, mask=mask,
+                        slice_rev=slice_rev, owner=_owner(by), created=time.monotonic())
         token = uuid.uuid4().hex
         with self.lock:
             self.proposals = OrderedDict((k, p) for k, p in self.proposals.items()

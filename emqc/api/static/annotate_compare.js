@@ -186,7 +186,7 @@
     try {
       const r = await json(`${API}/${encodeURIComponent(state.block)}/audit?z=${state.z}&limit=300`);
       if (auditFor !== key) return;
-      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值（历史）", refine:"边缘修缮", seed:"种子分割", clear:"批量删除"};
+      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值（历史）", refine:"边缘修缮", seed:"种子分割", bigfill:"大块填充", clear:"批量删除"};
       $("audit-rows").innerHTML = r.entries.map(e => `<tr class="${e.action === "undo" ? "cmp-undo" : ""}"><td>${e.seq}</td><td>${esc(e.ts || "—")}</td><td>${esc(e.by ?? "未署名")}</td><td>${e.action === "undo" ? `撤销 #${e.n}${e.forced ? "（强制）" : ""}` : `#${e.n} ${esc(kinds[e.kind] || e.kind || "")}${e.z == null ? " · 整块" : ""}`}</td><td>${fmt(e.n_px ?? 0)}</td><td>${e.action === "undo" ? esc(e.of ?? "未署名") : '<span class="muted">—</span>'}</td></tr>`).join("")
         || '<tr><td colspan="6" class="muted">这一片还没有任何操作。</td></tr>';
     } catch (err) { if (auditFor === key) { auditFor = ""; $("audit-rows").innerHTML = `<tr><td colspan="6" class="muted">读取失败：${esc(err.message)}</td></tr>`; } }

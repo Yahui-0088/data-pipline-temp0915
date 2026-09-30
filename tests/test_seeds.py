@@ -174,3 +174,25 @@ def test_full_image_requires_background_evidence():
     mask, _ = segment(image, np.zeros_like(image), [0, 0, 40, 30],
                       [*strokes, {'label': 0, 'points': [[30, 15]]}])
     assert mask[15, 10] and not mask[15, 30]
+
+
+def test_predict_does_not_hold_the_block_lock_while_computing(block, monkeypatch):
+    """分水岭在块锁外算：算的时候别的线程（别人翻片、落笔）拿得到这块的锁。"""
+    import threading
+
+    from emqc.annotate import seeds
+
+    seen = {}
+    real = seeds.segment
+
+    def probe(*args, **kwargs):
+        got = []
+        t = threading.Thread(target=lambda: got.append(block.lock.acquire(timeout=2) and (block.lock.release() or True)))
+        t.start(); t.join()
+        seen['other_thread_got_lock'] = bool(got and got[0])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(seeds, 'segment', probe)
+    result = SeedService().predict(block, 0, BOX, STROKES, by=Actor('Alice', 'alice', 42))
+    assert result['n_px'] > 500
+    assert seen['other_thread_got_lock'], "预测计算期间块锁被占着，别人的翻片和写入都得等"
