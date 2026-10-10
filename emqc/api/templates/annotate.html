@@ -59,10 +59,17 @@
       <div id="an-seed-result" class="an-seed-result" role="status" aria-live="polite" aria-atomic="true">框选一个目标，或选择全片范围。</div>
       <div class="an-seed-step" id="an-seed-step-3">
         <div class="an-seed-step-title"><b><span>3</span> 确认填色</b><span class="muted">可撤销</span></div>
+        <div class="an-seed-target"><span id="an-seed-target-sw" class="sw" aria-hidden="true"></span><span id="an-seed-target-id" class="mono">未选择标签</span></div>
+        <div id="an-seed-continuity" class="an-seed-hint muted">同一对象沿用标签，新对象才新建。</div>
         <div class="vast-toolgrid">
-          <button id="an-seed-new" class="primary" disabled>填为新标签</button>
-          <button id="an-seed-apply" disabled>填为当前标签</button>
+          <button id="an-seed-apply" class="primary" disabled>沿用当前标签</button>
+          <button id="an-seed-new" disabled title="为新的对象创建不同的标签；同一对象跨片请沿用当前标签">新建并填色</button>
         </div>
+        <details id="an-seed-neighbours" class="an-tool-options" hidden>
+          <summary id="an-seed-neighbours-summary">从邻片选颜色</summary>
+          <div id="an-seed-neighbours-info" class="an-seed-hint muted"></div>
+          <div id="an-seed-neighbours-list" class="an-seed-neighbours-list" aria-label="邻片标签候选"></div>
+        </details>
       </div>
       <details id="an-seed-options" class="an-tool-options">
         <summary>调整边界</summary>

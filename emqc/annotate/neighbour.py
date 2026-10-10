@@ -18,7 +18,8 @@ import numpy as np
 
 
 def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
-           radius: int = 10, top: int = 3, z_src: int | None = None) -> dict:
+           radius: int = 10, top: int = 3, z_src: int | None = None,
+           include_secondary: bool = False) -> dict:
     """邻片在这块地方是哪个 id。给一块掩膜就按掩膜里的多数投票，给一个点就取那一点。
 
     由近及远地找：先看 z±1，再 z±2……同一距离上下都有标签时，取占比高的那一侧，所以自动挑中的永远是最近的
@@ -27,7 +28,10 @@ def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
 
     候选**按 id 去重**：同一个颜色在连续好几片上都在是常态，列成好几行只是占地方，人要看的是「有哪几种
     不同的颜色可选」。每个 id 只留最近的那一片，另外记上它在这半径内出现过几片（`n_slices`）和具体是哪几片
-    （`slices`）——出现的片数越多，这个颜色越可信。
+    （`slices`），供标注员核对连续性，出现次数不代表同一对象的概率。
+
+    `include_secondary` 为 True 时，候选列表也包括每片的次要重叠标签，供人工选择，
+    不改变默认多数票与距离排序。重叠和出现次数本身不能证明是同一个对象。
 
     `z_src` 则是直接指定去哪一片取，指定了就只看那一片，不搜。没找到返回 {"found": False, ...}，而不是猜一个。"""
     nz, H, W = block.shape_zyx
@@ -64,6 +68,11 @@ def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
                 "others": [{"id": str(int(ids[i])), "px": int(counts[i]),
                             "share": round(float(counts[i]) / max(1, vals.size), 4)} for i in order[1:max(1, top)]]}
 
+    def choices(got):
+        if not include_secondary:
+            return [got]
+        return [got, *[{**got, **other, "others": []} for other in got["others"]]]
+
     # 指定了某一片就只看那一片：自动挑的未必是想要的那个细胞，人要能自己说去哪片取
     if z_src is not None:
         k = int(z_src)
@@ -76,7 +85,7 @@ def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
             return {"found": False, "searched": [k], "radius": int(radius), "candidates": [],
                     "reason": f"z{k} 在这块地方没有标签"}
         return {"found": True, **got, "searched": [k], "radius": int(radius), "picked": "manual",
-                "candidates": [got]}
+                "candidates": choices(got)}
 
     # 自动挑最近的一片（同距离取占比高的一侧），但半径内所有有标签的邻片都扫一遍列进 candidates，
     # 让界面能摆出候选让人手动选——自动挑中的那个未必对。
@@ -91,7 +100,7 @@ def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
             got = read(k)
             if got is None:
                 continue
-            candidates.append(got)
+            candidates.extend(choices(got))
             if best is None or (got["distance"] == best["distance"] and got["share"] > best["share"]):
                 best = got
     # 按 id 去重：同一个颜色只留最近的那一片，但记下它总共出现在哪几片上

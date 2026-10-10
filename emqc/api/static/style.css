@@ -451,3 +451,12 @@ tr.lg-4xx td { background: color-mix(in srgb, var(--medium) 8%, transparent); }
 .vast-tools input[type="range"] { width: 100%; margin-inline: 0; }
 .an-label-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .an-label-actions button { padding: 6px 3px; font-size: 12px; }
+
+/* An object's label stays selected across sections; neighbouring colours are explicit choices. */
+.an-seed-target { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; }
+.an-seed-target .sw, .an-seed-neighbour .sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border-2); flex: none; }
+#an-seed-target-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-seed-neighbours-list { display: grid; gap: 4px; max-height: 180px; overflow-y: auto; }
+.an-seed-neighbour { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px; text-align: left; }
+.an-seed-neighbour-text { display: flex; flex-direction: column; min-width: 0; font-size: 10px; line-height: 1.6; }
+.an-seed-neighbour-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

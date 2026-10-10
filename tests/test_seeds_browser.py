@@ -209,3 +209,85 @@ def test_seed_guided_controls_and_independent_refine_settings(tmp_path):
         page.locator('#an-sam-panel, #an-seed-options').evaluate_all('(els) => els.forEach(el => el.open = false)')
         page.locator('.vast-tools').evaluate('(el) => el.scrollTop = 0')
         page.screenshot(path=str(tmp_path / 'seed-ui.png'), full_page=True)
+
+
+def test_seed_reuses_neighbour_label_across_slices_without_new_ids(tmp_path):
+    data = tmp_path / 'blocks' / 'cell'
+    data.mkdir(parents=True)
+    image, radius = cell_image()
+    original = np.zeros((120, 80, 3), np.uint64)
+    label = 9007199254740993
+    original[:, :, 0][radius.T < 18] = label
+    np.save(data / 'em.npy', np.repeat(image.T[:, :, None], 3, axis=2))
+    np.save(data / 'seg.npy', original)
+    work = tmp_path / 'work' / 'cell'
+    with browser_for(tmp_path, data) as (adapter, page):
+        page.locator('#an-next').click()
+        page.wait_for_function("document.getElementById('an-z').value === '1'")
+        preview(adapter, page)
+        candidate = page.locator(f'#an-seed-neighbours-list button[data-id="{label}"]')
+        assert candidate.is_visible()
+        assert '前 1 片' in candidate.inner_text()
+        assert page.locator('#an-cur-id').inner_text() == '未选择', 'overlap must never auto-select an identity'
+        assert not (work / 'seg_edit.npy').exists()
+        candidate.click()
+        assert page.locator('#an-seed-apply').is_enabled()
+        assert page.locator('#an-seed-target-id').inner_text() == str(label)
+        color = page.locator('#an-seed-target-sw').evaluate('(el) => el.style.background')
+        assert not (work / 'seg_edit.npy').exists(), 'choosing a colour must not apply the mask'
+        for width, height in [(1366, 768), (390, 844)]:
+            page.set_viewport_size({'width': width, 'height': height})
+            page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+            assert page.locator('.vast-tools').evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
+        page.set_viewport_size({'width': 1600, 'height': 1200})
+        page.locator('#an-seed-panel').screenshot(path=str(tmp_path / 'neighbour-colours.jpg'), type='jpeg', quality=90)
+        page.locator('#an-seed-apply').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动' && !document.getElementById('an-undo').disabled")
+        first = np.load(work / 'seg_edit.npy').copy()
+        assert first[38, 40, 1] == label
+        assert np.array_equal(first[:, :, 0], original[:, :, 0])
+        assert np.array_equal(first[:, :, 2], original[:, :, 2])
+        page.locator('#an-next').click()
+        page.wait_for_function("document.getElementById('an-z').value === '2'")
+        assert page.locator('#an-seed-target-id').inner_text() == str(label)
+        assert page.locator('#an-seed-target-sw').evaluate('(el) => el.style.background') == color
+        assert page.locator('#an-seed-neighbours').is_hidden()
+        preview(adapter, page)
+        assert page.locator('#an-seed-apply').get_attribute('class') == 'primary'
+        page.locator('#an-seed-apply').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动' && !document.getElementById('an-undo').disabled")
+        second = np.load(work / 'seg_edit.npy')
+        assert second[38, 40, 1] == second[38, 40, 2] == label
+        assert not (work / 'created_labels.json').exists(), 'continuing an object must not allocate another ID'
+        page.locator('#an-undo').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动' && !document.getElementById('an-undo').disabled")
+        assert np.array_equal(np.load(work / 'seg_edit.npy'), first), 'undo only touches this slice'
+        assert np.array_equal(np.load(data / 'seg.npy'), original)
+
+
+def test_new_object_only_reserves_one_label_while_continuing(tmp_path):
+    data = tmp_path / 'blocks' / 'cell'
+    original = write_cell(data)
+    work = tmp_path / 'work' / 'cell'
+    with browser_for(tmp_path, data) as (adapter, page):
+        preview(adapter, page)
+        assert page.locator('#an-seed-neighbours-list button').count() == 0
+        page.locator('#an-seed-new').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动' && !document.getElementById('an-undo').disabled")
+        label = page.locator('#an-cur-id').inner_text()
+        registry = (work / 'created_labels.json').read_bytes()
+        first = np.load(work / 'seg_edit.npy').copy()
+        page.locator('#an-next').click()
+        page.wait_for_function("document.getElementById('an-z').value === '1'")
+        preview(adapter, page)
+        assert page.locator('#an-seed-target-id').inner_text() == label
+        assert page.locator('#an-seed-apply').is_enabled()
+        page.locator('#an-seed-apply').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动' && !document.getElementById('an-undo').disabled")
+        second = np.load(work / 'seg_edit.npy')
+        assert second[38, 40, 0] == second[38, 40, 1] == int(label)
+        assert (work / 'created_labels.json').read_bytes() == registry
+        assert np.array_equal(second[original != 0], original[original != 0])
+        assert np.array_equal(second[:, :, 0], first[:, :, 0])
+        page.locator('#an-seed-panel').scroll_into_view_if_needed()
+        page.screenshot(path=str(tmp_path / 'continuous-label.png'), full_page=True)

@@ -129,6 +129,8 @@ class SeedService:
         self.proposals = OrderedDict()
 
     def predict(self, block, z, box, strokes, scale=1.2, by=None):
+        from emqc.annotate.neighbour import lookup
+
         started = time.perf_counter()
         # 块锁里只拍快照（em_slice / seg_slice 都是拷贝）；分水岭在锁外算，别人在这块上照常翻片、落笔。
         # 应用时在锁里再核对这一片的版本号，并重新只补标签 0。
@@ -137,6 +139,16 @@ class SeedService:
             existing = block.seg_slice(z) if block.has_seg else np.zeros(image.shape, np.uint64)
             slice_rev = block.slice_rev(z)
         mask, warnings = segment(image, existing, box, strokes, scale)
+        with block.lock:
+            # Same screen coordinates, complete proposal mask (not just the seed
+            # point). Read the working labels under the block lock; suggest only,
+            # never assign an ID or write other slices based on overlap.
+            neighbours = dict(found=False, candidates=[], radius=2)
+            if block.has_seg and mask.any():
+                x0, y0, x1, y1 = box
+                full_mask = np.zeros(image.shape, dtype=bool)
+                full_mask[y0:y1, x0:x1] = mask
+                neighbours = lookup(block, z, mask=full_mask, radius=2, top=4, include_secondary=True)
         proposal = dict(path=str(block.path.resolve()), work=str(block.work.resolve()), z=z,
                         box=list(box), strokes=strokes, scale=scale, mask=mask,
                         slice_rev=slice_rev, owner=_owner(by), created=time.monotonic())
@@ -151,7 +163,7 @@ class SeedService:
         overlay[mask] = [70, 230, 120, 145]
         buf = io.BytesIO()
         Image.fromarray(overlay).save(buf, format='PNG')
-        return dict(token=token, z=z, box=list(box), n_px=int(mask.sum()), warnings=warnings,
+        return dict(token=token, z=z, box=list(box), n_px=int(mask.sum()), warnings=warnings, neighbours=neighbours,
                     slice_rev=proposal['slice_rev'], seconds=round(time.perf_counter() - started, 3),
                     mask_png='data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode())
 

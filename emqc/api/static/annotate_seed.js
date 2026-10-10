@@ -1,7 +1,7 @@
 /* Seed-assisted membrane segmentation. Preview state is separate from label edits. */
 window.createAnnotationSeeds = function (h) {
   const $ = id => document.getElementById(id), S = h.state;
-  const T = {box: null, strokes: [], drawing: null, start: null, preview: null, mask: null, sequence: 0, request: null};
+  const T = {box: null, strokes: [], drawing: null, start: null, preview: null, mask: null, neighbours: null, sequence: 0, request: null};
   const message = (text, tone = 'hint') => {
     $('an-seed-result').textContent = text;
     $('an-seed-result').dataset.tone = tone;
@@ -10,7 +10,17 @@ window.createAnnotationSeeds = function (h) {
   function buttons() {
     const disabled = S.mergeBusy || !T.preview?.n_px || !S.info?.has_seg;
     $('an-seed-new').disabled = disabled;
-    $('an-seed-new').title = disabled ? '先标记目标并检查预览' : '为预览区域新建标签并填色';
+    $('an-seed-new').title = disabled ? '先标记目标并检查预览' : '仅为新的对象创建标签；同一对象跨片请沿用当前标签';
+    $('an-seed-new').classList.toggle('primary', S.cur === '0' && !T.neighbours?.found);
+    $('an-seed-apply').classList.toggle('primary', S.cur !== '0');
+    $('an-seed-target-sw').style.background = S.cur === '0' ? 'transparent' : h.color(S.cur);
+    $('an-seed-target-id').textContent = S.cur === '0' ? '未选择标签' : S.cur;
+    $('an-seed-target-id').title = S.cur === '0' ? '选择一个已有标签，或为新对象新建标签' : `填色标签 ID：${S.cur}`;
+    $('an-seed-continuity').textContent = S.cur === '0' ? '同一对象沿用标签，新对象才新建。' : '翻片保留此标签，同一对象继续沿用。';
+    for (const button of $('an-seed-neighbours-list').querySelectorAll('button[data-id]')) {
+      button.disabled = S.mergeBusy;
+      button.setAttribute('aria-pressed', String(button.dataset.id === S.cur));
+    }
     $('an-seed-apply').disabled = disabled || S.cur === '0';
     $('an-seed-apply').title = S.cur === '0' ? '先从标签列表选择颜色，或按住 Alt 在图上拾色' : `填入当前标签 ${S.cur}`;
     $('an-seed-full').disabled = S.mergeBusy || !S.info?.has_seg;
@@ -33,7 +43,10 @@ window.createAnnotationSeeds = function (h) {
   }
   function discard() {
     T.sequence++; T.request?.abort(); T.request = null;
-    T.preview = null; T.mask = null; buttons();
+    T.preview = null; T.mask = null; T.neighbours = null;
+    $('an-seed-neighbours').hidden = true;
+    $('an-seed-neighbours-list').replaceChildren();
+    buttons();
   }
   function clear() {
     T.box = null; T.strokes = []; T.drawing = null; T.start = null;
@@ -129,11 +142,42 @@ window.createAnnotationSeeds = function (h) {
       if (sequence !== T.sequence) return;
       const mask = await h.loadImg(r.mask_png);
       if (sequence !== T.sequence) return;
-      T.preview = r; T.mask = mask;
+      T.preview = r; T.mask = mask; T.neighbours = r.neighbours || null;
+      showNeighbours();
       message(`预览 ${r.n_px.toLocaleString('zh-CN')} 像素 · 尚未填色` + (r.warnings.length ? '\n' + r.warnings.join('\n') : '\n检查边界，满意后在下方填色。'), r.warnings.length ? 'warning' : 'ready');
     } catch (err) { if (sequence === T.sequence && err.name !== 'AbortError') message('分割失败：' + err.message, 'error'); }
     finally { if (sequence === T.sequence) { T.request = null; buttons(); h.render(); } }
   }
+  function showNeighbours() {
+    const panel = $('an-seed-neighbours'), list = $('an-seed-neighbours-list');
+    list.replaceChildren();
+    panel.hidden = !T.preview?.n_px;
+    const candidates = T.neighbours?.candidates || [];
+    $('an-seed-neighbours-summary').textContent = candidates.length ? `从邻片选颜色 · ${candidates.length} 种` : '从邻片选颜色';
+    $('an-seed-neighbours-info').textContent = candidates.length
+      ? '按位置重叠列出，需核对是否为同一对象。点选只取色，再按「沿用当前标签」填色。'
+      : T.neighbours ? `前后 ${T.neighbours.radius} 片没有重叠标签。也可去已标注的切片拾色，再返回沿用。` : '邻片参考暂不可用，可去已标注的切片拾色。';
+    for (const c of candidates) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.id = c.id;
+      button.className = 'an-seed-neighbour';
+      button.title = `选用标签 ${c.id}；出现在 z${(c.slices || [c.z_src]).join('、z')}。占比表示位置重叠，不是同一对象的概率。`;
+      const swatch = document.createElement('span');
+      swatch.className = 'sw'; swatch.style.background = h.color(c.id); swatch.setAttribute('aria-hidden', 'true');
+      const text = document.createElement('span'); text.className = 'an-seed-neighbour-text';
+      const source = document.createElement('span');
+      const share = Math.round(c.share * 100) || '<1';
+      source.textContent = `${c.z_src < S.z ? '前' : '后'} ${c.distance} 片 · z${c.z_src} · 重叠 ${share}%`;
+      const id = document.createElement('span'); id.className = 'mono muted'; id.textContent = c.id;
+      text.append(source, id); button.append(swatch, text); list.append(button);
+    }
+    if (candidates.length && S.cur === '0') panel.open = true;
+  }
+  $('an-seed-neighbours-list').addEventListener('click', ev => {
+    const button = ev.target.closest('button[data-id]');
+    if (!button || S.mergeBusy || !T.preview?.n_px) return;
+    h.setCur(button.dataset.id);
+  });
   async function apply(create) {
     if (S.mergeBusy || !T.preview?.n_px || (!create && S.cur === '0') || !h.ensureWho()) return;
     const z = S.z, block = S.block, token = T.preview.token;
@@ -142,7 +186,7 @@ window.createAnnotationSeeds = function (h) {
       const id = create ? await h.reserveLabel() : S.cur;
       const r = await h.post(`${h.api}/blocks/${encodeURIComponent(block)}/seed/apply`, h.editBody(z, {token, new_id: id}));
       await h.afterEdit(r, z); h.setCur(id);
-      message(`已填色 ${r.edit?.n_px || 0} 像素，可撤销。框选下一个目标继续。`, 'ready');
+      message(`已填色 ${r.edit?.n_px || 0} 像素，可撤销。翻片标同一对象时，继续「沿用当前标签」。`, 'ready');
     } catch (err) { discard(); h.refreshIfConflict(err, z); message('应用失败：' + err.message, 'error'); }
     finally { h.busy(false); h.render(); }
   }

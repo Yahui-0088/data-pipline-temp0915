@@ -196,3 +196,43 @@ def test_predict_does_not_hold_the_block_lock_while_computing(block, monkeypatch
     result = SeedService().predict(block, 0, BOX, STROKES, by=Actor('Alice', 'alice', 42))
     assert result['n_px'] > 500
     assert seen['other_thread_got_lock'], "预测计算期间块锁被占着，别人的翻片和写入都得等"
+
+
+def test_neighbour_candidates_and_continuous_labels_are_read_only_until_apply(tmp_path):
+    source = tmp_path / 'source'
+    source.mkdir()
+    image, radius = cell_image()
+    np.save(source / 'em.npy', np.repeat(image.T[:, :, None], 4, axis=2))
+    a, b, outside = 9007199254740993, 9007199254741017, 987654321
+    labels = np.zeros((120, 80, 4), np.uint64)
+    # Two different objects overlap the proposed location on a neighbour. Both
+    # must remain selectable; the minority must not disappear behind a winner.
+    inside = radius.T < 18
+    left = np.indices(inside.shape)[0] < 44
+    labels[:, :, 0][inside & left] = a
+    labels[:, :, 0][inside & ~left] = b
+    labels[90:100, 5:15, 0] = outside
+    labels[:, :, 3][inside] = a
+    np.save(source / 'seg.npy', labels)
+    block = Block(source, tmp_path / 'work')
+    service = SeedService()
+    r = service.predict(block, 1, BOX, STROKES, by='tester')
+    candidates = r['neighbours']['candidates']
+    assert {c['id'] for c in candidates} == {str(a), str(b)}
+    assert next(c for c in candidates if c['id'] == str(a))['slices'] == [0, 3]
+    minority = next(c for c in candidates if c['id'] == str(b))
+    assert minority['z_src'] == 0 and minority['distance'] == 1
+    assert not (block.work / 'seg_edit.npy').exists(), 'looking up neighbours must not save anything'
+    # Explicit choice of the minority is respected, and no adjacent plane is written.
+    service.apply(block, r['token'], b, by='tester')
+    after_first = np.load(block.work / 'seg_edit.npy').copy()
+    assert after_first[38, 40, 1] == b
+    assert np.array_equal(after_first[:, :, [0, 2, 3]], labels[:, :, [0, 2, 3]])
+    r2 = service.predict(block, 2, BOX, STROKES, by='tester')
+    assert any(c['id'] == str(b) and c['z_src'] == 1 for c in r2['neighbours']['candidates']), 'read active edits on the previous plane'
+    service.apply(block, r2['token'], b, by='tester')
+    after_second = np.load(block.work / 'seg_edit.npy')
+    assert after_second[38, 40, 1] == after_second[38, 40, 2] == b
+    block.undo(z=2, by='tester')
+    assert np.array_equal(np.load(block.work / 'seg_edit.npy'), after_first)
+    assert np.array_equal(np.load(source / 'seg.npy'), labels)

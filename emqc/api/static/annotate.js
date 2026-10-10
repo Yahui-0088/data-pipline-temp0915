@@ -42,7 +42,7 @@
   const segPanes = () => (S.view === "side" ? [P[1]] : (S.showSeg ? [P[0]] : []));   // where the segmentation is drawn
   const seed = window.createAnnotationSeeds({state: S, api: API, panes, render: renderHi,
     setTool, ensureWho, post: postJSON, editBody, loadImg: url => loadImg(url), busy: mergeBusy, reserveLabel,
-    afterEdit, setCur, refreshIfConflict});
+    afterEdit, setCur, refreshIfConflict, color: id => css(colorOf(id))});
   const nearCurtain = x => S.view === "overlay" && S.curtain && Math.abs(x - S.curtainX) <= 6 / S.zoom;
 
   // ------------------------------------------------------------------ colours: stable per id, everywhere
