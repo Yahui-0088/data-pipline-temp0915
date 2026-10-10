@@ -13,7 +13,14 @@
   async function json(url, signal, body, method) {
     method = method || (body ? "POST" : "GET");
     const r = await fetch(url, method !== "GET" ? {signal, cache: "no-store", method, headers: {"content-type": "application/json"}, body: body ? JSON.stringify(body) : undefined} : {signal, cache: "no-store"});
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(typeof e.detail === "string" ? e.detail : `请求失败 (${r.status})`); }
+    if (!r.ok) {
+      // 审核等接口的 409 带着 {code, message, ...}：把原因原样显示出来，code 挂在错误上给调用方判断
+      const e = await r.json().catch(() => ({})), d = e.detail;
+      const err = new Error(typeof d === "string" ? d : d?.message || `请求失败 (${r.status})`);
+      err.status = r.status;
+      if (d && typeof d === "object") { err.code = d.code; err.info = d; }
+      throw err;
+    }
     return r.json();
   }
   function downloadButtons() {
@@ -204,7 +211,7 @@
     state.controller?.abort(); state.controller = new AbortController();
     const serial = ++state.serial;
     state.block = block.block_id; state.z = nextZ;
-    state.images = state.snapshot = null; state.page = 0; auditFor = "";
+    state.images = state.snapshot = null; state.page = 0; auditFor = ""; RV.state = null; renderReview();
     $("page").setAttribute("aria-busy", "true");
     // Keep the existing layout while loading: hiding it collapses the document and resets image pan.
     $("page").classList.remove("cmp-load-failed");
@@ -224,7 +231,7 @@
       state.snapshot = data; state.images = {em, indices:[decode(before, true), decode(after, true)], sources:decode(sources), changes:decode(changes), editors: editors ? decode(editors) : null};
       frames.set(frameKey(state.block, state.z), {snapshot: data, images: state.images});
       trimFrames();
-      draw(); renderReport(); renderChanges(); renderAudit();
+      draw(); renderReport(); renderChanges(); renderAudit(); loadReview();
       dirButtons().forEach(b => { b.disabled = false; });
       for (const id of ["images", "report", "summary", "marks-panel"]) $(id).hidden = false;
       if (state.marksBlock !== state.block) loadMarks(true); else { renderMarks(); renderPins(); }
@@ -426,6 +433,7 @@
   function showFrame(z) {
     const frame = frames.get(frameKey(state.block, z)); if (!frame) return false;
     state.z = z; state.snapshot = frame.snapshot; state.images = frame.images;
+    RV.state = null; renderReview();                             // 播放中不能审：轻量帧没有内容哈希
     draw(); renderPins();
     $("z").value = z;
     $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.mode === "back" ? "◀ 向后" : play.mode === "fwd" ? "▶ 向前" : "⇄ 来回"} ${play.lo}–${play.hi}（空格或再点一次停止）`;
@@ -563,6 +571,7 @@
       if (!e.repeat) load(state.z+(e.key === "ArrowUp" || e.key.toLowerCase() === "a" ? -1 : 1));
     }
     if (e.key === " " && !e.repeat) { e.preventDefault(); play.timer || play.controller ? stopPlay() : startPlay(play.lastMode); }
+    if (e.key.toLowerCase() === "j" && !e.repeat && REVIEW_ON) { e.preventDefault(); goNextReview(); }
   });
   // ---------------------------------------------------------------- 标记与评论：钉在体素上的一句话 + 线程
   // 图上是编号图钉，下面是列表；同事打开带 mark= 的链接看到同一个点；AI agent 用同一套接口读写（评论 kind=agent 打「AI」标）。
@@ -660,7 +669,139 @@
       else if (b.dataset.act === "del") { if (!confirm(`删除标记 #${m.id} 及其 ${m.comments.length} 条回复？不需要了通常标为已解决即可。`)) return; await json(`${MARKS}/marks/${m.id}`, undefined, undefined, "DELETE"); if (state.markSel === m.id) state.markSel = null; await loadMarks(); }
     } catch (e) { $("status").textContent = `操作失败：${e.message}`; }
   });
-  setInterval(() => { if (document.visibilityState === "visible" && state.block && $("mark-form").hidden) loadMarks(true); }, 30000);   // 同事新加的标记 30 秒内出现；正在写的时候不刷
+  setInterval(() => {                                            // 同事新加的标记、别人的审核结论 30 秒内出现；正在写的时候不刷
+    if (document.visibilityState !== "visible" || !state.block) return;
+    if ($("mark-form").hidden) loadMarks(true);
+    if (REVIEW_ON && !$("rv-dialog").open && !play.timer && !play.controller && state.snapshot?.review_sha) loadReview();
+  }, 30000);
+
+  // ---------------------------------------------------------------- 审核：通过 / 退回修改 / 撤销通过（结论钉在画面上这一片的内容哈希上）
+  // 规则在服务器：能不能点、为什么不能点，都由 /review/{z} 返回；这里只负责显示和把用户看到的哈希、审核版本原样带回去。
+  const REVIEW_ON = !!ME && !!$("review");
+  const RV = {state: null, busy: false, serial: 0, mode: null};
+  const ACT = (k) => $(`rv-${k}`);
+  function playing() { return !!(play.timer || play.controller); }
+  function reviewLine(st) {
+    const parts = [];
+    if (st.completed_by) parts.push(`<b>${esc(st.completed_by)}</b> ${fmtTime(st.completed_at)} 标记完成`);
+    if (st.decided_by) {
+      const what = {approved: "通过", changed: "通过", returned: "退回修改", fixed: "退回修改", pending: "撤销了通过"}[st.status] || "审核";
+      parts.push(`<b>${esc(st.decided_by)}</b> ${fmtTime(st.decided_at)} ${what}${st.last_comment ? `：<q>${esc(st.last_comment)}</q>` : ""}`);
+    }
+    if (st.since_decision?.n && (st.status === "changed" || st.status === "fixed"))
+      parts.push(`<span class="cmp-rv-warn">之后又改了 ${st.since_decision.n} 次（${esc(st.since_decision.by.join("、"))}，${fmt(st.since_decision.n_px)} 像素）</span>`);
+    if (st.contributors?.length) parts.push(`参与人：${st.contributors.map(p => esc(p.by) + (p.me ? "（你）" : "")).join("、")}`);
+    if (st.unattributed) parts.push(`<span class="cmp-rv-warn">${st.unattributed} 笔改动没有署名</span>`);
+    if (st.open_marks?.length) parts.push(`${st.open_marks.length} 个未解决标记`);
+    const why = st.in_queue && st.why_not?.approve;
+    if (why) parts.push(`<span class="cmp-rv-warn">${esc(why)}</span>`);
+    return parts.join(" · ");
+  }
+  function renderReview() {
+    if (!REVIEW_ON) return;
+    const st = RV.state, ready = !!st && !!state.snapshot?.review_sha && !playing() && !RV.busy;
+    $("review").hidden = false;
+    ACT("chip").textContent = st ? st.status_name : (playing() ? "播放中" : "…");
+    ACT("chip").dataset.status = st ? st.status : "";
+    const set = (id, action, label) => {
+      const b = ACT(id), ok = ready && st.can[action];
+      b.disabled = !ok;
+      b.title = st ? (st.why_not[action] || label) : (playing() ? "播放中不能审核，先停下" : "正在加载…");
+    };
+    set("approve", "approve", "通过：整张切片都正确（包括没改动的部分），可以入库");
+    set("approve-next", "approve", "通过这一片，然后跳到下一张待审");
+    set("reject", "request_changes", "退回给标注员修改：写明原因，或先在图上钉标记");
+    set("revoke", "revoke", "撤销通过：写明原因，这一片回到待审核");
+    ACT("revoke").hidden = !st || !["approved", "changed"].includes(st.status);
+    ACT("approve").textContent = st?.status === "changed" ? "重新通过" : "通过";
+    const line = $("rv-line");
+    line.hidden = !st;
+    line.innerHTML = st ? reviewLine(st) : "";
+  }
+  async function loadReview() {
+    if (!REVIEW_ON || !state.block) return;
+    const block = state.block, z = state.z, serial = ++RV.serial;
+    try {
+      const st = await json(`${API}/${encodeURIComponent(block)}/review/${z}`);
+      if (serial !== RV.serial || block !== state.block || z !== state.z) return;   // 结果到的时候已经翻到别的片：丢掉
+      RV.state = st;
+    } catch (e) {
+      if (serial === RV.serial) { RV.state = null; $("rv-line").hidden = false; $("rv-line").textContent = `审核状态读取失败：${e.message}`; }
+      return;
+    }
+    renderReview();
+  }
+  function settleFocus() { document.activeElement?.blur?.(); viewports[0]?.focus({preventScroll: true}); }   // 焦点回到图像：空格、A/Z 照常好用，不会误点到按钮
+  async function reviewAct(action, extra = {}) {
+    const st = RV.state;
+    if (!st || RV.busy || !state.snapshot?.review_sha || playing()) return null;
+    const block = state.block, z = state.z;
+    const body = {action, expect_version: st.version, ...extra};
+    if (["approve", "request_changes", "revoke"].includes(action)) body.expect_sha = state.snapshot.review_sha;
+    RV.busy = true; renderReview();
+    try {
+      const next = await json(`${API}/${encodeURIComponent(block)}/review/${z}`, undefined, body);
+      if (block === state.block && z === state.z) { RV.state = next; $("status").textContent = `${block} · Z ${z} · ${next.status_name}`; }
+      return next;
+    } catch (e) {
+      if (e.code === "confirm") {                                 // 还有未解决标记 / 没署名的改动：问一句
+        RV.busy = false;
+        if (confirm(e.message)) return reviewAct(action, {...extra, confirm: true});
+        return null;
+      }
+      $("status").textContent = `${e.message}`;
+      if (e.code === "stale") load(state.z, true);                // 内容变了：重新加载这一片（图和审核状态一起）
+      else loadReview();
+      throw e;
+    } finally {
+      RV.busy = false; renderReview(); settleFocus();
+    }
+  }
+  async function goNextReview() {
+    if (!REVIEW_ON) return;
+    try {
+      const r = await json(`/api/v1/annotate/review/next?${new URLSearchParams({block: state.block, z: state.z})}`);
+      if (!r.next) { $("status").textContent = "没有待审的切片了。审核进度见左侧「审核进度」。"; return; }
+      if (r.next.block_id !== state.block) $("block").value = r.next.block_id;
+      await load(r.next.z, r.next.block_id !== state.block);
+    } catch (e) { $("status").textContent = `找下一张待审失败：${e.message}`; }
+    settleFocus();
+  }
+  function openDialog(mode) {
+    const st = RV.state; if (!st) return;
+    RV.mode = mode;
+    const marks = mode === "request_changes" ? st.open_marks : [];
+    $("rv-dialog-title").textContent = mode === "revoke" ? "撤销通过" : "退回修改";
+    $("rv-dialog-hint").textContent = mode === "revoke" ? "撤销后这一片回到「待审核」。请写明原因，会记录在审核历史里。"
+      : marks.length ? `这一片有 ${marks.length} 个未解决的标记，会作为退回意见一并记下；可以再补充几句。` : "写明要标注员改什么（也可以先关掉这个窗口，在图上钉标记说明问题）。";
+    $("rv-dialog-marks").hidden = !marks.length;
+    $("rv-dialog-marks").innerHTML = marks.map(m => `<li>#${m.id}（${m.x}, ${m.y}）${esc(m.text)}</li>`).join("");
+    $("rv-comment-label").textContent = mode === "revoke" ? "原因（必填）" : marks.length ? "补充意见（可选）" : "意见（必填）";
+    $("rv-submit").textContent = mode === "revoke" ? "撤销通过" : "退回修改";
+    $("rv-comment").value = ""; $("rv-dialog-error").hidden = true;
+    $("rv-dialog").showModal(); $("rv-comment").focus();
+  }
+  if (REVIEW_ON) {
+    ACT("approve").addEventListener("click", () => reviewAct("approve").catch(() => {}));
+    ACT("approve-next").addEventListener("click", async () => { const r = await reviewAct("approve").catch(() => null); if (r?.status === "approved") goNextReview(); });
+    ACT("reject").addEventListener("click", () => openDialog("request_changes"));
+    ACT("revoke").addEventListener("click", () => openDialog("revoke"));
+    ACT("next").addEventListener("click", goNextReview);
+    $("rv-cancel").addEventListener("click", () => $("rv-dialog").close());
+    $("rv-dialog").addEventListener("close", settleFocus);
+    $("rv-form").addEventListener("submit", async ev => {
+      ev.preventDefault();
+      const comment = $("rv-comment").value.trim();
+      const needText = RV.mode === "revoke" || !RV.state?.open_marks?.length;
+      if (needText && !comment) { $("rv-dialog-error").textContent = "请写明原因"; $("rv-dialog-error").hidden = false; return; }
+      $("rv-submit").disabled = true;
+      try { await reviewAct(RV.mode, comment ? {comment} : {}); $("rv-dialog").close(); }
+      catch (e) { $("rv-dialog-error").textContent = e.message; $("rv-dialog-error").hidden = false; if (e.code === "stale") $("rv-dialog").close(); }
+      finally { $("rv-submit").disabled = false; }
+    });
+    $("rv-dialog").addEventListener("keydown", ev => ev.stopPropagation());   // 弹窗里打字不触发翻页、播放
+    renderReview();
+  }
 
   async function init() {
     $("page").setAttribute("aria-busy", "true");

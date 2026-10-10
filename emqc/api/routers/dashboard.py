@@ -268,6 +268,12 @@ def annotate_compare_page(request: Request, user=Depends(page_user)):
     return _render("annotate_compare.html", request, active="compare", workspace="annotate")
 
 
+@router.get("/annotate/review", response_class=HTMLResponse)
+def annotate_review_page(request: Request, user=Depends(page_user)):
+    """审核进度：每个数据块每一片的状态、改动人、审核意见；标注员在这里按范围标记完成，审核员在这里入库。"""
+    return _render("annotate_review.html", request, active="review", workspace="annotate")
+
+
 @router.get("/annotate/guide", response_class=HTMLResponse)
 def annotate_guide_page(request: Request, user=Depends(page_user)):
     return _render("annotate_guide.html", request, workdir=str(settings.annotate_workdir), sam_dir=str(settings.sam_blocks_dir), active="guide", workspace="annotate")

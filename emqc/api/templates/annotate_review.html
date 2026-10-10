@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}审核进度{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>审核进度</b>{% endblock %}
+{% block topright %}<a class="btn" href="/annotate/compare">去对比页审核</a><a class="btn" href="/annotate">返回工作台</a>{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/annotate_review.css?v={{ static_v('annotate_review.css') }}">
+<div class="page-head"><div class="grow"><h1>审核进度</h1>
+  <p class="sub">每张切片从「标注中」到「已通过」的进度和审核意见。标注员在这里把做完的切片<b>标记完成</b>，审核员在对比页逐片<b>通过</b>或<b>退回修改</b>；
+  通过后又被改过的切片会自动回到待审。全部审完的切片由审核员在下方<b>入库</b>，生成只读的数据版本。</p></div>
+  <div class="actions"><span class="muted rv-me" id="rv-me"></span><button id="rv-refresh">刷新</button></div></div>
+
+<div class="rv-blocks" id="rv-blocks"><div class="card muted">加载中…</div></div>
+
+<section id="rv-detail" hidden>
+  <h2>切片 <span class="cnt" id="rv-detail-title"></span></h2>
+  <div class="card rv-gridcard">
+    <div class="rv-grid" id="rv-grid" role="list" aria-label="每张切片的状态，点击打开对比页"></div>
+    <div class="rv-legend" id="rv-legend"></div>
+  </div>
+
+  <div class="card rv-range">
+    <form id="rv-range-form" class="rv-range-form">
+      <b>按范围</b>
+      <label>从 z <input id="rv-from" class="text mono" type="number" min="0" value="0" required></label>
+      <label>到 z <input id="rv-to" class="text mono" type="number" min="0" value="0" required></label>
+      <button type="submit" class="primary" data-action="complete">标记完成</button>
+      <button type="submit" data-action="uncomplete">撤回完成</button>
+      <span class="muted">标记完成 = 这些切片整片都标好了，交给审核员（没改动的切片也要标，审核是整片审）。</span>
+    </form>
+    <p class="rv-range-result" id="rv-range-result" role="status" aria-live="polite" hidden></p>
+  </div>
+
+  <div class="rv-bar">
+    <label>状态 <select id="rv-filter" class="text"><option value="">全部</option></select></label>
+    <label class="muted"><input type="checkbox" id="rv-mine"> 只看我的待办（退回给我修改的）</label>
+    <label class="muted"><input type="checkbox" id="rv-reviewable"> 只看我能审的</label>
+    <span class="spacer"></span><span class="muted" id="rv-shown"></span>
+  </div>
+  <div class="card pad-0 rv-tablecard"><table class="dense rv-table"><thead><tr>
+    <th>Z</th><th>状态</th><th>改动人</th><th>最后编辑</th><th>标记完成</th><th>审核</th><th class="rv-comment-col">意见</th><th>标记</th><th></th>
+  </tr></thead><tbody id="rv-rows"></tbody></table></div>
+
+  <h2>入库 <span class="cnt" id="rv-release-count"></span></h2>
+  <div class="card rv-release">
+    <p class="muted">入库只收「已通过、而且通过后没再改过」的切片，从当前数据一次取出、生成只读版本（与原始 seg.npy 同形状，附已审核切片清单、
+      manifest 和校验和）。生成前先预览要收哪些片。</p>
+    <div class="rv-release-actions"><button id="rv-preview">预览这次入库</button><span class="muted" id="rv-release-why"></span></div>
+    <div id="rv-plan" hidden>
+      <p id="rv-plan-summary"></p>
+      <details id="rv-plan-excluded-wrap"><summary id="rv-plan-excluded-title"></summary><ul id="rv-plan-excluded"></ul></details>
+      <label class="rv-note">备注（可选）<input id="rv-note" class="text" maxlength="2000" placeholder="例如：第一批，z 0–49"></label>
+      <button id="rv-create" class="primary">入库（生成版本）</button>
+    </div>
+    <p class="rv-release-result" id="rv-release-result" role="status" aria-live="polite" hidden></p>
+    <div class="scroll"><table class="dense"><thead><tr><th>版本</th><th>切片数</th><th>入库人</th><th>时间</th><th>备注</th><th>位置（标注工作目录下）</th><th>manifest</th></tr></thead>
+      <tbody id="rv-releases"><tr><td colspan="7" class="muted">还没有入库版本</td></tr></tbody></table></div>
+  </div>
+</section>
+<script>window.EMQC_USER = {{ ({'name': user.display_name or user.username, 'user': user.username, 'role': user.role} if user else none)|tojson }};</script>
+<script src="/static/annotate_review.js?v={{ static_v('annotate_review.js') }}" defer></script>
+{% endblock %}

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from emqc.config import settings
 from emqc.db.base import get_session
-from emqc.db.models import Mark, MarkComment, User
+from emqc.db.models import Mark, MarkComment, ReviewEventMark, User
 
 from .auth import require_user
 
@@ -70,6 +70,12 @@ def _can_delete(user: User | None, m: Mark) -> bool:
     if user is None:
         return True                                   # 没开登录：谁都能删（内部试用）
     return user.role == "admin" or (m.created_by is not None and m.created_by == user.id)
+
+
+def _cited(s: Session, m: Mark) -> None:
+    """被审核结论（通过 / 退回修改）引用过的标记是审核依据：可以标为已解决，但不能删、不能改内容。"""
+    if s.scalars(select(ReviewEventMark.id).where(ReviewEventMark.mark_id == m.id).limit(1)).first() is not None:
+        raise HTTPException(409, {"code": "cited", "message": "这个标记是审核意见的依据，不能删除或改内容；问题解决了请标为已解决，要补充请回复"})
 
 
 def _block_shape(block_id: str):
@@ -158,6 +164,7 @@ def patch_mark(mark_id: int, body: MarkPatch, user: User | None = Depends(requir
     if body.text is not None:
         if not _can_delete(user, m):
             raise HTTPException(403, "只有作者或管理员能改标记的内容；要补充请回复")
+        _cited(s, m)
         m.text = _clean(body.text)
     if body.status is not None and body.status != m.status:
         m.status = body.status
@@ -174,6 +181,7 @@ def delete_mark(mark_id: int, user: User | None = Depends(require_user), s: Sess
         raise HTTPException(404, "没有这个标记")
     if not _can_delete(user, m):
         raise HTTPException(403, "只有作者或管理员能删标记；不需要了请标为已解决")
+    _cited(s, m)
     for c in s.scalars(select(MarkComment).where(MarkComment.mark_id == m.id)):
         s.delete(c)
     s.delete(m)

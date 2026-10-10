@@ -596,3 +596,92 @@ class MarkComment(Base):
     created_by_user: Mapped[str | None] = mapped_column(String(32))
     created_by_name: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ----------------------------------------------------------------------------- 标注审核（QA sign-off）与入库版本
+class SliceReview(Base):
+    """一张切片（数据块 + z）当前的审核状态。只存「标注员标记完成 / 审核员通过 / 退回修改」这类人做的决定，
+    「标注中」「通过后被修改」这些是拿编辑历史和当前像素算出来的（见 emqc/annotate/review.py）。
+
+    version：每次状态变化加一。两个人同时对同一片下结论时，后到的那个带着旧 version，条件更新落空 → 409，不会互相覆盖。
+    approved_sha256：通过时这一片标签平面的内容哈希。之后像素一变哈希就对不上——显示「通过后被修改」，入库也不会收它。"""
+    __tablename__ = "annot_slice_reviews"
+    __table_args__ = (UniqueConstraint("block_id", "z", name="uq_annot_slice_review"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    block_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    z: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="open")       # open | completed | approved | changes_requested
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    completed_rev: Mapped[int | None] = mapped_column(Integer)            # 标记完成时的切片版本号（审计流水号）
+    completed_by: Mapped[int | None] = mapped_column(Integer)
+    completed_by_user: Mapped[str | None] = mapped_column(String(32))
+    completed_by_name: Mapped[str | None] = mapped_column(String(64))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    decided_rev: Mapped[int | None] = mapped_column(Integer)              # 上一次通过 / 退回时的切片版本号
+    decided_sha256: Mapped[str | None] = mapped_column(String(64))
+    decided_by: Mapped[int | None] = mapped_column(Integer)
+    decided_by_user: Mapped[str | None] = mapped_column(String(32))
+    decided_by_name: Mapped[str | None] = mapped_column(String(64))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    approved_sha256: Mapped[str | None] = mapped_column(String(64))       # 只有 status=approved 时有值
+    approved_rev: Mapped[int | None] = mapped_column(Integer)
+    last_comment: Mapped[str | None] = mapped_column(Text)
+    last_event_id: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ReviewEvent(Base):
+    """审核的每一个动作，只追加、不改不删：谁、什么角色、对哪一片、在什么内容（哈希 + 版本号）上、做了什么、为什么。
+    参与人（contributors）和当时未解决的标记（marks）在下结论的那一刻抄一份进来——之后编辑历史被撤销重写、
+    标记被改，这条记录说的仍是当时的事实。"""
+    __tablename__ = "annot_review_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    block_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    z: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)      # complete | uncomplete | approve | request_changes | revoke
+    from_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)        # 动作之后的 SliceReview.version
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    slice_rev: Mapped[int | None] = mapped_column(Integer)
+    comment: Mapped[str | None] = mapped_column(Text)
+    contributors: Mapped[list | None] = mapped_column(JSON)              # [{by, by_user, by_id, n}]，四眼判定用到的那一份
+    unattributed: Mapped[int] = mapped_column(Integer, default=0)        # 这一片上没署名的改动笔数
+    marks: Mapped[list | None] = mapped_column(JSON)                     # 下结论时这一片未解决的标记（抄一份）
+    actor_id: Mapped[int | None] = mapped_column(Integer)
+    actor_user: Mapped[str | None] = mapped_column(String(32))
+    actor_name: Mapped[str] = mapped_column(String(64), default="")
+    actor_role: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ReviewEventMark(Base):
+    """哪个审核动作引用了哪个标记。被引用的标记不能再删、不能改内容（只能标为已解决），审核依据不会事后消失。"""
+    __tablename__ = "annot_review_event_marks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("annot_review_events.id"), index=True, nullable=False)
+    mark_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+
+
+class AnnotRelease(Base):
+    """入库版本：某个数据块在某一时刻、所有「已通过且内容没变」的切片，冻结成一份只读文件（工作目录 _releases/<块>/v<N>/）。
+    目录是真身，这一行是索引；目录写好（原子改名）之后才写这一行。"""
+    __tablename__ = "annot_releases"
+    __table_args__ = (UniqueConstraint("block_id", "version", name="uq_annot_release_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    block_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    path: Mapped[str] = mapped_column(String(512), nullable=False)       # 相对标注工作目录
+    n_slices: Mapped[int] = mapped_column(Integer, default=0)
+    z_list: Mapped[list | None] = mapped_column(JSON)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_seq: Mapped[int | None] = mapped_column(Integer)               # 取数据那一刻的审计流水号
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(Integer)
+    created_by_user: Mapped[str | None] = mapped_column(String(32))
+    created_by_name: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

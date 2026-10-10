@@ -137,3 +137,24 @@
 .cmp-reply { display: flex; gap: 6px; margin-top: 10px; } .cmp-reply input { flex: 1; padding: 5px 8px; font-size: 13px; }
 .cmp-mark-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; } .cmp-mark-actions button { font-size: 12px; padding: 4px 9px; }
 .cmp-tag.cmp-done { background: #d3f5e3; color: #1f7a4c; } .cmp-tag.cmp-agent { background: #e6e2ff; color: #4b3fbf; margin-left: 6px; }
+
+/* ---------------------------------------------------------------- 审核：顶栏的状态和按钮、状态下方一行说明、退回 / 撤销弹窗 */
+.cmp-review { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cmp-review button { padding: 5px 11px; }
+.cmp-review kbd { font: 500 10.5px var(--mono); padding: 0 4px; border: 1px solid var(--border-2); border-radius: 3px; margin-left: 2px; opacity: .8; }
+.cmp-rv-chip { font: 600 12px var(--sans); padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text-2); white-space: nowrap; }
+.cmp-rv-chip[data-status="pending"] { background: color-mix(in srgb, var(--low) 22%, var(--surface)); border-color: var(--low); color: var(--text); }
+.cmp-rv-chip[data-status="approved"] { background: color-mix(in srgb, var(--good) 18%, var(--surface)); border-color: var(--good); color: var(--text); }
+.cmp-rv-chip[data-status="changed"] { background: color-mix(in srgb, var(--medium) 20%, var(--surface)); border-color: var(--medium); color: var(--text); }
+.cmp-rv-chip[data-status="returned"], .cmp-rv-chip[data-status="fixed"] { background: color-mix(in srgb, var(--high) 15%, var(--surface)); border-color: var(--high); color: var(--text); }
+.cmp-rv-line { margin: -4px 0 10px; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.cmp-rv-line b { color: var(--text); font-weight: 600; } .cmp-rv-line .cmp-rv-warn { color: var(--high); }
+.cmp-rv-line q { quotes: "“" "”"; }
+.cmp-rv-dialog { width: min(520px, calc(100vw - 32px)); border: 1px solid var(--border-2); border-radius: var(--r); padding: 18px 20px; background: var(--surface); color: var(--text); }
+.cmp-rv-dialog::backdrop { background: rgb(0 0 0 / .35); }
+.cmp-rv-dialog h3 { margin: 0 0 6px; font-size: 16px; }
+.cmp-rv-dialog label { display: block; font-size: 12px; color: var(--text-2); margin: 10px 0 4px; }
+.cmp-rv-marks { margin: 6px 0 0; padding-left: 18px; font-size: 13px; max-height: 140px; overflow: auto; }
+.cmp-rv-error { color: var(--high); font-size: 13px; margin: 8px 0 0; }
+.cmp-rv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+@media (max-width: 700px) { #cmp-rv-approve-next, .cmp-review kbd { display: none; } }

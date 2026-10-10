@@ -107,7 +107,10 @@ def test_repair_preserves_unchanged_provenance_and_undo(block):
     assert historical_interpolation(block, 0, proposal, np.ones(proposal.shape, bool), {}) is None
     assert comparison(block, 0) == after
     block.undo()
-    assert comparison(block, 0) == before
+    # 撤销后图像、报告、内容哈希都回到原样；只有版本号（审计流水号，只增不减）往前走了
+    restored = comparison(block, 0)
+    assert restored.pop("slice_rev") > before.pop("slice_rev")
+    assert restored == before
 
 
 def test_erase_and_whole_block_export_conserve_counts(block):

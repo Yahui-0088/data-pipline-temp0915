@@ -15,7 +15,9 @@ from emqc import __version__, logs
 from emqc.config import settings
 from emqc.db import init_db, recover_stale_runs
 
-from .routers import admin, auth, crawl, dashboard, data, datasets, delivery, marks, patches, qc, traces, annotate
+from urllib.parse import urlsplit
+
+from .routers import admin, auth, crawl, dashboard, data, datasets, delivery, marks, patches, qc, review, traces, annotate
 
 logs.setup_logging()
 log = logging.getLogger(__name__)
@@ -32,6 +34,20 @@ async def _login_gate(request: Request, call_next):
     if blocked is not None:
         return blocked
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _same_origin(request: Request, call_next):
+    """写接口只接受本站页面发来的请求。登录 cookie 对同一台机器上所有端口都算「同站」（经 SSH 隧道时都是 localhost），
+    别的端口上的页面也能带着你的会话发 POST；浏览器发写请求时会带 Origin 头，和本站地址对不上就拒绝。
+    脚本（不带 Origin）不受影响。"""
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        if origin and origin != "null" and urlsplit(origin).netloc != request.headers.get("host", ""):
+            return JSONResponse({"detail": {"code": "origin", "message": "请求来自别的网站，已拒绝"}}, status_code=403)
+    response = await call_next(request)
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    return response
 
 
 @app.middleware("http")
@@ -104,6 +120,7 @@ app.include_router(admin.router)
 app.include_router(admin.client_router)
 app.include_router(annotate.router)
 app.include_router(marks.router)
+app.include_router(review.router)
 app.include_router(dashboard.router)
 Path(settings.preview_dir).mkdir(parents=True, exist_ok=True)
 app.mount("/previews", StaticFiles(directory=str(settings.preview_dir)), name="previews")

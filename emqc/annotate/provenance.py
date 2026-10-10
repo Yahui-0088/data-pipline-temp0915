@@ -336,9 +336,13 @@ def comparison_light(block, z: int) -> dict:
 
 def comparison(block, z: int) -> dict:
     # A single response binds both images and the report to the same edit state.
+    from emqc.annotate.review import plane_sha
+
     with block.lock:
         data, before, after, sources, changed, who, who_names = _snapshot(block, z)
+        # 审核要钉住的就是画面上这份 after：同一把锁里算它的内容哈希和这一片的版本号，审核员点「通过」时原样带回来
         return {"report": data, "em_png": _png_url(block.em_slice(z)),
+                "review_sha": plane_sha(after), "slice_rev": block.slice_rev(z),
                 "before": _label_image(before), "after": _label_image(after),
                 "sources_png": _png_url(sources), "changes_png": _png_url(changed.astype(np.uint8) * 255),
                 # 每个像素最后是谁写的：索引图（0 = 无记录，k = editors[k-1]）；超过 255 个改动人时后面的并入 255

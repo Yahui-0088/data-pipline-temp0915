@@ -1,7 +1,14 @@
 {% extends "base.html" %}
 {% block title %}前后对比{% endblock %}
 {% block crumbs %}<a href="/annotate">切片标注</a> › <b>前后对比</b>{% endblock %}
-{% block topright %}<span class="pill">只读对比</span><a class="btn" id="cmp-edit" href="/annotate">返回标注</a>{% endblock %}
+{% block topright %}{% if user %}<div class="cmp-review" id="cmp-review" role="group" aria-label="审核" hidden>
+  <span class="cmp-rv-chip" id="cmp-rv-chip" data-status="">审核状态</span>
+  <button id="cmp-rv-approve" class="primary" disabled>通过</button>
+  <button id="cmp-rv-approve-next" disabled title="通过这一片，然后跳到下一张待审">通过并下一张</button>
+  <button id="cmp-rv-reject" disabled>退回修改</button>
+  <button id="cmp-rv-revoke" class="danger" disabled hidden>撤销通过</button>
+  <button id="cmp-rv-next" title="跳到下一张我能审的切片（快捷键 J）">下一张待审 <kbd>J</kbd></button>
+</div>{% else %}<span class="pill">只读对比</span>{% endif %}<a class="btn" id="cmp-edit" href="/annotate">返回标注</a>{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/annotate_compare.css?v={{ static_v('annotate_compare.css') }}">
 <section class="cmp-page" id="cmp-page" aria-busy="true">
@@ -15,6 +22,18 @@
     <div class="cmp-play"><span class="muted">动态 ±10</span><button id="cmp-play-back" class="cmp-dir" data-mode="back" title="从当前片起向后（z 减小）循环播放" disabled>◀ 向后</button><button id="cmp-play-pp" class="cmp-dir" data-mode="pingpong" title="在上下各 10 片之间来回播放" disabled>⇄ 来回</button><button id="cmp-play-fwd" class="cmp-dir" data-mode="fwd" title="从当前片起向前（z 增大）循环播放；空格 = 开始/停止最近用过的方向" disabled>▶ 向前</button><select id="cmp-fps" class="text" aria-label="播放速度"><option value="4">慢 · 4 帧/秒</option><option value="8" selected>中 · 8 帧/秒</option><option value="12">快 · 12 帧/秒</option></select><span id="cmp-play-info" class="muted"></span></div>
   </div>
   <p id="cmp-status" class="muted" role="status" aria-live="polite">正在加载数据块…</p>
+  <p id="cmp-rv-line" class="cmp-rv-line" role="status" aria-live="polite" hidden></p>
+  <dialog id="cmp-rv-dialog" class="cmp-rv-dialog" aria-labelledby="cmp-rv-dialog-title">
+    <form method="dialog" id="cmp-rv-form">
+      <h3 id="cmp-rv-dialog-title">退回修改</h3>
+      <p class="muted" id="cmp-rv-dialog-hint"></p>
+      <ul class="cmp-rv-marks" id="cmp-rv-dialog-marks" hidden></ul>
+      <label for="cmp-rv-comment" id="cmp-rv-comment-label">意见</label>
+      <textarea id="cmp-rv-comment" class="text" rows="4" maxlength="4000"></textarea>
+      <p class="cmp-rv-error" id="cmp-rv-dialog-error" role="alert" hidden></p>
+      <div class="cmp-rv-actions"><button type="button" id="cmp-rv-cancel">取消</button><button type="submit" class="primary" id="cmp-rv-submit">退回修改</button></div>
+    </form>
+  </dialog>
   <div class="cmp-images" id="cmp-images" hidden>
     <figure class="cmp-ng-pane"><figcaption><b>Neuroglancer · EM</b><span id="cmp-ng-em-caption">公开 H01 · 电镜原图</span><a id="cmp-ng-em-open" class="btn" target="_blank" rel="noopener" href="#">新窗口</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-em-frame" title="公开 H01 Neuroglancer：电镜原图" allow="fullscreen"></iframe><div class="cmp-ng-mark" id="cmp-ng-em-mark" hidden></div><div id="cmp-ng-em-note" class="cmp-ng-note muted" hidden></div></div></figure>
     <figure class="cmp-ng-pane"><figcaption><b>Neuroglancer · seg</b><span id="cmp-ng-seg-caption">公开 H01 · c3 分割叠在电镜上</span><a id="cmp-ng-seg-open" class="btn" target="_blank" rel="noopener" href="#">新窗口</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-seg-frame" title="公开 H01 Neuroglancer：c3 分割" allow="fullscreen"></iframe><div class="cmp-ng-mark" id="cmp-ng-seg-mark" hidden></div><div id="cmp-ng-seg-note" class="cmp-ng-note muted" hidden></div></div></figure>

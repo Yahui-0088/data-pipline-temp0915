@@ -1,0 +1,61 @@
+/* 审核进度页。状态颜色和对比页审核栏的标签一致（见 annotate_compare.css 的 .cmp-rv-chip）。 */
+.rv-me { font-size: 12px; margin-right: 8px; }
+.rv-blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.rv-block { text-align: left; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: var(--r); border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+.rv-block[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.rv-block b { font: 600 13px var(--mono); overflow-wrap: anywhere; }
+.rv-block .rv-bar-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; display: flex; }
+.rv-block .rv-bar-track i { display: block; height: 100%; }
+.rv-block .rv-nums { display: block; font-size: 12px; line-height: 1.7; color: var(--text-2); }
+.rv-block .rv-nums b { font: 600 12px var(--mono); }
+.rv-block .rv-flag { font-size: 12px; color: var(--high); }
+
+.rv-gridcard { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.rv-grid { display: grid; grid-template-columns: repeat(10, 26px); gap: 3px; }
+.rv-grid a { width: 26px; height: 26px; border-radius: 4px; display: grid; place-items: center; font: 500 10px var(--mono); color: var(--text-2);
+  background: var(--surface-2); border: 1px solid var(--border); text-decoration: none; }
+.rv-grid a:hover { outline: 2px solid var(--accent); outline-offset: 1px; text-decoration: none; }
+.rv-legend { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-2); }
+.rv-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.rv-legend i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); display: inline-block; }
+
+[data-status="in_progress"] { --st: color-mix(in srgb, var(--accent) 22%, var(--surface)); }
+[data-status="pending"] { --st: color-mix(in srgb, var(--low) 45%, var(--surface)); }
+[data-status="approved"] { --st: color-mix(in srgb, var(--good) 45%, var(--surface)); }
+[data-status="changed"] { --st: color-mix(in srgb, var(--medium) 50%, var(--surface)); }
+[data-status="returned"], [data-status="fixed"] { --st: color-mix(in srgb, var(--high) 40%, var(--surface)); }
+.rv-grid a[data-status], .rv-legend i[data-status], .rv-chip[data-status] { background: var(--st, var(--surface-2)); }
+.rv-grid a[data-status="approved"], .rv-grid a[data-status="returned"], .rv-grid a[data-status="fixed"], .rv-grid a[data-status="changed"] { color: var(--text); }
+.rv-grid a.rv-mine { box-shadow: inset 0 0 0 2px var(--high); }
+
+.rv-range { margin-top: 12px; }
+.rv-range-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rv-range-form label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.rv-range-form input { width: 76px; }
+.rv-range-form .muted { font-size: 12px; flex-basis: 100%; }
+.rv-range-result, .rv-release-result { margin: 10px 0 0; font-size: 13px; }
+
+.rv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 18px 0 8px; font-size: 13px; }
+.rv-bar select { width: auto; }
+.rv-bar .spacer { flex: 1; }
+.rv-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); white-space: nowrap; }
+.rv-table td { vertical-align: top; }
+.rv-table td.mono { white-space: nowrap; }
+.rv-comment-col { min-width: 180px; }
+.rv-table .rv-comment { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 360px; }
+.rv-table .rv-links { white-space: nowrap; } .rv-table .rv-links a + a { margin-left: 10px; }
+.rv-table tr.rv-todo td:first-child { box-shadow: inset 3px 0 0 var(--high); }
+
+.rv-release p { margin-top: 0; }
+.rv-release-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.rv-release-actions .muted { font-size: 12px; }
+#rv-plan { margin: 12px 0; padding: 12px; border: 1px dashed var(--border-2); border-radius: var(--r-s); }
+#rv-plan ul { font-size: 13px; margin: 6px 0; max-height: 180px; overflow: auto; }
+.rv-note { display: block; font-size: 12px; color: var(--text-2); margin: 10px 0; }
+@media (max-width: 700px) {
+  .rv-grid { grid-template-columns: repeat(10, minmax(20px, 1fr)); }
+  .rv-grid a { width: auto; }
+}
+/* 100 行明细在框内滚动、表头固定，下面的入库面板不用拉到底才看得到 */
+.rv-tablecard { max-height: min(560px, 70vh); overflow: auto; }
+.rv-tablecard thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; box-shadow: 0 1px 0 var(--border); }
