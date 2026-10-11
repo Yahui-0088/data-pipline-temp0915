@@ -47,7 +47,7 @@
     $("me").textContent = me ? `${me.name} · ${me.can_decide ? "可以审核" : (me.role === "annotator" ? "标注员" : (me.why_not || "不能审核"))}` : "";
     const dups = S.summary.duplicates || [];
     $("dups").hidden = !dups.length;
-    $("dups").innerHTML = dups.length ? `有 ${dups.length} 个数据块同名出现在不止一个目录里，只用了列在前面的那个。请管理员把<b>被忽略的</b>那个目录改名或移走（不要动正在用的那个），然后重启服务：`
+    $("dups").innerHTML = dups.length ? `有 ${dups.length} 个数据块同名出现在不止一个目录里，只用了列在前面的那个。请管理员<b>在重启服务之前</b>把<b>被忽略的</b>那个目录改名或移走（不要动正在用的那个）——重启时会按目录顺序重新选，可能改用被忽略的那份数据：`
       + dups.map(d => `<span class="mono">${esc(d.block_id)}</span>（用 ${esc(d.used)}，忽略 ${d.ignored.map(esc).join("、")}）`).join("；") : "";
     renderBatches();
     const q = new URLSearchParams(location.search), wantBlock = S.block || q.get("block");

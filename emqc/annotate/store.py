@@ -426,7 +426,7 @@ class Block:
                 try:
                     size = src.stat().st_size
                 except OSError as e:
-                    raise ValueError(f"原始分割文件读不到了（{e.strerror or e}），数据块目录可能被移走了，请刷新页面；还不行请联系管理员") from e
+                    raise ValueError(f"原始分割文件读不到了（{e.strerror or e}）：数据块目录在服务运行中被改名或移走了，请联系管理员重启服务") from e
                 _check_free(self.work, size)
                 tmp = self.work / (SEG_EDIT + ".part")
                 # 整文件逐字节复制，不用"建一个稀疏的 memmap 再往里填"：稀疏文件建出来不占盘，真正写的时候盘满了
@@ -1293,7 +1293,8 @@ class AnnotateStore:
     def _choose(self, wkey: str, name: str, paths: list[Path]) -> tuple[Path, Exception | None]:
         """同名块用哪个目录。编辑用的和对比 / 审核用的两个 store 必须选同一个：先选定的说了算。
         （一个 store 第一次用到某个块时）先选定的目录不见了：同一份 em.npy 换了地方（目录改名、挪动）就跟过去；
-        换成另一份数据时，如果已经在原来那份上改过（有工作副本）就拒绝——不能把别人的改动悄悄配到另一份图像上。"""
+        换成另一份数据时，如果已经在原来那份上改过（有工作副本）就拒绝。
+        注意这份记录只在进程内存里：服务重启后按找到的顺序重新选第一个，同名的另一份数据可能顶上来（重启前要把被忽略的那份挪走）。"""
         with _CHOSEN_GUARD:
             prev = _CHOSEN.get((wkey, name))
             if prev is not None and prev[0] in paths:
