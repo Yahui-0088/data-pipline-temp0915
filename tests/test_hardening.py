@@ -521,7 +521,8 @@ def test_retry_after_failed_partial_undo_finishes_the_same_edit(tmp_path, monkey
     assert int(b.seg_slice(0)[1, 1]) == 5 and int(b.seg_slice(1)[1, 1]) == 8, "z0 回到合并前，z1 仍是合并后"
     rec3 = next(r for r in b.edits() if r["n"] == 3)
     assert rec3["n_px"] == 1 and rec3["n_slices"] == 1, "记录裁剪成只剩 z1"
-    assert [e["n"] for e in b.audit_entries() if e["action"] == "undo"] == [3]
+    # 失败的那一次已经回填过 z0 的像素：它也留一行流水（谁动过这一片要留痕，审核的四眼原则靠它）；重试成功再记一行
+    assert [e["n"] for e in b.audit_entries() if e["action"] == "undo"] == [3, 3]
     assert b.undo(0)["n"] == 1 and int(b.seg_slice(0)[1, 1]) == 0, "再撤才轮到 #1"
 
 
@@ -729,3 +730,22 @@ def test_supervisor_stops_cleanly_while_waiting_to_retry_a_failed_launch(tmp_pat
         if p.poll() is None:
             p.kill()
     assert p.returncode == 0 and "启动服务失败" in out, "等下一次重试的时候也能被停掉，不会一直卡 60 秒"
+
+
+def test_undo_failing_before_pixels_leaves_no_audit_line(tmp_path, monkeypatch):
+    """撤销在动像素之前失败（写剩余部分的 .part 时磁盘满）：先记的那行流水收回，流水和像素都像没发生过。"""
+    b = _two_slice_merge_block(tmp_path)
+    seq = b.audit_entries()[-1]["seq"]
+    real_open = Path.open
+
+    def fail_part(self, *a, **k):
+        if self.name.endswith(".npz.part"):
+            raise OSError(28, "No space left on device")
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", fail_part)
+    with pytest.raises(ValueError, match="再点一次撤销"):
+        b.undo(0)
+    monkeypatch.undo()
+    assert b.audit_entries()[-1]["seq"] == seq, "流水原样"
+    assert b.undo(0)["n"] == 3

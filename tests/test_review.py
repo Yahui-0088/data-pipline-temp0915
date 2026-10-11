@@ -428,3 +428,79 @@ def test_origin_null_is_refused(env):
     anna = as_("anna")
     r = anna.post(URL + "/review-range", json={"action": "complete", "z_from": 0, "z_to": 0}, headers={"Origin": "null"})
     assert r.status_code == 403
+
+
+def test_undo_is_refused_if_its_audit_line_cannot_be_written(tmp_path, monkeypatch):
+    """撤销先记流水再动像素：流水写不进去（磁盘满）就整个不做，不会出现「像素回退了、谁撤的没留下」。"""
+    b = make_block(tmp_path)
+    b.paint(0, [(1, 1)], 0, 5, by="安娜")
+    before, rev = b.seg_slice(0).copy(), b.slice_rev(0)
+
+    def boom(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(b, "_audit_append", boom)
+    with pytest.raises(ValueError, match="磁盘"):
+        b.undo(z=0, by="丽塔", force=True)
+    assert np.array_equal(b.seg_slice(0), before) and len(b.edits(0)) == 1 and b.slice_rev(0) == rev
+    monkeypatch.undo()
+    assert b.undo(z=0, by="丽塔", force=True) is not None
+
+
+def test_author_of_an_undone_3d_edit_still_counts_as_contributor(env):
+    """整块合并（3-D 改动）被别人在这一片撤掉了：合并的人仍然算动过这一片，不能自己通过它。"""
+    from emqc.annotate.store import Actor
+    from emqc.db import session_scope
+    from emqc.db.models import User
+
+    as_, b = env
+    anna, rita, rex = as_("anna"), as_("rita"), as_("rex")
+    with session_scope() as s:
+        rita_id = s.query(User).filter_by(username="rita").one().id
+    paint(anna, 1, 1, 7)
+    b.merge(7, 70, scope="block", by=Actor("丽塔", "rita", rita_id))      # rita 的 3-D 改动
+    entry = b.audit_entries()[-1]
+    assert entry["z"] is None and entry["zs"] == [1], "3-D 改动在流水里记下落到的切片"
+    r = rex.post(URL + "/undo?z=1", json={"force": True})                  # rex 把它在第 1 片撤掉了
+    assert r.status_code == 200, r.text
+    assert not [e for e in b.edits(1) if e.get("by_id") == rita_id], "rita 在第 1 片已经没有有效改动"
+    complete(anna, 1)
+    st = state(rita, 1)
+    assert "丽塔" in [p["by"] for p in st["contributors"]]
+    r = act(rita, 1, "approve", st)
+    assert r.status_code == 403 and detail(r)["code"] == "four_eyes"
+
+
+def test_unreadable_pixel_record_blocks_review_with_a_reason(env):
+    as_, b = env
+    anna, rita = as_("anna"), as_("rita")
+    paint(anna, 0, 1, 7)
+    b.merge(7, 70, scope="block", by="安娜")
+    n = b.edits()[-1]["n"]
+    (b.work / "edits" / f"{n:06d}.npz").unlink()                       # 3-D 改动的像素记录丢了
+    complete(anna, 0)
+    st = state(rita, 0)
+    assert st.get("history_error") and not any(st["can"].values()) and "联系管理员" in st["why_not"]["approve"]
+    r = act(rita, 0, "approve", st | {"sha": "0" * 64})
+    assert r.status_code == 409 and detail(r)["code"] == "history"
+    rows = rita.get(URL + "/review").json()["slices"]
+    assert not rows[0]["reviewable"] and rows[0]["history_error"]
+
+
+def test_switching_to_password_mode_ends_passwordless_sessions(env):
+    """试用模式里填名字建的号（没有密码）谁都能冒用：切到密码登录后，它们的旧会话不能再用。"""
+    from emqc import auth
+    from emqc.api.app import app
+    from emqc.db import session_scope
+
+    with session_scope() as s:
+        auth.set_login_mode(s, "open", None)
+    c = TestClient(app)
+    c.__enter__()
+    try:
+        assert c.post("/api/v1/auth/login", json={"username": "试用某人"}).status_code == 200
+        assert c.get(URL + "/review").status_code == 200
+        with session_scope() as s:
+            auth.set_login_mode(s, "password", None)
+        assert c.get(URL + "/review").status_code == 401
+    finally:
+        c.__exit__(None, None, None)

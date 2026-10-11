@@ -98,7 +98,7 @@
       const links = [`<a href="${compareLink(r.z)}">${r.reviewable ? "去审核" : "看对比"}</a>`];
       if (r.status === "returned" || r.status === "fixed" || r.status === "in_progress" || r.status === "not_started") links.push(`<a href="${editLink(r.z)}">去修改</a>`);
       return `<tr class="${r.todo ? "rv-todo" : ""}"><td class="mono">${r.z}</td>
-        <td><span class="rv-chip" data-status="${r.status}">${esc(r.status_name)}</span>${r.unattributed ? `<br><span class="muted" title="这一片有没署名的改动">未署名 ${r.unattributed}</span>` : ""}</td>
+        <td><span class="rv-chip" data-status="${r.status}">${esc(r.status_name)}</span>${r.unattributed ? `<br><span class="muted" title="这一片有没署名的改动">未署名 ${r.unattributed}</span>` : ""}${r.history_error ? `<br><span class="rv-flag">${esc(r.history_error)}</span>` : ""}</td>
         <td>${editors}</td><td class="mono">${when(r.last_edit)}</td><td>${done}</td><td>${decided}</td>
         <td class="rv-comment">${r.last_comment ? esc(r.last_comment) : '<span class="muted">—</span>'}</td>
         <td class="mono">${r.open_marks || ""}</td><td class="rv-links">${links.join("")}</td></tr>`;

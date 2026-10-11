@@ -158,8 +158,23 @@ def _slice_now(b, z: int) -> tuple[str, int, list[dict]]:
         return rv.current_sha(b, z), b.slice_rev(z), b.edits(z)
 
 
+def _history_problem(b, z: int, e: Exception, s: Session, user: User | None) -> dict:
+    """这一片的改动记录读不出来（像素记录文件丢了或坏了）：不能可靠判断谁参与过、改了什么，所以不能审，说清原因。"""
+    row = _row(s, b.id, z)
+    why = f"这一片的改动记录读不出来（{e}），暂时不能审核，请联系管理员修复"
+    return {"block_id": b.id, "z": z, "sha": None, "rev": b.slice_rev(z), "status": "in_progress", "status_name": "记录损坏",
+            "stored": row.status if row else "open", "version": row.version if row else 0, "in_queue": False,
+            "history_error": str(e), "completed_by": None, "completed_at": None, "decided_by": None, "decided_at": None,
+            "last_comment": row.last_comment if row else None, "contributors": [], "unattributed": 0, "open_marks": [],
+            "since_decision": {"n": 0, "n_px": 0, "by": []}, "can": {a: False for a in rv.TRANSITIONS},
+            "why_not": {a: why for a in rv.TRANSITIONS}, "can_decide": False, "why_not_decide": why, "decision": None, "events": []}
+
+
 def slice_state(s: Session, b, z: int, user: User | None) -> dict:
-    sha, rev, recs = _slice_now(b, z)
+    try:
+        sha, rev, recs = _slice_now(b, z)
+    except ValueError as e:
+        return _history_problem(b, z, e, s, user)
     has_edits = bool(recs)
     people, unattributed = rv.contributors(b, z, recs)
     row = _row(s, b.id, z)
@@ -186,7 +201,9 @@ def slice_state(s: Session, b, z: int, user: User | None) -> dict:
         "can": {a: why is None for a, why in can.items()}, "why_not": {a: why[1] for a, why in can.items() if why},
         "can_decide": decider is None, "why_not_decide": decider[1] if decider else None,
         # 最近一次审核结论是什么（通过 / 退回 / 撤销通过）：页面据此描述「谁在什么时候做了什么」
-        "decision": next((e.action for e in events if e.action in rv.DECISIONS), None),
+        "decision": s.scalar(select(ReviewEvent.action).where(ReviewEvent.block_id == b.id, ReviewEvent.z == z,
+                                                              ReviewEvent.action.in_(rv.DECISIONS))
+                             .order_by(ReviewEvent.id.desc()).limit(1)),
         "events": [_event_dict(e) for e in events],
     }
 
@@ -269,7 +286,10 @@ def review_action(block_id: str, z: int, body: ReviewActionIn, user: User | None
         _need_decider(s, user)
         if body.expect_sha is None:
             raise _err(422, "sha", "缺少 expect_sha：审核结论要绑定你看到的那一版内容")
-    sha, rev, recs = _slice_now(b, z)
+    try:
+        sha, rev, recs = _slice_now(b, z)
+    except ValueError as e:
+        raise _err(409, "history", f"这一片的改动记录读不出来（{e}），暂时不能审核，请联系管理员修复")
     has_edits = bool(recs)
     if action in rv.DECISIONS and body.expect_sha != sha:
         raise _err(409, "stale", "这一片在你看过之后被改过了，已刷新为最新内容，请看过再操作", sha=sha, rev=rev)
@@ -324,9 +344,12 @@ def review_range(block_id: str, body: RangeIn, user: User | None = Depends(requi
         row = _row(s, b.id, z)
         stored = row.status if row else "open"
         has_edits = z in eds
-        if stored in ("approved", "changes_requested"):
-            sha = rv.current_sha(b, z)
-            display = _display(b, row, sha, has_edits)
+        # 不读像素：标记完成 / 撤回只看存库状态就能定（已通过的两样都不行，退回的只能标记完成），
+        # 显示用的「已通过 / 通过后被修改」「退回 / 已修改」按版本号粗分就够了
+        if stored == "approved":
+            display = "approved" if revs[z] == row.approved_rev else "changed"
+        elif stored == "changes_requested":
+            display = "returned" if revs[z] == row.decided_rev else "fixed"
         else:
             display = rv.display_status(stored, has_edits)
         why = _why_not(body.action, s, user, display, row, [])
@@ -369,6 +392,7 @@ def block_rows(s: Session, b, user: User | None) -> dict:
         counts[display] += 1
         mine = bool(actor and rv.actor_matches(actor, keys.get(z, set())))
         e = eds.get(z, {})
+        broken = bool(e.get("unreadable"))
         out.append({
             "z": z, "status": display, "status_name": rv.DISPLAY_NAMES[display], "version": r.version if r else 0,
             "rev": revs[z], "editors": e.get("editors", {}), "n_edits": e.get("n", 0), "unattributed": e.get("unattributed", 0),
@@ -378,7 +402,8 @@ def block_rows(s: Session, b, user: User | None) -> dict:
             "last_comment": r.last_comment if r else None, "open_marks": open_marks.get(z, 0), "mine": mine,
             # 我的待办：退回修改的片，我参与过或者没人参与过（没人认领的退回大家都看得到）
             "todo": display in ("returned", "fixed") and (mine or not keys.get(z)),
-            "reviewable": display in rv.QUEUE and can_decide and not mine,
+            "reviewable": display in rv.QUEUE and can_decide and not mine and not broken,
+            "history_error": "有改动的像素记录读不出来，暂时不能审核，请联系管理员" if broken else None,
         })
     return {"block_id": b.id, "nz": b.nz, "counts": counts, "slices": out}
 

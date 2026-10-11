@@ -682,6 +682,7 @@
   const ACT = (k) => $(`rv-${k}`);
   function playing() { return !!(play.timer || play.controller); }
   function reviewLine(st) {
+    if (st.history_error) return `<span class="cmp-rv-warn">${esc(st.why_not_decide)}</span>`;
     const parts = [];
     if (st.completed_by) parts.push(`<b>${esc(st.completed_by)}</b> ${fmtTime(st.completed_at)} 标记完成`);
     if (st.decided_by && st.decision) {                          // 按最近一次结论本身描述，不按现在的状态猜

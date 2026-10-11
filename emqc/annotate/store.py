@@ -742,8 +742,10 @@ class Block:
             npz.unlink(missing_ok=True)
             raise ValueError(f"改动记录没写成（{e.strerror or e}），这一笔没有生效，多半是磁盘满了，请联系管理员") from e
         try:
+            # 3-D 改动（z 为空）把它落到的切片也记进流水：以后这一笔被撤掉，审核时仍知道作者动过哪几片（四眼原则）
             self._audit_append({"action": "edit", "by": None, **(actor.stamp() if actor else {}), "n": n, "kind": kind, "z": rec["z"],
-                                "n_px": rec["n_px"], "new_id": rec["new_id"], "n_slices": rec["n_slices"]})
+                                "n_px": rec["n_px"], "new_id": rec["new_id"], "n_slices": rec["n_slices"],
+                                **({"zs": sorted(int(k) for k in np.unique(zs))} if z is None else {})})
         except (OSError, ValueError) as e:
             # 流水没记上：把刚追加的那一行和像素文件都撤回，这一笔当作没发生（像素还没写）
             try:
@@ -1127,6 +1129,20 @@ class Block:
             chosen = np.ones(xs.shape, dtype=bool) if z is None else zs == z
             remaining = ~chosen
             seg = self._seg_writable()
+            # 先记操作流水、再动像素：流水记不上（磁盘满）就整个撤销不做，免得「像素回退了、谁撤的却没留下」——
+            # 那样撤销人不算这一片的参与人，审核的四眼原则就被绕过去了，这一片的版本号也不前进。
+            # 反过来流水记上了、后面某一步失败：只是多一行没生效的撤销记录（版本号多走一步、参与人多算一个），宁严勿宽；
+            # 页面再点一次撤销会选中同一笔接着做完。
+            audit_path = self.work / AUDIT_LOG
+            audit_size = audit_path.stat().st_size if audit_path.exists() else 0
+            try:
+                self._audit_append({"action": "undo", "by": None, **(actor.stamp() if actor else {}), "n": int(rec["n"]),
+                                    "kind": rec.get("kind"), "z": (None if z is None else int(z)), "n_px": int(undone.get("n_px") or 0),
+                                    "of": owner, "of_user": rec.get("by_user"), "of_id": rec.get("by_id"),
+                                    "forced": bool(force and owner is not None and not same_actor(rec, actor))})
+            except (OSError, ValueError) as e:
+                raise ValueError(f"撤销没做完（操作流水没写成：{getattr(e, 'strerror', None) or e}），多半是磁盘满了；"
+                                 "这一笔原样保留，清理磁盘后再点一次撤销即可") from e
             # 顺序决定中途失败（磁盘满、进程被杀）之后还能不能再撤。提交点是第 3 步 edits.jsonl 换成新版：
             #   1. 只撤了多片记录中的一片：先把剩下那部分写成 .npz.part（还不替换原文件）；
             #   2. 回填像素并落盘——做多少遍结果都一样；
@@ -1134,6 +1150,7 @@ class Block:
             # 3 之前失败：日志和像素文件都原封不动，页面再点一次撤销会选中同一笔、回填同样的值，接着做完。
             # 3 之后的收尾（像素文件换成剩下那部分 / 整笔挪进 edits/undone/、记操作流水）只尽力而为：撤销已经生效，
             # 收尾失败只记日志，绝不能再告诉用户"没做完、再点一次"——那会把更早的一笔也撤掉。
+            pixels_touched = False
             try:
                 if remaining.any():
                     rest = {key: (value[remaining] if key in {"xs", "ys", "zs", "old", "new"} and value.ndim else value)
@@ -1146,6 +1163,7 @@ class Block:
                     log[index] = {**rec, "n_px": int(remaining.sum()), "n_slices": int(np.unique(zs[remaining]).size)}
                 else:
                     log.pop(index)
+                pixels_touched = True
                 for k in np.unique(zs[chosen]):
                     m = chosen & (zs == k)
                     seg[xs[m], ys[m], int(k)] = d["old"][m] if np.ndim(d["old"]) else d["old"]
@@ -1159,18 +1177,18 @@ class Block:
                     os.fsync(out.fileno())
                 log_path.replace(self.work / EDIT_LOG)       # ← 提交点
             except OSError as e:
+                if not pixels_touched:
+                    # 还没动像素就失败了：刚记的那行流水收回，什么都没发生过。动过像素就留着它——这个人确实改过这一片
+                    try:
+                        os.truncate(audit_path, audit_size)
+                        self._audit = None
+                    except OSError:
+                        log.exception("撤销失败后收回操作流水那一行没成功：流水里多一行没生效的撤销（无害，宁严勿宽）")
                 raise ValueError(f"撤销没做完（{e.strerror or e}），多半是磁盘满了；这一笔的记录还在，清理磁盘后再点一次撤销即可") from e
             try:
                 self._retire_edit_file(f, int(rec["n"]), partial if remaining.any() else None)
             except OSError:
                 logging.getLogger(__name__).exception("撤销 #%s 已生效，但改动文件没挪进回收目录（不影响结果）", rec["n"])
-            try:
-                self._audit_append({"action": "undo", "by": None, **(actor.stamp() if actor else {}), "n": int(rec["n"]),
-                                    "kind": rec.get("kind"), "z": (None if z is None else int(z)), "n_px": int(undone.get("n_px") or 0),
-                                    "of": owner, "of_user": rec.get("by_user"), "of_id": rec.get("by_id"),
-                                    "forced": bool(force and owner is not None and not same_actor(rec, actor))})
-            except (OSError, ValueError):
-                logging.getLogger(__name__).exception("撤销 #%s 已生效，但操作流水没记上（这一片的版本号没有前进）", rec["n"])
             # deliberately NOT resetting _max_id: recomputing it rescans the whole volume (1.2 s on a 1024²x100
             # block) and it is only ever used to hand out an unused id. Staying high is safe — ids just skip —
             # and it also guarantees an undone id is never handed out again while its edit record still exists.

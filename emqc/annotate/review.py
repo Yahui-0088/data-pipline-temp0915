@@ -150,13 +150,21 @@ def contributors(block: Block, z: int, records: list[dict] | None = None) -> tup
 
     # records：调用方已经在块锁里取好的这一片有效改动（省得再解压一遍 3-D 改动的像素记录）；
     # 审计流水是只追加、按文件状态缓存的列表，扫它不用占锁
-    for rec in (block.edits(z) if records is None else records):
+    recs = block.edits(z) if records is None else records
+    active = {r.get("n") for r in recs}
+    for rec in recs:
         add(rec)
     for e in block.audit_entries():
         if e.get("action") == "undo" and (e.get("z") is None or e.get("z") == z):
             add(e)
         elif e.get("action") == "edit" and e.get("z") == z:
             add(e, count_unattributed=False)
+        elif e.get("action") == "edit" and e.get("z") is None and e.get("n") not in active:
+            # 已经不在本片有效改动里的 3-D 改动（被撤销或裁掉了）：流水里记了落到哪几片就按它判断；
+            # 旧流水没记，就保守地算它动过每一片（宁严勿宽）
+            zs = e.get("zs")
+            if zs is None or z in zs:
+                add(e, count_unattributed=False)
     # 同一个人在有效改动和流水里各算了一次：n 只是给人看的笔数，按流水为准大致即可，不用精确去重
     return list(people.values()), unattributed
 
@@ -193,10 +201,11 @@ def slice_revs(block: Block) -> list[int]:
 
 
 def slice_editors(block: Block) -> dict[int, dict]:
-    """每一片上仍然有效的改动：{z: {"editors": {显示名: 笔数}, "n": 笔数, "last_ts": 最后一笔时间, "keys": 参与人键}}。
-    3-D 改动读一次它的像素记录，分到它真正落到的那几片。"""
+    """每一片上仍然有效的改动：{z: {"editors": {显示名: 笔数}, "n": 笔数, "last_ts": 最后一笔时间, "keys": 参与人键,
+    "unreadable": 读不出像素记录的 3-D 改动笔数}}。3-D 改动读一次它的像素记录，分到它真正落到的那几片；
+    像素记录丢了或坏了就不知道它落在哪几片——保守地算它动过每一片，并标出来（这些片不能审，要先找管理员修记录）。"""
     out: dict[int, dict] = defaultdict(lambda: {"editors": defaultdict(int), "n": 0, "last_ts": None, "keys": set(),
-                                                "unattributed": 0})
+                                                "unattributed": 0, "unreadable": 0})
 
     def add(z: int, rec: dict) -> None:
         d = out[z]
@@ -220,6 +229,9 @@ def slice_editors(block: Block) -> dict[int, dict]:
             if "zs" not in data:
                 data = block._load_edit(rec["n"], ("z", "xs"))
         except ValueError:
+            for z in range(block.nz):
+                add(z, rec)
+                out[z]["unreadable"] += 1
             continue
         zs = data["zs"] if "zs" in data else np.full(np.shape(data.get("xs", [])), int(data.get("z", -1)))
         for z in np.unique(zs):
@@ -233,6 +245,7 @@ def slice_contributor_keys(block: Block, editors: dict[int, dict]) -> dict[int, 
     keys: dict[int, set] = defaultdict(set)
     for z, d in editors.items():
         keys[z] |= d["keys"]
+    active = {r.get("n") for r in block.edits()}
     every: set = set()
     for e in block.audit_entries():
         k = _key(e)
@@ -243,6 +256,14 @@ def slice_contributor_keys(block: Block, editors: dict[int, dict]) -> dict[int, 
             every.add(k)
         elif e.get("action") in ("edit", "undo") and isinstance(z, int):
             keys[z].add(k)
+        elif e.get("action") == "edit" and z is None and e.get("n") not in active:
+            zs = e.get("zs")                           # 同 contributors：撤掉了的 3-D 改动按流水里记的切片，旧流水没记就算每一片
+            if zs is None:
+                every.add(k)
+            else:
+                for k2 in zs:
+                    if 0 <= int(k2) < block.nz:
+                        keys[int(k2)].add(k)
     if every:
         for z in range(block.nz):
             keys[z] |= every
@@ -334,12 +355,24 @@ def preview_release(block: Block, approved: dict[int, dict]) -> dict:
 
 def snapshot_release(block: Block, approved: dict[int, dict]) -> dict:
     """在块锁里把整块拷进内存（同一时刻的快照），并按同一时刻的内容决定收哪些片。只给真正入库用（要占一份整块大小的内存）。"""
-    with block.lock:
-        vol = np.array(block._seg())             # (X, Y, Z) 私有拷贝；保持源文件的 C / F 顺序
+    def stamp():                                 # 这一刻的（流水号, 各片像素版本）：任何写像素都会改变其中之一
         audit = block.audit_entries()
-        seq = int(audit[-1]["seq"]) if audit else 0
-        plan = preview_release(block, approved)  # 锁还在手里：哈希和 vol 是同一时刻的内容
-    return {**plan, "vol": vol, "audit_seq": seq}
+        return (int(audit[-1]["seq"]) if audit else 0), dict(block._shared.gen)
+
+    # 大块整块拷一遍要好几秒：不占着块锁拷（别人照常落笔），拷完在锁里核对这段时间没人写过；写过就重来
+    for _ in range(3):
+        with block.lock:
+            before = stamp()
+        vol = np.array(block._seg())             # (X, Y, Z) 私有拷贝；保持源文件的 C / F 顺序
+        with block.lock:
+            if stamp() == before:
+                plan = preview_release(block, approved)   # 锁在手里、期间没人写：哈希和 vol 是同一时刻的内容
+                return {**plan, "vol": vol, "audit_seq": before[0]}
+        del vol
+    with block.lock:                              # 一直有人在写：最后一次在锁里拷，保证一致
+        vol = np.array(block._seg())
+        plan = preview_release(block, approved)
+        return {**plan, "vol": vol, "audit_seq": stamp()[0]}
 
 
 def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, dict], *, created_by: dict, note: str | None,

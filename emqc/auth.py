@@ -268,6 +268,10 @@ def resolve_session(s: Session, raw: str | None) -> User | None:
     user = s.get(User, sess.user_id)
     if user is None or not user.is_active:
         return None
+    # 密码登录模式下，没有密码的账号（试用模式里填名字自动建的）不能再凭旧会话进来：试用模式下谁都能冒用这种账号，
+    # 留着它的会话，切到密码登录之后仍有人能以它的名义改标注——审核的四眼原则就是按「谁改过」判断的
+    if not has_password(user) and login_mode(s) == "password":
+        return None
     if now - sess.last_seen_at > timedelta(hours=1):
         renew_session(sess.id, now)
     return user
@@ -354,6 +358,10 @@ def set_login_mode(s: Session, mode: str, by: User | None) -> None:
         row = AppSetting(key="login_mode")
         s.add(row)
     row.value, row.updated_at, row.updated_by = mode, _now(), (by.id if by else None)
+    if mode == "password":                       # 切到密码登录：没有密码的账号的会话一并作废（见 resolve_session）
+        for u in s.scalars(select(User).where(User.is_active.is_(True))).all():
+            if not has_password(u):
+                revoke_user_sessions(s, u.id)
 
 
 # ---------------------------------------------------------------- 账号操作记录
