@@ -484,7 +484,8 @@ def write_release(batch: str, workdir: Path, members: list[tuple[Block, dict[int
                 "skipped_blocks": skipped,                # 批次里没收的块和原因（没有通过的片、记录损坏……）
                 "platform_commit": code_commit,
             }
-            _write(tmp / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1).encode())
+            manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=1).encode()
+            _write(tmp / "manifest.json", manifest_bytes)
             files = [f for e in entries for f in (e["array"]["file"], e["reviewed_z_file"])] + ["manifest.json"]
             _write(tmp / "checksums.sha256", "".join(f"{_sha_file(tmp / f)}  {f}\n" for f in files).encode())
             _fsync_dir(tmp)
@@ -495,14 +496,15 @@ def write_release(batch: str, workdir: Path, members: list[tuple[Block, dict[int
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)
             raise
+        # ↓ 提交点之后不能再抛异常（否则接口会说「没生效」而版本目录其实已经在了）：哈希用内存里的字节算，设只读失败就算了
         # 文件设为只读（防手滑改写）；目录不设只读，否则按天数清理旧备份时删不掉里面的文件
-        for f in final.rglob("*"):
-            if f.is_file():
-                try:
+        try:
+            for f in final.rglob("*"):
+                if f.is_file():
                     f.chmod(0o444)
-                except OSError:
-                    pass
-        return {"version": version, "path": str(final.relative_to(Path(workdir))), "manifest_sha256": _sha_file(final / "manifest.json"),
+        except OSError:
+            pass
+        return {"version": version, "path": str(final.relative_to(Path(workdir))), "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
                 "n_blocks": len(entries), "n_slices": n_slices,
                 "blocks": [{"block_id": e["block_id"], "n_slices": e["n_reviewed"], "z_list": e["z_list"], "audit_seq": seqs[e["block_id"]]}
                            for e in entries]}

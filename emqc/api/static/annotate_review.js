@@ -47,7 +47,7 @@
     $("me").textContent = me ? `${me.name} · ${me.can_decide ? "可以审核" : (me.role === "annotator" ? "标注员" : (me.why_not || "不能审核"))}` : "";
     const dups = S.summary.duplicates || [];
     $("dups").hidden = !dups.length;
-    $("dups").innerHTML = dups.length ? `有 ${dups.length} 个数据块同名出现在不止一个目录里，只用了列在前面的那个。请管理员把<b>被忽略的</b>那个目录改名或移走（不要动正在用的那个），然后刷新页面：`
+    $("dups").innerHTML = dups.length ? `有 ${dups.length} 个数据块同名出现在不止一个目录里，只用了列在前面的那个。请管理员把<b>被忽略的</b>那个目录改名或移走（不要动正在用的那个），然后重启服务：`
       + dups.map(d => `<span class="mono">${esc(d.block_id)}</span>（用 ${esc(d.used)}，忽略 ${d.ignored.map(esc).join("、")}）`).join("；") : "";
     renderBatches();
     const q = new URLSearchParams(location.search), wantBlock = S.block || q.get("block");
@@ -245,6 +245,8 @@
       msg = `批次 ${esc(batch)} 入库失败：${esc(e.message)}`;
       stale = e.code === "stale";
     } finally { S.creating = false; }
+    if (stale && batch === S.batch) { S.plan = null; $("plan").hidden = true; }   // 过期的清单不能再提交
+    gateRelease();                                                // 先把按钮放开，下面的自动重新预览才点得动
     // 不管这时停在哪一批，结果都要看得见，并写明是哪一批的
     out.hidden = false; out.innerHTML = msg;
     if (batch === S.batch && stale) $("preview").click();          // 内容和预览时不一样了：同一批才自动重新预览

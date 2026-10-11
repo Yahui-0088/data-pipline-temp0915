@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -417,7 +418,8 @@ def _root_names() -> dict[str, str]:
     for r in raw:
         if r:
             r = Path(r)
-            out[str(r.resolve())] = r.name or r.resolve().name
+            name = Path(os.path.normpath(r)).name           # 「x/..」这类写法按规整后的名字；「.」退回解析后的目录名
+            out[str(r.resolve())] = name if name not in ("", ".", "..") else r.resolve().name
     return out
 
 
@@ -652,7 +654,7 @@ def create_release(batch_id: str, body: ReleaseIn, user: User | None = Depends(r
     dirs = _ambiguous(infos)
     if dirs:
         raise _err(409, "ambiguous", f"有 {len(dirs)} 个导入目录都叫 {batch_id}，分不清是哪一批：{'；'.join(dirs)}。"
-                   "请管理员把其中一个目录改名（改名后刷新页面即可），再入库")
+                   "请管理员把其中一个目录改名并重启服务，再入库")
     if settings.annotate_workdir is None:
         raise _err(422, "workdir", "没有配置标注工作目录（EMQC_ANNOTATE_WORKDIR），无法入库")
     try:

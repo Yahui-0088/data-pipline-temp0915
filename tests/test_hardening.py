@@ -705,6 +705,7 @@ def test_backup_quotes_the_password_and_recopies_blocks_changed_mid_copy(tmp_pat
 
     monkeypatch.setattr(backup, "_rsync", racing_rsync)
     dest = tmp_path / "bk" / "annotate"
+    dest.parent.mkdir()                                    # 和 backup() 一样先建好这次备份的目录（GNU rsync 不会替你建两层）
     assert backup._copy_workdir(work, str(dest), None, tmp_path / "backup.log") == 1
     got = np.load(dest / "who" / "seg_edit.npy")
     assert int(got[1, 1, 0]) == 0 and (dest / "who" / "edits.jsonl").read_text() == "", \

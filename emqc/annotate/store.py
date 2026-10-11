@@ -1270,11 +1270,8 @@ class AnnotateStore:
                 found[p.name].append(p)
         wkey = str(Path(self.workdir).resolve()) if self.workdir else ""
         with self._lock:
-            # 缓存着的块目录已经不在了（被改名、移走）：丢掉，按现在找到的重新选，而不是一直用一个不存在的路径
-            for name, path in list(self._paths.items()):
-                if path not in found.get(name, ()):
-                    self._paths.pop(name, None)
-                    self._blocks.pop(name, None)
+            # 找到过的块一直用到服务重启（不因为某一次没扫到就丢掉重建：目录短暂不见——重新拷贝、存储抖动——时
+            # 已打开的文件照样能用；丢掉重建反而可能建出一个缺 seg.npy 的半成品并一直留着）。块目录改名 / 挪动后重启生效
             dup: dict[str, list[str]] = {}
             for name, paths in found.items():
                 if name not in self._blocks:
@@ -1295,8 +1292,8 @@ class AnnotateStore:
 
     def _choose(self, wkey: str, name: str, paths: list[Path]) -> tuple[Path, Exception | None]:
         """同名块用哪个目录。编辑用的和对比 / 审核用的两个 store 必须选同一个：先选定的说了算。
-        先选定的目录不见了：同一份 em.npy 换了地方（目录改名、挪动）就跟过去；换成另一份数据时，如果已经在原来那份上
-        改过（有工作副本）就拒绝——不能把别人的改动悄悄配到另一份图像上。"""
+        （一个 store 第一次用到某个块时）先选定的目录不见了：同一份 em.npy 换了地方（目录改名、挪动）就跟过去；
+        换成另一份数据时，如果已经在原来那份上改过（有工作副本）就拒绝——不能把别人的改动悄悄配到另一份图像上。"""
         with _CHOSEN_GUARD:
             prev = _CHOSEN.get((wkey, name))
             if prev is not None and prev[0] in paths:
@@ -1307,8 +1304,8 @@ class AnnotateStore:
                     pick = moved[0]
                 elif self.workdir and (Path(self.workdir) / name / SEG_EDIT).exists():
                     return prev[0], ValueError(
-                        f"数据块 {name} 原来的目录 {prev[0]} 不见了，另一个同名目录不能直接顶替（已有的改动是在原来那份数据上做的）。"
-                        "请把原目录放回原处，或联系管理员")
+                        f"数据块 {name} 原来的目录 {prev[0]} 不见了，现在找到的同名目录不是同一份数据，不能直接顶替（已有的改动是在原来那份数据上做的）。"
+                        "请把原目录放回原处后重启服务，或联系管理员")
                 else:
                     pick = paths[0]
             else:
@@ -1335,9 +1332,7 @@ class AnnotateStore:
                 "em_source": "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}
 
     def get(self, block_id: str) -> Block:
-        b = self._blocks.get(block_id)
-        # 没见过的块，或者缓存着的块目录已经不在了（被改名 / 挪走）：重新找一遍（一次 stat，开销可以忽略）
-        if b is None or (isinstance(b, Block) and not (b.path / "em.npy").exists()):
+        if block_id not in self._blocks:
             self.refresh()
         b = self._blocks.get(block_id)
         if b is None:

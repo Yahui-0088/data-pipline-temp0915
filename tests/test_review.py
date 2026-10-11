@@ -758,8 +758,8 @@ def test_release_holds_the_database_write_lock_from_the_final_check_until_it_is_
     assert seen == {"locked": True}, "核对之后到写完记录之前，别人不能改审核结论"
 
 
-def test_read_and_write_handles_share_one_lock_and_follow_a_moved_directory(batches):
-    """对比 / 审核用的只读句柄和编辑用的句柄共用一把锁；块目录在运行中被挪走（改名）后跟过去，不会一直指着旧路径。"""
+def test_read_and_write_handles_share_one_lock_and_follow_a_moved_directory_after_restart(batches):
+    """对比 / 审核用的只读句柄和编辑用的句柄共用一把锁；导入目录改名后重启服务，块跟到新目录，通过照样有效。"""
     from emqc.api.routers import annotate
 
     as_, root = batches
@@ -769,26 +769,79 @@ def test_read_and_write_handles_share_one_lock_and_follow_a_moved_directory(batc
     assert ro.get("qa")._shared is rw.get("qa")._shared
     _approve(anna, rita, "qa", 0)
     (root / "b1").rename(root / "b1-renamed")                # 整个导入目录改名：同一份数据换了地方
-    sm = rita.get("/api/v1/annotate/review/summary").json()
-    assert [g["batch_id"] for g in sm["batches"]] == ["b1-renamed", "b2"], "刷新后按新目录名分批，不用重启"
     r = anna.post(_blk("qa") + "/paint", json={"z": 1, "points": [[1, 1]], "radius": 0, "new_id": 77})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 200, "重启之前照常可用（已经打开的文件还在）"
+    annotate.reset_store()                                    # 相当于重启服务
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert [g["batch_id"] for g in sm["batches"]] == ["b1-renamed", "b2"]
+    ro, rw = annotate.get_store(read_only=True), annotate.get_store()
     assert ro.get("qa")._shared is rw.get("qa")._shared and str(rw.get("qa").path).endswith("b1-renamed/qa")
     assert rita.get(_blk("qa") + "/review/0").json()["status"] == "approved", "通过的那一片内容没变：仍然有效"
+
+
+def test_a_block_directory_that_briefly_disappears_keeps_working(batches):
+    """块目录短暂不见（重新拷贝、存储抖动）：缓存着的块照常可用，不会被丢掉重建成缺 seg.npy 的半成品。"""
+    import shutil
+
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    shutil.move(str(root / "b1"), str(root.parent / "b1-away"))
+    assert anna.get("/api/v1/annotate/blocks").status_code == 200
+    r = anna.post(_blk("qa") + "/paint", json={"z": 1, "points": [[1, 1]], "radius": 0, "new_id": 78})
+    assert r.status_code == 200, r.text
+    (root / "b1" / "qa").mkdir(parents=True)                # 拷回来拷到一半：只有 em.npy
+    np.save(root / "b1" / "qa" / "em.npy", np.zeros((8, 6, 3), dtype=np.uint8))
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert sm["batches"][0]["blocks"][0] == "qa" and not sm["blocks"][0].get("error")
+    pv = rita.get("/api/v1/annotate/review/batches/b1/releases/preview").json()
+    assert pv["expect_included"] == {"qa": [0]}, "已通过的片照样能入库，不会悄悄漏掉"
 
 
 def test_a_different_same_named_block_cannot_silently_replace_an_edited_one(batches):
     """原来的块目录不见了、另有一个同名的不同数据：已经改过的块拒绝顶替（不把改动配到另一份图像上）。"""
     import shutil
 
+    from emqc.api.routers import annotate
+
     as_, root = batches
     anna = as_("anna")
     assert anna.post(_blk("qc") + "/paint", json={"z": 0, "points": [[1, 1]], "radius": 0, "new_id": 5}).status_code == 200
     _put_block(root, "b9", "qc")                             # 另一份同名数据
     shutil.rmtree(root / "b2")                               # 原来那份不见了
+    annotate.reset_store()                                    # 新的句柄第一次用到 qc
     blocks = {b["block_id"]: b for b in anna.get("/api/v1/annotate/blocks").json()["blocks"]}
     assert "不能直接顶替" in blocks["qc"]["error"]
     assert anna.post(_blk("qc") + "/paint", json={"z": 0, "points": [[2, 2]], "radius": 0, "new_id": 6}).status_code in (404, 422)
+
+
+def test_release_reports_success_even_if_making_files_read_only_fails(batches, tmp_path, monkeypatch):
+    """提交点（目录改名）之后不再抛异常：设只读失败也算入库成功并记下，不会出现「说没生效、目录却在」。"""
+    from pathlib import Path as P
+
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    monkeypatch.setattr(P, "chmod", lambda self, mode: (_ for _ in ()).throw(OSError(5, "Input/output error")))
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": {"qa": [0]}})
+    assert r.status_code == 200, r.text
+    top = tmp_path / "work" / r.json()["path"]
+    assert r.json()["manifest_sha256"] == hashlib.sha256((top / "manifest.json").read_bytes()).hexdigest()
+    assert [x["version"] for x in rita.get("/api/v1/annotate/review/batches/b1/releases").json()["releases"]] == [1]
+
+
+def test_a_root_written_with_dot_dot_gets_a_usable_batch_name(batches, tmp_path, monkeypatch):
+    from emqc.api.routers import annotate
+    from emqc.config import settings
+
+    as_, root = batches
+    rita = as_("rita")
+    _put_block(tmp_path, "flat", "qz")
+    (tmp_path / "flat" / "sub").mkdir()
+    monkeypatch.setattr(settings, "annotate_extra_roots", str(tmp_path / "flat" / "sub" / ".."))
+    annotate.reset_store()
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert ("flat", ["qz"]) in [(g["batch_id"], g["blocks"]) for g in sm["batches"]]
 
 
 def test_a_symlinked_import_directory_is_named_after_the_link(batches, tmp_path, monkeypatch):
