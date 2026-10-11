@@ -1,4 +1,4 @@
-"""标注审核接口：对比页上的「通过 / 退回修改 / 撤销通过」，进度页上的「标记完成 / 撤回完成」、每片状态、入库版本。
+"""标注审核接口：对比页上的「通过 / 退回修改 / 撤销通过」，进度页上的「标记完成 / 撤回完成」、按批次的进度、按批次入库。
 
 规则见 emqc/annotate/review.py 开头和 docs/REVIEW.md。要点：
 - 所有审核动作都要落在具体的人名下：没开登录（EMQC_AUTH_DISABLED）时整套审核不可用（409 disabled）；服务令牌过不了 require_user。
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -408,57 +409,99 @@ def block_rows(s: Session, b, user: User | None) -> dict:
     return {"block_id": b.id, "nz": b.nz, "counts": counts, "slices": out}
 
 
-def _blocks(s: Session):
+def _blocks(s: Session) -> list[dict]:
+    """可审核的数据块（带分割标签的；打不开的也列上，在所属批次里报错），每个带上所属批次（导入目录名）。
+    按（批次, 块）排好序：进度页、下一张待审都按这个顺序走。"""
     from .annotate import get_store
 
     st = get_store(read_only=True)
-    return [x for x in st.refresh() if not x.get("error") and x.get("has_seg")]
+    out = [{**x, "batch_id": rv.batch_of(x["path"]) if x.get("path") else ""}
+           for x in st.refresh() if x.get("error") or x.get("has_seg")]
+    return sorted(out, key=lambda x: (x["batch_id"], x["block_id"]))
+
+
+def _duplicates() -> list[dict]:
+    from .annotate import get_store
+
+    return [{"block_id": k, "used": v[0], "ignored": v[1:]} for k, v in sorted(get_store(read_only=True).duplicates.items())]
+
+
+def _ambiguous(members: list[dict]) -> list[str]:
+    """同一个批次名对应了不止一个目录（两个导入目录同名）：返回这些目录，入库时要拒绝。"""
+    dirs = sorted({str(Path(x["path"]).parent) for x in members if x.get("path")})
+    return dirs if len(dirs) > 1 else []
+
+
+def _latest_release(s: Session, batch_id: str) -> dict | None:
+    r = s.scalars(select(AnnotRelease).where(AnnotRelease.batch_id == batch_id).order_by(AnnotRelease.version.desc())).first()
+    return None if r is None else {"version": r.version, "n_slices": r.n_slices, "n_blocks": r.n_blocks, "at": rv.db_iso(r.created_at)}
 
 
 @router.get("/review/summary")
 def review_summary(user: User | None = Depends(require_user), s: Session = Depends(get_session)):
-    """所有数据块的审核进度汇总（进度页顶部），以及我是谁、能不能下结论。
+    """按批次汇总的审核进度（进度页顶部），每批下面是各数据块的汇总；以及我是谁、能不能下结论。
     某一块的编辑记录坏了：那一块单独报错，其余照常显示（不能一块坏了整页打不开）。"""
-    out = []
+    blocks = []
     with _heavy_slot():
-        for info in _blocks(s):
+        infos = _blocks(s)
+        for info in infos:
+            base = {"block_id": info["block_id"], "batch_id": info["batch_id"]}
+            if info.get("error"):
+                blocks.append({**base, "error": f"数据块打不开：{info['error']}"})
+                continue
             try:
                 b = _block(info["block_id"])
                 rows = block_rows(s, b, user)
             except (ValueError, OSError, HTTPException) as e:
                 msg = e.detail if isinstance(e, HTTPException) else str(e)
-                out.append({"block_id": info["block_id"], "error": msg if isinstance(msg, str) else str(msg)})
+                blocks.append({**base, "error": f"编辑记录读不出来：{msg if isinstance(msg, str) else str(msg)}"})
                 continue
-            latest = s.scalars(select(AnnotRelease).where(AnnotRelease.block_id == b.id).order_by(AnnotRelease.version.desc())).first()
-            out.append({"block_id": b.id, "nz": b.nz, "counts": rows["counts"],
-                        "todo": sum(1 for r in rows["slices"] if r["todo"]), "reviewable": sum(1 for r in rows["slices"] if r["reviewable"]),
-                        "latest_release": None if latest is None else {"version": latest.version, "n_slices": latest.n_slices,
-                                                                       "at": rv.db_iso(latest.created_at)}})
+            blocks.append({**base, "nz": b.nz, "counts": rows["counts"],
+                           "todo": sum(1 for r in rows["slices"] if r["todo"]), "reviewable": sum(1 for r in rows["slices"] if r["reviewable"])})
+    batches: dict[str, dict] = {}
+    for x in blocks:
+        g = batches.setdefault(x["batch_id"], {"batch_id": x["batch_id"], "blocks": [], "n_errors": 0, "nz": 0,
+                                               "counts": {k: 0 for k in rv.DISPLAY_NAMES}, "todo": 0, "reviewable": 0})
+        g["blocks"].append(x["block_id"])
+        if x.get("error"):
+            g["n_errors"] += 1
+            continue
+        g["nz"] += x["nz"]
+        g["todo"] += x["todo"]
+        g["reviewable"] += x["reviewable"]
+        for k, n in x["counts"].items():
+            g["counts"][k] += n
+    for g in batches.values():
+        g["latest_release"] = _latest_release(s, g["batch_id"])
+        g["ambiguous_dirs"] = _ambiguous([x for x in infos if x["batch_id"] == g["batch_id"]])
     me = None
     if user is not None:
         p = _decider_problem(s, user)
         me = {"name": user.display_name or user.username, "role": user.role, "can_decide": p is None, "why_not": p[1] if p else None}
-    return {"blocks": out, "me": me, "status_names": rv.DISPLAY_NAMES}
+    return {"batches": list(batches.values()), "blocks": blocks, "duplicates": _duplicates(), "me": me, "status_names": rv.DISPLAY_NAMES}
 
 
 @router.get("/blocks/{block_id}/review")
 def block_review(block_id: str, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
     b = _block(block_id)
-    return block_rows(s, b, user)
+    return {**block_rows(s, b, user), "batch_id": rv.batch_of(b.path)}
 
 
 @router.get("/review/next")
 def next_to_review(block: str | None = None, z: int = -1, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
-    """从 (block, z) 往后找下一张我能审的片：待审核或通过后被修改，而且我没参与过。按数据块、z 顺序，到头绕回来。
+    """从 (block, z) 往后找下一张我能审的片：待审核或通过后被修改，而且我没参与过。按批次、数据块、z 的顺序，
+    先把当前批次审完再进下一批（crossed_batch 告诉页面换批了），到头绕回来。
     不能审的人返回原因（页面显示原因，而不是说「没有待审」）。"""
     if user is None:
         return {"next": None, "why": "这个实例没有开启登录，审核功能不可用"}
     p = _decider_problem(s, user)
     if p is not None:
         return {"next": None, "why": p[1]}
-    ids = [x["block_id"] for x in _blocks(s)]
-    if not ids:
+    infos = [x for x in _blocks(s) if not x.get("error")]
+    if not infos:
         return {"next": None}
+    ids = [x["block_id"] for x in infos]
+    batch_of = {x["block_id"]: x["batch_id"] for x in infos}
     start = ids.index(block) if block in ids else 0
     order = ids[start:] + ids[:start]
     with _heavy_slot():
@@ -473,11 +516,12 @@ def next_to_review(block: str | None = None, z: int = -1, user: User | None = De
                 if i == len(order) and r["z"] >= z:
                     break
                 if r["reviewable"]:
-                    return {"next": {"block_id": bid, "z": r["z"]}}
+                    return {"next": {"block_id": bid, "z": r["z"], "batch_id": batch_of[bid]},
+                            "crossed_batch": block in batch_of and batch_of[bid] != batch_of[block]}
     return {"next": None}
 
 
-# ------------------------------------------------------------------ 入库版本
+# ------------------------------------------------------------------ 入库版本（按批次）
 def _approved(s: Session, b) -> dict[int, dict]:
     rows = list(s.scalars(select(SliceReview).where(SliceReview.block_id == b.id, SliceReview.status == "approved")
                           .execution_options(populate_existing=True)))
@@ -493,87 +537,131 @@ def _approved(s: Session, b) -> dict[int, dict]:
 
 
 def _release_dict(r: AnnotRelease) -> dict:
-    return {"version": r.version, "path": r.path, "n_slices": r.n_slices, "z_list": r.z_list or [], "manifest_sha256": r.manifest_sha256,
-            "audit_seq": r.audit_seq, "note": r.note, "created_by": r.created_by_name, "created_at": rv.db_iso(r.created_at)}
+    return {"batch_id": r.batch_id, "version": r.version, "path": r.path, "n_blocks": r.n_blocks, "n_slices": r.n_slices,
+            "blocks": r.blocks or [], "skipped": r.skipped or [], "manifest_sha256": r.manifest_sha256, "note": r.note,
+            "created_by": r.created_by_name, "created_at": rv.db_iso(r.created_at)}
 
 
-@router.get("/blocks/{block_id}/releases")
-def list_releases(block_id: str, s: Session = Depends(get_session)):
-    _block(block_id)
-    rows = s.scalars(select(AnnotRelease).where(AnnotRelease.block_id == block_id).order_by(AnnotRelease.version.desc()))
-    return {"releases": [_release_dict(r) for r in rows], "root": str(rv.releases_root(settings.annotate_workdir))}
+def _batch_members(s: Session, batch_id: str) -> list[dict]:
+    if not batch_id or batch_id.startswith("."):
+        raise _err(404, "no_batch", "批次名不对")
+    infos = [x for x in _blocks(s) if x["batch_id"] == batch_id]
+    if not infos:
+        raise _err(404, "no_batch", f"没有叫 {batch_id} 的批次（批次 = 数据块所在的导入目录）")
+    return infos
 
 
-@router.get("/blocks/{block_id}/releases/preview")
-def preview_release(block_id: str, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
-    """这次入库会收哪些片、不收哪些（不写任何东西，不整块读盘）。只有能入库的人用得到，也就只给他们算。"""
+def _plan_batch(s: Session, infos: list[dict], *, detail: bool = False):
+    """这一批每块这次收哪些片（不写任何东西、不整块读盘）。
+    返回 (要收切片的块和各自的通过记录, 每块的预览, 不收的块和原因)。"""
+    members, plans, skipped = [], {}, []
+    for x in infos:
+        bid = x["block_id"]
+        if x.get("error"):
+            skipped.append({"block_id": bid, "reason": "unreadable", "message": f"数据块打不开：{x['error']}"})
+            continue
+        try:
+            b = _block(bid)
+            b.audit_entries()                       # 取快照要读流水：读不出来的块现在就说清楚、不收，而不是写到一半失败
+            approved = _approved(s, b)
+            plan = rv.preview_release(b, approved)
+            if detail:
+                rows = block_rows(s, b, None)["slices"]
+                plan["not_approved"] = [{"z": r["z"], "reason": r["status"], "message": r["status_name"]} for r in rows if r["z"] not in approved]
+        except (ValueError, OSError, HTTPException) as e:
+            msg = e.detail if isinstance(e, HTTPException) else str(e)
+            skipped.append({"block_id": bid, "reason": "history", "message": f"编辑记录读不出来，请联系管理员：{msg}"})
+            continue
+        plans[bid] = {"nz": b.nz, **plan}
+        if plan["included"]:
+            members.append((b, approved))
+        else:
+            skipped.append({"block_id": bid, "reason": "none_approved", "message": "没有可入库的切片（还没有已通过、且通过后没再改过的片）"})
+    return members, plans, skipped
+
+
+@router.get("/review/batches/{batch_id}/releases")
+def list_releases(batch_id: str, s: Session = Depends(get_session)):
+    rows = s.scalars(select(AnnotRelease).where(AnnotRelease.batch_id == batch_id).order_by(AnnotRelease.version.desc()))
+    return {"releases": [_release_dict(r) for r in rows], "root": str(rv.releases_root(settings.annotate_workdir) / batch_id)}
+
+
+@router.get("/review/batches/{batch_id}/releases/preview")
+def preview_release(batch_id: str, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
+    """这一批这次入库会收哪些块的哪些片、不收哪些和原因（不写任何东西，不整块读盘）。只有能入库的人用得到，也就只给他们算。"""
     user = _human(user)
     _need_decider(s, user)
-    b = _block(block_id)
+    infos = _batch_members(s, batch_id)
     with _heavy_slot():
-        approved = _approved(s, b)
-        plan = rv.preview_release(b, approved)
-        rows = block_rows(s, b, None)["slices"]
-    not_approved = [{"z": r["z"], "reason": r["status"], "message": r["status_name"]} for r in rows if r["z"] not in approved]
-    return {"included": plan["included"], "excluded": plan["excluded"], "not_approved": not_approved, "nz": b.nz}
+        members, plans, skipped = _plan_batch(s, infos, detail=True)
+    blocks = [{"block_id": bid, **p} for bid, p in plans.items()]
+    return {"batch_id": batch_id, "blocks": blocks, "skipped": skipped, "ambiguous_dirs": _ambiguous(infos),
+            "n_blocks": len(members), "n_slices": sum(len(p["included"]) for p in plans.values()),
+            "expect_included": {b.id: plans[b.id]["included"] for b, _ in members}}
 
 
 class ReleaseIn(BaseModel):
     model_config = {"extra": "forbid"}
-    expect_included: list[int] = Field(max_length=100_000)          # 预览时看到的那份清单：入库前内容又变了就 409
+    # 预览时看到的「每块收哪些片」：入库前内容又变了就 409
+    expect_included: dict[str, list[int]] = Field(max_length=10_000)
     note: str | None = Field(default=None, max_length=2000)
 
 
-_release_gate = threading.BoundedSemaphore(1)                         # 入库要占一份整块大小的内存：同一时间只做一个
+_release_gate = threading.BoundedSemaphore(1)                         # 入库一次占一块大小的内存、要写整批文件：同一时间只做一个
+_STALE = "可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库"
 
 
-@router.post("/blocks/{block_id}/releases")
-def create_release(block_id: str, body: ReleaseIn, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
+@router.post("/review/batches/{batch_id}/releases")
+def create_release(batch_id: str, body: ReleaseIn, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
+    from emqc.annotate.store import hold_workdir
+
     user = _human(user)
     _need_decider(s, user)
-    b = _block(block_id, write=True)
-    if settings.annotate_workdir is None or b.work == b.path:
+    infos = _batch_members(s, batch_id)
+    dirs = _ambiguous(infos)
+    if dirs:
+        raise _err(409, "ambiguous", f"有 {len(dirs)} 个导入目录都叫 {batch_id}，分不清是哪一批：{'；'.join(dirs)}。请管理员把其中一个改名后再入库")
+    if settings.annotate_workdir is None:
         raise _err(422, "workdir", "没有配置标注工作目录（EMQC_ANNOTATE_WORKDIR），无法入库")
     try:
-        b._hold()                                         # 和写像素一样：先占住工作目录（同一时间只有一个服务进程在写）、查磁盘
+        hold_workdir(settings.annotate_workdir)            # 和写像素一样：先占住工作目录（同一时间只有一个服务进程在写）
     except ValueError as e:
         raise _err(409, "workdir", str(e))
     if not _release_gate.acquire(timeout=5):
         raise _err(429, "busy", "另一个入库正在进行，请等它完成后再试")
     try:
-        approved = _approved(s, b)
-        if sorted(rv.preview_release(b, approved)["included"]) != sorted(set(body.expect_included)):
-            raise _err(409, "stale", "可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库")
-        plan = rv.snapshot_release(b, approved)
-        if sorted(plan["included"]) != sorted(set(body.expect_included)):
-            raise _err(409, "stale", "可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库")
-        db_max = s.scalar(select(func.max(AnnotRelease.version)).where(AnnotRelease.block_id == b.id)) or 0
+        expect = {k: sorted(set(v)) for k, v in body.expect_included.items() if v}
+        with _heavy_slot():
+            members, plans, skipped = _plan_batch(s, infos)
+        if {b.id: plans[b.id]["included"] for b, _ in members} != expect:
+            raise _err(409, "stale", _STALE)
+        db_max = s.scalar(select(func.max(AnnotRelease.version)).where(AnnotRelease.batch_id == batch_id)) or 0
 
         def precommit() -> None:
-            # 原子改名之前再核对一遍：写文件的这几十秒里有人退回 / 撤销 / 重新通过了某一片，这次入库就作废。
+            # 原子改名之前再核对一遍：写文件的这段时间里有人退回 / 撤销 / 重新通过了某一片，这次入库就作废。
             # MySQL 上 FOR UPDATE 锁住这些行到提交为止：之后到达的审核动作排在这次入库之后
-            rows = {r.z: r for r in s.scalars(select(SliceReview).where(SliceReview.block_id == b.id, SliceReview.z.in_(plan["included"]))
-                                              .with_for_update().execution_options(populate_existing=True))}
-            for z in plan["included"]:
-                r, a = rows.get(z), approved[z]
-                if r is None or r.status != "approved" or r.approved_sha256 != a["sha"] or r.version != a["version"]:
-                    raise rv.ReleaseStale(f"z {z} 的审核结论在入库途中被改了，这次入库没有生效，请重新预览")
+            for b, approved in members:
+                zs = expect[b.id]
+                rows = {r.z: r for r in s.scalars(select(SliceReview).where(SliceReview.block_id == b.id, SliceReview.z.in_(zs))
+                                                  .with_for_update().execution_options(populate_existing=True))}
+                for z in zs:
+                    r, a = rows.get(z), approved[z]
+                    if r is None or r.status != "approved" or r.approved_sha256 != a["sha"] or r.version != a["version"]:
+                        raise rv.ReleaseStale(f"{b.id} 的 z {z} 的审核结论在入库途中被改了，这次入库没有生效，请重新预览")
 
         from emqc.logs import _git_commit
 
         try:
-            res = rv.write_release(b, settings.annotate_workdir, plan, approved, created_by=_who(user), note=_clean(body.note),
-                                   code_commit=_git_commit(), db_max_version=db_max, precommit=precommit)
+            res = rv.write_release(batch_id, settings.annotate_workdir, members, expect, skipped=skipped, created_by=_who(user),
+                                   note=_clean(body.note), code_commit=_git_commit(), db_max_version=db_max, precommit=precommit)
         except rv.ReleaseStale as e:
             s.rollback()
             raise _err(409, "stale", str(e))
         except ValueError as e:
             s.rollback()
             raise _err(422, "release", str(e))
-        finally:
-            plan.pop("vol", None)                     # 整块的拷贝尽早放掉
-        row = AnnotRelease(block_id=b.id, version=res["version"], path=res["path"], n_slices=res["n_slices"], z_list=res["z_list"],
-                           manifest_sha256=res["manifest_sha256"], audit_seq=res["audit_seq"], note=_clean(body.note),
+        row = AnnotRelease(batch_id=batch_id, version=res["version"], path=res["path"], n_blocks=res["n_blocks"], n_slices=res["n_slices"],
+                           blocks=res["blocks"], skipped=skipped, manifest_sha256=res["manifest_sha256"], note=_clean(body.note),
                            created_by=user.id, created_by_user=user.username, created_by_name=_who(user)["name"])
         try:
             s.add(row)
@@ -585,6 +673,6 @@ def create_release(block_id: str, body: ReleaseIn, user: User | None = Depends(r
 
             logging.getLogger(__name__).exception("入库目录已生成但记录没写成，目录已挪到 %s", moved)
             raise _err(500, "release", "入库记录没写成，这次入库没有生效（生成的目录已挪开），请重试或联系管理员")
-        return {**_release_dict(row), "excluded": res["excluded"]}
+        return _release_dict(row)
     finally:
         _release_gate.release()

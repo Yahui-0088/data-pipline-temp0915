@@ -59,7 +59,7 @@ TRANSITIONS = {
     "request_changes": ({"pending", "approved", "changed"}, "changes_requested"),
     "revoke": ({"approved", "changed"}, "completed"),
 }
-RELEASE_SCHEMA = 1
+RELEASE_SCHEMA = 2                                   # 2：按批次入库（v1 是按单个数据块，从没上线过）
 RELEASES_DIR = "_releases"
 
 
@@ -310,6 +310,13 @@ def releases_root(workdir: Path) -> Path:
     return Path(workdir) / RELEASES_DIR
 
 
+def batch_of(block_path) -> str:
+    """数据块属于哪个批次：它所在的导入目录（数据块目录的上一级）的名字。
+    例如 EMQC_ANNOTATE_ROOT=var/annotation/h01-demo-v2 下的块都属于批次 h01-demo-v2；交付目录 blocks/<数据集>/<块>
+    按数据集分批。批次不另外登记，从目录结构直接得出：导入一批新数据 = 多一个导入目录。"""
+    return Path(block_path).parent.name
+
+
 def _fsync_dir(p: Path) -> None:
     try:
         fd = os.open(p, os.O_RDONLY)
@@ -375,18 +382,17 @@ def snapshot_release(block: Block, approved: dict[int, dict]) -> dict:
         return {**plan, "vol": vol, "audit_seq": stamp()[0]}
 
 
-def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, dict], *, created_by: dict, note: str | None,
-                  code_commit: str | None, db_max_version: int = 0, precommit=None) -> dict:
-    """把快照里要收的片冻结成一个只读版本：<工作目录>/_releases/<块>/v<N>/。
+def _write_npy(path: Path, arr: np.ndarray) -> None:
+    with open(path, "wb") as fh:
+        np.save(fh, arr)
+        fh.flush()
+        os.fsync(fh.fileno())
 
-    seg.npy 与原始 seg.npy 形状、类型、轴顺序（含是否 F 顺序）完全一致；没收的片全是 0，reviewed_z.npy 标出哪些片有效。
-    先写进临时目录、逐个文件落盘；原子改名成 v<N> 之前调用 precommit()（入库接口在这里再核对一遍库里的审核结论，
-    途中有人退回或撤销就抛 ReleaseStale）——要么整个版本出现，要么什么都没有。
-    版本号取「已有目录」和「库里记录」两者的最大值加一：有人删了旧版本目录腾空间，也不会造出一个和库里记录对不上的同号版本。"""
+
+def _write_block(tmp: Path, block: Block, plan: dict, approved: dict[int, dict]) -> dict:
+    """把一块的快照写进 tmp/<块>/：seg.npy（没收的片清零）+ reviewed_z.npy。返回 manifest 里这一块的说明。"""
     rel = plan["vol"]                             # 快照是私有拷贝，直接在上面把不收的片清零，不再多占一份内存
     included = plan["included"]
-    if not included:
-        raise ValueError("没有可以入库的切片：需要至少一片「已通过」且通过后没再改过")
     keep = np.zeros(block.nz, dtype=bool)
     keep[included] = True
     for z in np.flatnonzero(~keep):
@@ -394,17 +400,57 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
     src = block._seg_ro
     if src is not None and src.flags.f_contiguous and not src.flags.c_contiguous and not rel.flags.f_contiguous:
         rel = np.asfortranarray(rel)
-    root = releases_root(workdir) / block.id
-    root.mkdir(parents=True, exist_ok=True)
-    _check_free(root, int(rel.nbytes) + (64 << 20))
+    d = tmp / block.id
+    d.mkdir()
+    _check_free(d, int(rel.nbytes) + (64 << 20))
+    _write_npy(d / "seg.npy", rel)
+    _write_npy(d / "reviewed_z.npy", keep)
+    _fsync_dir(d)
     created = set()
     try:
         created = {str(i) for i in json.loads((block.work_path(CREATED_LABELS)).read_text())}
     except (OSError, ValueError):
         pass
     created_present = sorted(i for i in {str(int(v)) for z in included for v in np.unique(rel[:, :, z])} if i in created)
+    slices = []
+    for z in included:
+        a = approved[z]
+        slices.append({"z": z, "sha256": a["sha"], "approved_rev": a.get("rev"), "review_version": a.get("version"),
+                       "approved_by": a.get("by"), "approved_at": a.get("at"), "decision_event_id": a.get("event_id"),
+                       "contributors": a.get("contributors") or []})
+    return {
+        "block_id": block.id, "dir": block.id,
+        "array": {"file": f"{block.id}/seg.npy", "shape": list(rel.shape), "dtype": str(rel.dtype), "axes": "XYZ",
+                  "fortran_order": bool(rel.flags.f_contiguous and not rel.flags.c_contiguous),
+                  "display_plane": "seg[:, :, z].T（行 = Y，列 = X）",
+                  "unreviewed_slices": "全为 0；以 reviewed_z.npy 为准"},
+        "reviewed_z_file": f"{block.id}/reviewed_z.npy", "n_reviewed": len(included), "z_list": included,
+        "excluded": plan["excluded"],
+        "source": {"block_path": str(block.path), "seg": str(block.path / "seg.npy"), "em": str(block.path / "em.npy"),
+                   "em_shape": list(block.em.shape), "meta": block.meta, "workdir_audit_seq": plan["audit_seq"]},
+        "slices": slices, "created_label_ids": created_present,
+    }
 
-    with _release_locks[block.id]:
+
+def write_release(batch: str, workdir: Path, members: list[tuple[Block, dict[int, dict]]], expect: dict[str, list[int]], *,
+                  skipped: list[dict], created_by: dict, note: str | None, code_commit: str | None,
+                  db_max_version: int = 0, precommit=None) -> dict:
+    """把一个批次里各块要收的片冻结成一个只读版本：<工作目录>/_releases/<批次>/v<N>/<块>/{seg.npy, reviewed_z.npy}，
+    外加整批的 manifest.json 和 checksums.sha256。
+
+    members 是要收切片的块和各自的通过记录；expect 是预览时看到的「每块收哪些片」。一块一块地取快照、写文件，
+    同一时间只占一块的内存；取快照时某块要收的片和预览不一样 → ReleaseStale。每块的 seg.npy 与它原始的 seg.npy
+    形状、类型、轴顺序（含是否 F 顺序）完全一致；没收的片全是 0，reviewed_z.npy 标出哪些片有效。
+    先写进临时目录、逐个文件落盘；原子改名成 v<N> 之前调用 precommit()（入库接口在这里再核对一遍库里的审核结论，
+    途中有人退回或撤销就抛 ReleaseStale）——要么整个版本出现，要么什么都没有。
+    版本号取「已有目录」和「库里记录」两者的最大值加一：有人删了旧版本目录腾空间，也不会造出一个和库里记录对不上的同号版本。"""
+    if not members:
+        raise ValueError("没有可以入库的切片：需要至少一片「已通过」且通过后没再改过")
+    root = releases_root(workdir) / batch
+    root.mkdir(parents=True, exist_ok=True)
+    _check_free(root, sum(int(b._seg().nbytes) for b, _ in members) + (64 << 20))
+
+    with _release_locks[batch]:
         for old in root.glob(".tmp-*"):          # 上次入库写到一半崩了留下的临时目录（同一时间只有本进程在写这个工作目录）
             shutil.rmtree(old, ignore_errors=True)
         existing = [int(p.name[1:]) for p in root.iterdir() if p.is_dir() and p.name.startswith("v") and p.name[1:].isdigit()]
@@ -415,39 +461,31 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
         tmp = root / f".tmp-{uuid.uuid4().hex[:8]}"
         tmp.mkdir()
         try:
-            with open(tmp / "seg.npy", "wb") as fh:
-                np.save(fh, rel)
-                fh.flush()
-                os.fsync(fh.fileno())
-            with open(tmp / "reviewed_z.npy", "wb") as fh:
-                np.save(fh, keep)
-                fh.flush()
-                os.fsync(fh.fileno())
-            slices = []
-            for z in included:
-                a = approved[z]
-                slices.append({"z": z, "sha256": a["sha"], "approved_rev": a.get("rev"), "review_version": a.get("version"),
-                               "approved_by": a.get("by"), "approved_at": a.get("at"), "decision_event_id": a.get("event_id"),
-                               "contributors": a.get("contributors") or []})
+            entries, seqs = [], {}
+            for block, approved in members:
+                plan = snapshot_release(block, approved)
+                try:
+                    if plan["included"] != sorted(set(expect.get(block.id, []))):
+                        raise ReleaseStale(f"数据块 {block.id} 可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库")
+                    entries.append(_write_block(tmp, block, plan, approved))
+                    seqs[block.id] = plan["audit_seq"]
+                finally:
+                    plan.pop("vol", None)                # 这一块的拷贝写完就放掉，再取下一块
+            n_slices = sum(e["n_reviewed"] for e in entries)
             manifest = {
-                "schema_version": RELEASE_SCHEMA, "kind": "annotation_release", "block_id": block.id, "version": version,
+                "schema_version": RELEASE_SCHEMA, "kind": "annotation_batch_release", "batch_id": batch, "version": version,
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "created_by": created_by, "note": note,
                 "approval_scope": "whole_slice",          # 「通过」= 整张切片都正确，可以当训练真值（用户 2026-10-10 定）
-                "label_semantics": "原始分割的标签 id；标注中新建的 id 列在 created_label_ids（只在本数据块内唯一，跨块合并前要重新映射）",
-                "array": {"file": "seg.npy", "shape": list(rel.shape), "dtype": str(rel.dtype), "axes": "XYZ",
-                          "fortran_order": bool(rel.flags.f_contiguous and not rel.flags.c_contiguous),
-                          "display_plane": "seg[:, :, z].T（行 = Y，列 = X）",
-                          "unreviewed_slices": "全为 0；以 reviewed_z.npy 为准"},
-                "reviewed_z_file": "reviewed_z.npy", "n_reviewed": len(included), "z_list": included,
-                "excluded": plan["excluded"],
-                "source": {"block_path": str(block.path), "seg": str(block.path / "seg.npy"), "em": str(block.path / "em.npy"),
-                           "em_shape": list(block.em.shape), "meta": block.meta, "workdir_audit_seq": plan["audit_seq"]},
+                "label_semantics": "原始分割的标签 id；标注中新建的 id 列在各块的 created_label_ids（只在本数据块内唯一，跨块合并前要重新映射）",
                 "slice_hash": "sha256(seg[:, :, z].tobytes(order='F')) 按小端 uint64，等于显示方向平面按 C 顺序的字节",
-                "slices": slices, "created_label_ids": created_present, "platform_commit": code_commit,
+                "n_blocks": len(entries), "n_slices": n_slices,
+                "blocks": entries,
+                "skipped_blocks": skipped,                # 批次里没收的块和原因（没有通过的片、记录损坏……）
+                "platform_commit": code_commit,
             }
             _write(tmp / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1).encode())
-            sums = "".join(f"{_sha_file(tmp / f)}  {f}\n" for f in ("seg.npy", "reviewed_z.npy", "manifest.json"))
-            _write(tmp / "checksums.sha256", sums.encode())
+            files = [f for e in entries for f in (e["array"]["file"], e["reviewed_z_file"])] + ["manifest.json"]
+            _write(tmp / "checksums.sha256", "".join(f"{_sha_file(tmp / f)}  {f}\n" for f in files).encode())
             _fsync_dir(tmp)
             if precommit is not None:
                 precommit()                          # 途中有人改了审核结论就在这里抛出，什么都不留
@@ -457,13 +495,16 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
             shutil.rmtree(tmp, ignore_errors=True)
             raise
         # 文件设为只读（防手滑改写）；目录不设只读，否则按天数清理旧备份时删不掉里面的文件
-        for f in final.iterdir():
-            try:
-                f.chmod(0o444)
-            except OSError:
-                pass
+        for f in final.rglob("*"):
+            if f.is_file():
+                try:
+                    f.chmod(0o444)
+                except OSError:
+                    pass
         return {"version": version, "path": str(final.relative_to(Path(workdir))), "manifest_sha256": _sha_file(final / "manifest.json"),
-                "n_slices": len(included), "z_list": included, "audit_seq": plan["audit_seq"], "excluded": plan["excluded"]}
+                "n_blocks": len(entries), "n_slices": n_slices,
+                "blocks": [{"block_id": e["block_id"], "n_slices": e["n_reviewed"], "z_list": e["z_list"], "audit_seq": seqs[e["block_id"]]}
+                           for e in entries]}
 
 
 def set_aside(workdir: Path, rel_path: str) -> str | None:

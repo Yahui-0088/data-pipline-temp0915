@@ -59,3 +59,10 @@
 /* 100 行明细在框内滚动、表头固定，下面的入库面板不用拉到底才看得到 */
 .rv-tablecard { max-height: min(560px, 70vh); overflow: auto; }
 .rv-tablecard thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; box-shadow: 0 1px 0 var(--border); }
+/* 批次卡和数据块卡同一套样式；批次卡在最上面，选中后下面列出这一批的数据块 */
+.rv-batchcard b { font-size: 14px; }
+.rv-block .rv-flag.rv-can { color: var(--accent-ink); }
+.rv-warn { font-size: 13px; color: var(--high); margin: 8px 0 12px; }
+.rv-warn .mono { font-size: 12px; }
+#rv-batch > h2:first-child { margin-top: 24px; }
+#rv-plan .rv-plan-table { margin: 6px 0 10px; font-size: 13px; }

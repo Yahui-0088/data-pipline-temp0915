@@ -667,19 +667,21 @@ class ReviewEventMark(Base):
 
 
 class AnnotRelease(Base):
-    """入库版本：某个数据块在某一时刻、所有「已通过且内容没变」的切片，冻结成一份只读文件（工作目录 _releases/<块>/v<N>/）。
-    目录是真身，这一行是索引；目录写好（原子改名）之后才写这一行。"""
-    __tablename__ = "annot_releases"
-    __table_args__ = (UniqueConstraint("block_id", "version", name="uq_annot_release_version"),)
+    """入库版本：一个批次（导入目录）在某一时刻，各数据块所有「已通过且内容没变」的切片冻结成的一份只读文件
+    （工作目录 _releases/<批次>/v<N>/<块>/）。目录是真身，这一行是索引；目录写好（原子改名）之后才写这一行。
+    审核的单位仍是切片（SliceReview 按块 + z）；批次只决定「一起交付的是哪些块」。"""
+    __tablename__ = "annot_batch_releases"
+    __table_args__ = (UniqueConstraint("batch_id", "version", name="uq_annot_batch_release_version"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    block_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    batch_id: Mapped[str] = mapped_column(String(255), index=True, nullable=False)   # 导入目录名
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)       # 相对标注工作目录
+    n_blocks: Mapped[int] = mapped_column(Integer, default=0)            # 收了切片的块数
     n_slices: Mapped[int] = mapped_column(Integer, default=0)
-    z_list: Mapped[list | None] = mapped_column(JSON)
+    blocks: Mapped[list | None] = mapped_column(JSON)                    # [{block_id, n_slices, z_list, audit_seq}]
+    skipped: Mapped[list | None] = mapped_column(JSON)                   # 批次里没收的块：[{block_id, reason, message}]
     manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    audit_seq: Mapped[int | None] = mapped_column(Integer)               # 取数据那一刻的审计流水号
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(Integer)
     created_by_user: Mapped[str | None] = mapped_column(String(32))

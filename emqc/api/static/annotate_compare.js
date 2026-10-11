@@ -785,6 +785,8 @@
       if (r.next.block_id !== state.block) $("block").value = r.next.block_id;
       RV.nav = 0;
       await load(r.next.z, r.next.block_id !== state.block);
+      // 先审完当前批次才会换批：换了就明说，免得以为还在原来那一批
+      if (r.crossed_batch) $("status").textContent = `原来那一批没有你能审的切片了，已进入批次 ${r.next.batch_id} · ${$("status").textContent}`;
     } catch (e) { $("status").textContent = `找下一张待审失败：${e.message}`; }
     finally { if (nav === RV.nav) RV.nav = 0; renderReview(); settleFocus(); }
   }

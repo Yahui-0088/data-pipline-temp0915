@@ -1,21 +1,40 @@
 # 标注审核与入库（QA sign-off & release）
 
-标注做完之后，由审核员逐片确认、退回或通过；通过的切片按数据块「入库」，冻结成只读的数据版本交给训练方。
+标注做完之后，由审核员逐片确认、退回或通过；进度按**批次**（导入目录）汇总，通过的切片按批次「入库」，冻结成只读的数据版本交给训练方。
 代码：`emqc/annotate/review.py`（规则与入库）、`emqc/api/routers/review.py`（接口）、`emqc/api/static/annotate_compare.js`
 （对比页审核栏）、`emqc/api/templates/annotate_review.html` + `emqc/api/static/annotate_review.js`（审核进度页）；
-表：`annot_slice_reviews` / `annot_review_events` / `annot_review_event_marks` / `annot_releases`；测试：`tests/test_review.py`。
+表：`annot_slice_reviews` / `annot_review_events` / `annot_review_event_marks` / `annot_batch_releases`；测试：`tests/test_review.py`。
 
 ## 用户定下的规则（2026-10-10）
 
 | 问题 | 决定 |
 |---|---|
 | 「通过」代表什么 | **整张切片都正确**（包括没改动的 c3 原始分割），通过的片可以直接当训练真值入库 |
-| 「入库」怎么做 | 审核员在审核进度页**按数据块手动生成版本**（v1、v2…），只读 |
+| 「入库」怎么做 | 审核员在审核进度页**手动生成版本**（v1、v2…），只读（2026-10-11 改为按批次，见下） |
 | 能不能审自己参与过的 | **严格四眼原则，不能破例**：改过、撤销过这一片的人都不能通过它 |
 | 要不要提交步骤 | **要**：标注员在审核进度页按范围「标记完成」，审核员只审标记完成的片 |
 
-下面是在这四条之上的实现选择（可以再调）：没署名的旧改动允许通过但要审核员确认一次；还有未解决标记时通过前要确认一次；
-通过后又被改了的片自动回到待审（不锁定切片）；标注员被退回后改完要重新标记完成。
+2026-10-11 追加：
+
+| 问题 | 决定 |
+|---|---|
+| 审核进度以什么为单位 | **数据块的批次**；批次 = **导入目录**（一次导入的一批数据块所在的目录，例如 `h01-demo-v2`） |
+| 入库以什么为单位 | **按批次入库**：一次入库生成整批的一个版本，只收已通过的片；**不要求整批都通过** |
+
+下面是在这些决定之上的实现选择（可以再调）：没署名的旧改动允许通过但要审核员确认一次；还有未解决标记时通过前要确认一次；
+通过后又被改了的片自动回到待审（不锁定切片）；标注员被退回后改完要重新标记完成。批次相关的实现选择见「批次」一节。
+
+## 批次
+
+- **怎么认定。** 数据块属于哪一批 = 它所在目录的上一级目录名（`review.batch_of`）。批次不另外登记、没有管理页面：
+  8792 的 `EMQC_ANNOTATE_ROOT=var/annotation/h01-demo-v2` 下的块都属于批次 `h01-demo-v2`；交付目录
+  `blocks/<数据集>/<块>` 按数据集分批。导入一批新数据 = 放进一个新的导入目录，并把它加进 `EMQC_ANNOTATE_EXTRA_ROOTS`
+  （分号分隔）；不要把 `EMQC_ANNOTATE_ROOT` 改成上一级 `var/annotation`，那样会把 `h01-demo-v1` 的同名旧块也带进来。
+- **审核的单位仍是切片**（数据块 + z）。批次只决定进度怎么汇总、哪些块一起交付；四眼、哈希钉住、状态规则都不变。
+- **同名数据块。** 块按目录名识别：同一个名字出现在两个导入目录里时只用先找到的那个，进度页顶部列出被忽略的目录，请管理员改名或移走。
+- **同名导入目录。** 两个不同目录都叫同一个批次名时进度合在一起显示，但**不能入库**（409 `ambiguous`），因为说不清交付的是哪一批。
+- **打不开的块。** 留在所属批次里显示报错（不会悄悄从批次里消失）；入库预览和版本记录里写明没收它、为什么。
+- **下一张待审**（对比页 <kbd>J</kbd>）按（批次, 数据块, z）顺序走，先审完当前批次再进下一批，换批时状态栏会说明。
 
 ## 状态
 
@@ -61,23 +80,30 @@
 - **写接口只接受本站页面。** 中间件 `_same_origin`：非 GET 的 `/api/` 请求如果带了 Origin 且与 Host 不一致就 403。
   登录 cookie 对同一台机器所有端口都算同站（经 SSH 隧道都是 localhost），没有这一条别的端口上的页面能借你的会话写东西。
 
-## 入库版本
+## 入库版本（按批次）
 
-审核进度页「预览这次入库」→ 列出收哪些片、不收哪些片及原因 →「入库（生成版本）」。接口 `POST /blocks/{b}/releases`
-必须带上预览时看到的 `expect_included`，期间有人又通过或修改了就 409 `stale`、要求重新预览。
+审核进度页选中批次 →「预览这次入库」→ 每个数据块收哪些片、不收哪些片及原因，没收的块和原因 →「入库（生成版本）」。
+接口 `POST /review/batches/{批次}/releases` 必须带上预览时看到的 `expect_included`（`{块: [z…]}`），
+期间有人又通过或修改了任何一块就 409 `stale`、要求重新预览。
 
-- 只收「已通过、而且当前内容哈希 = 通过时哈希」的切片。整块拷进内存时不占块锁（大块要几秒），拷完在锁里核对这段时间
-  没人写过（流水号和各片像素版本都没变），写过就重拷；所有片是同一时刻的内容。
-- 原子改名之前回查库里的审核结论（MySQL 上 `SELECT … FOR UPDATE`）：写文件途中有人退回、撤销或重新通过了某一片，
-  这次入库作废（409）、不留任何目录。版本号取「已有目录」和「库里记录」两者的最大值加一；记录没写成就把目录挪成 `.failed-…`。
-- 同一时间只做一个入库（要占一份整块大小的内存）；汇总、下一张待审、入库预览共用两个并发名额。
-- 位置：`<EMQC_ANNOTATE_WORKDIR>/_releases/<块>/v<N>/`，在标注工作目录下（备份、"一个工作目录只允许一个服务进程写"的锁都覆盖到）。
-- 文件：`seg.npy`（与原始 seg.npy **同形状、同类型、同轴序 (X, Y, Z)、同 F/C 顺序**；没收的片全是 0）、
-  `reviewed_z.npy`（bool[nz]，哪些片有效）、`manifest.json`（每片的哈希、版本号、通过人、时间、参与人、事件编号；
-  不收的片和原因；`approval_scope: whole_slice`；数据来源；新建标签 id 列表；平台代码版本）、`checksums.sha256`。
-- 先写进临时目录、逐个文件落盘，最后原子改名成 `v<N>`，然后文件设为只读；之后才写 `annot_releases` 一行。
+- 只收「已通过、而且当前内容哈希 = 通过时哈希」的切片；一片都没有的块这次不收（manifest 的 `skipped_blocks` 写明原因）。
+  不要求整批都审完：以后再入库会生成新版本，旧版本不变。
+- **一块一块地取快照、写文件**，同一时间只占一块大小的内存。每块拷进内存时不占块锁（大块要几秒），拷完在锁里核对这段时间
+  没人写过（流水号和各片像素版本都没变），写过就重拷；同一块里所有片是同一时刻的内容。
+- 原子改名之前回查库里**整批**的审核结论（MySQL 上 `SELECT … FOR UPDATE`）：写文件途中有人退回、撤销或重新通过了任何一片，
+  这次入库作废（409）、不留任何目录。版本号按批次编，取「已有目录」和「库里记录」两者的最大值加一；记录没写成就把目录挪成 `.failed-…`。
+- 同一时间只做一个入库；汇总、下一张待审、入库预览共用两个并发名额。
+- 位置：`<EMQC_ANNOTATE_WORKDIR>/_releases/<批次>/v<N>/`，在标注工作目录下（备份、"一个工作目录只允许一个服务进程写"的锁都覆盖到）。
+- 文件：
+  - `<块>/seg.npy`：与该块原始 seg.npy **同形状、同类型、同轴序 (X, Y, Z)、同 F/C 顺序**；没收的片全是 0。
+  - `<块>/reviewed_z.npy`：bool[nz]，哪些片有效。
+  - `manifest.json`（整批一份）：批次、版本、入库人、备注；`blocks` 里每块的数组说明、收的片、每片的哈希 / 版本号 / 通过人 /
+    时间 / 参与人 / 事件编号、不收的片和原因、数据来源、新建标签 id；`skipped_blocks`；`approval_scope: whole_slice`；平台代码版本。
+  - `checksums.sha256`：上面所有文件的 sha256（相对路径）。
+- 先写进临时目录、逐个文件落盘，最后原子改名成 `v<N>`，然后文件设为只读（目录不设，否则清理旧备份时删不掉）；之后才写
+  `annot_batch_releases` 一行（批次、版本、收了哪些块的哪些片、没收的块）。
 - 标注中新建的标签 id 只在本数据块内唯一（已发现和真实 c3 id 撞号），跨块合并或登记到 blockledger 之前要重新映射；
-  manifest 里列出了本版本用到的新建 id。登记到 blockledger（tool-0914）属于下一阶段，需要改它的规范。
+  manifest 里每块列出了本版本用到的新建 id。登记到 blockledger（tool-0914）属于下一阶段，需要改它的规范。
 
 ## 接口
 
@@ -86,11 +112,11 @@
 | `GET /api/v1/annotate/blocks/{b}/review/{z}` | 一片的审核状态、能做哪些动作和不能做的原因、参与人、未解决标记、审核历史 |
 | `POST /api/v1/annotate/blocks/{b}/review/{z}` | `{action, expect_version, expect_sha?, comment?, confirm?}`，action ∈ complete / uncomplete / approve / request_changes / revoke |
 | `POST /api/v1/annotate/blocks/{b}/review-range` | `{action: complete|uncomplete, z_from, z_to}`，逐片判断，返回 done / skipped（含原因） |
-| `GET /api/v1/annotate/blocks/{b}/review` | 进度页一块的每片状态、改动人、最后编辑、最近结论与意见、未解决标记数、我的待办 / 我能审 |
-| `GET /api/v1/annotate/review/summary` | 所有数据块的汇总和我能不能审 |
-| `GET /api/v1/annotate/review/next?block=&z=` | 下一张我能审的片（待审核或通过后被修改，且我没参与过），到头绕回 |
-| `GET /api/v1/annotate/blocks/{b}/releases` / `.../releases/preview` | 版本历史 / 这次入库会收哪些片 |
-| `POST /api/v1/annotate/blocks/{b}/releases` | `{expect_included, note?}` 生成版本 |
+| `GET /api/v1/annotate/blocks/{b}/review` | 进度页一块的每片状态、改动人、最后编辑、最近结论与意见、未解决标记数、我的待办 / 我能审；所属批次 |
+| `GET /api/v1/annotate/review/summary` | 按批次的汇总（`batches`，每批的块、计数、最近版本、同名目录）、各块汇总（`blocks`）、同名数据块（`duplicates`）、我能不能审 |
+| `GET /api/v1/annotate/review/next?block=&z=` | 下一张我能审的片（待审核或通过后被修改，且我没参与过），先本批后下一批，到头绕回；`crossed_batch` 表示换批了 |
+| `GET /api/v1/annotate/review/batches/{批次}/releases` / `.../releases/preview` | 这一批的版本历史 / 这次入库会收哪些块的哪些片 |
+| `POST /api/v1/annotate/review/batches/{批次}/releases` | `{expect_included: {块: [z…]}, note?}` 生成整批的一个版本 |
 
 ## 上线注意
 
@@ -98,3 +124,5 @@
 - 团队实例 8792 现在没有审核员账号（4 个管理员、2 个标注员），按严格四眼原则需要先定好谁来审、给账号设审核员角色。
 - 审核动作要求密码登录；8792 现在是密码登录模式。
 - 入库版本在工作目录下，`scripts/backup.py` 备份工作目录时会一起备份。
+- 8792 现在只有一个导入目录（`h01-demo-v2`，4 个象限块），所以页面上是一个批次；以后导入 20 个训练块时放进新的导入目录、加进
+  `EMQC_ANNOTATE_EXTRA_ROOTS`，就是第二个批次。

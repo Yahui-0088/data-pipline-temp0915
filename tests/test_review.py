@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ from test_auth import PW, auth_on, detail, login, make_user  # noqa: F401  (auth
 from test_who import make_block
 
 URL = "/api/v1/annotate/blocks/who"
+BATCH = "/api/v1/annotate/review/batches/blocks"         # make_block 把块放在 <tmp>/blocks/who：导入目录 blocks 就是批次
 
 
 @pytest.fixture
@@ -28,7 +30,7 @@ def env(auth_on, tmp_path, monkeypatch):
     b = make_block(tmp_path)
     monkeypatch.setattr(settings, "annotate_workdir", tmp_path / "work")
     monkeypatch.setattr(annotate, "_block", lambda *_a, **_k: b)
-    monkeypatch.setattr(review, "_blocks", lambda _s: [{"block_id": "who", "has_seg": True}])
+    monkeypatch.setattr(review, "_blocks", lambda _s: [{"block_id": "who", "has_seg": True, "path": str(b.path), "batch_id": "blocks"}])
     annotate._presence.clear()
     make_user("anna", "annotator", "安娜")
     make_user("bob", "annotator", "鲍勃")
@@ -292,12 +294,13 @@ def test_progress_and_next(env):
     assert data["slices"][0]["editors"] == {"安娜": 1}
     assert data["slices"][0]["last_edit"][-6] in "+-", "编辑时间带时区，和库里的 UTC 时间能放在一起比较"
     nxt = rita.get("/api/v1/annotate/review/next", params={"block": "who", "z": 0}).json()["next"]
-    assert nxt == {"block_id": "who", "z": 1}
+    assert nxt == {"block_id": "who", "z": 1, "batch_id": "blocks"}
     nxt = rita.get("/api/v1/annotate/review/next", params={"block": "who", "z": 1}).json()["next"]
-    assert nxt == {"block_id": "who", "z": 0}, "到头绕回来"
+    assert nxt == {"block_id": "who", "z": 0, "batch_id": "blocks"}, "到头绕回来"
     assert anna.get("/api/v1/annotate/review/next", params={"block": "who", "z": 0}).json()["next"] is None
     summary = rita.get("/api/v1/annotate/review/summary").json()
     assert summary["blocks"][0]["reviewable"] == 2 and summary["me"]["can_decide"]
+    assert [(g["batch_id"], g["blocks"], g["reviewable"], g["nz"]) for g in summary["batches"]] == [("blocks", ["who"], 2, 3)]
 
 
 def test_release(env, tmp_path):
@@ -309,35 +312,40 @@ def test_release(env, tmp_path):
     for z in (0, 2):
         assert act(rita, z, "approve").status_code == 200
     paint(anna, 2, 4, 8)                                      # 通过后又改了第 2 片：这次不收
-    pv = rita.get(URL + "/releases/preview").json()
-    assert pv["included"] == [0] and pv["excluded"][0]["z"] == 2 and pv["excluded"][0]["reason"] == "changed"
-    r = anna.post(URL + "/releases", json={"expect_included": [0]})
+    pv = rita.get(BATCH + "/releases/preview").json()
+    blk = pv["blocks"][0]
+    assert blk["included"] == [0] and blk["excluded"][0]["z"] == 2 and blk["excluded"][0]["reason"] == "changed"
+    assert pv["expect_included"] == {"who": [0]} and pv["n_slices"] == 1
+    r = anna.post(BATCH + "/releases", json={"expect_included": {"who": [0]}})
     assert r.status_code == 403, "标注员不能入库"
-    r = rita.post(URL + "/releases", json={"expect_included": [0, 2]})
+    r = rita.post(BATCH + "/releases", json={"expect_included": {"who": [0, 2]}})
     assert r.status_code == 409 and detail(r)["code"] == "stale", "和预览不一致就拒绝"
-    r = rita.post(URL + "/releases", json={"expect_included": [0], "note": "第一批"})
+    r = rita.post(BATCH + "/releases", json={"expect_included": {"who": [0]}, "note": "第一批"})
     assert r.status_code == 200, r.text
     rel = r.json()
-    assert rel["version"] == 1 and rel["z_list"] == [0]
-    d = tmp_path / "work" / rel["path"]
+    assert rel["version"] == 1 and rel["blocks"][0]["z_list"] == [0] and rel["path"] == "_releases/blocks/v1"
+    d = tmp_path / "work" / rel["path"] / "who"
     seg = np.load(d / "seg.npy")
     src = np.load(b.work / "seg_edit.npy")
     assert seg.shape == src.shape and seg.dtype == src.dtype, "与原始 seg.npy 同形状同类型同轴序"
     assert np.array_equal(seg[:, :, 0], src[:, :, 0]) and not seg[:, :, 1:].any()
     assert np.load(d / "reviewed_z.npy").tolist() == [True, False, False]
-    manifest = json.loads((d / "manifest.json").read_text())
-    assert manifest["approval_scope"] == "whole_slice" and manifest["slices"][0]["approved_by"]["name"] == "丽塔"
-    assert manifest["slices"][0]["contributors"][0]["by"] == "安娜"
-    for line in (d / "checksums.sha256").read_text().splitlines():
+    top = d.parent
+    manifest = json.loads((top / "manifest.json").read_text())
+    assert manifest["batch_id"] == "blocks" and manifest["approval_scope"] == "whole_slice"
+    mb = manifest["blocks"][0]
+    assert mb["block_id"] == "who" and mb["slices"][0]["approved_by"]["name"] == "丽塔"
+    assert mb["slices"][0]["contributors"][0]["by"] == "安娜"
+    for line in (top / "checksums.sha256").read_text().splitlines():
         digest, name = line.split("  ")
-        assert hashlib.sha256((d / name).read_bytes()).hexdigest() == digest
+        assert hashlib.sha256((top / name).read_bytes()).hexdigest() == digest
     assert not os.access(d / "seg.npy", os.W_OK), "版本文件只读"
-    assert rel["manifest_sha256"] == hashlib.sha256((d / "manifest.json").read_bytes()).hexdigest()
+    assert rel["manifest_sha256"] == hashlib.sha256((top / "manifest.json").read_bytes()).hexdigest()
     assert act(rita, 2, "approve").status_code == 200
-    r = rita.post(URL + "/releases", json={"expect_included": [0, 2]})
+    r = rita.post(BATCH + "/releases", json={"expect_included": {"who": [0, 2]}})
     assert r.status_code == 200 and r.json()["version"] == 2
-    assert [x["version"] for x in rita.get(URL + "/releases").json()["releases"]] == [2, 1]
-    assert not any(p.name.startswith(".tmp") for p in (tmp_path / "work" / "_releases" / "who").iterdir())
+    assert [x["version"] for x in rita.get(BATCH + "/releases").json()["releases"]] == [2, 1]
+    assert not any(p.name.startswith(".tmp") for p in (tmp_path / "work" / "_releases" / "blocks").iterdir())
 
 
 def test_writes_from_another_origin_are_refused(env):
@@ -381,11 +389,11 @@ def test_release_is_void_if_a_decision_changes_while_writing(env, monkeypatch):
         if path.name == "manifest.json":
             assert act(rex, 0, "request_changes", comment="不对").status_code == 200
     monkeypatch.setattr(rv, "_write", write_and_meanwhile_reject)
-    r = rita.post(URL + "/releases", json={"expect_included": [0]})
+    r = rita.post(BATCH + "/releases", json={"expect_included": {"who": [0]}})
     assert r.status_code == 409 and detail(r)["code"] == "stale"
-    root = b.work.parent / "_releases" / "who"
+    root = b.work.parent / "_releases" / "blocks"
     assert not [p for p in root.iterdir()], "什么都不留：没有版本目录，也没有临时目录"
-    assert rita.get(URL + "/releases").json()["releases"] == []
+    assert rita.get(BATCH + "/releases").json()["releases"] == []
 
 
 def test_release_version_never_reuses_a_recorded_number(env):
@@ -394,13 +402,10 @@ def test_release_version_never_reuses_a_recorded_number(env):
     anna, rita = as_("anna"), as_("rita")
     complete(anna, 0)
     assert act(rita, 0, "approve").status_code == 200
-    assert rita.post(URL + "/releases", json={"expect_included": [0]}).json()["version"] == 1
-    v1 = b.work.parent / "_releases" / "who" / "v1"
-    for f in v1.iterdir():
-        f.chmod(0o644)
-        f.unlink()
-    v1.rmdir()
-    r = rita.post(URL + "/releases", json={"expect_included": [0]})
+    assert rita.post(BATCH + "/releases", json={"expect_included": {"who": [0]}}).json()["version"] == 1
+    v1 = b.work.parent / "_releases" / "blocks" / "v1"
+    shutil.rmtree(v1)
+    r = rita.post(BATCH + "/releases", json={"expect_included": {"who": [0]}})
     assert r.status_code == 200 and r.json()["version"] == 2
 
 
@@ -420,7 +425,7 @@ def test_a_damaged_block_does_not_take_the_progress_page_down(env):
 def test_release_preview_is_for_reviewers(env):
     as_, b = env
     anna = as_("anna")
-    assert anna.get(URL + "/releases/preview").status_code == 403
+    assert anna.get(BATCH + "/releases/preview").status_code == 403
 
 
 def test_origin_null_is_refused(env):
@@ -504,3 +509,181 @@ def test_switching_to_password_mode_ends_passwordless_sessions(env):
         assert c.get(URL + "/review").status_code == 401
     finally:
         c.__exit__(None, None, None)
+
+
+# ------------------------------------------------------------------ 按批次（导入目录）汇总与入库
+def _put_block(root, *parts):
+    d = root.joinpath(*parts)
+    d.mkdir(parents=True)
+    np.save(d / "em.npy", np.zeros((8, 6, 3), dtype=np.uint8))
+    np.save(d / "seg.npy", np.zeros((8, 6, 3), dtype=np.uint64))
+    return d
+
+
+@pytest.fixture
+def batches(auth_on, tmp_path, monkeypatch):
+    """真实的块发现：<tmp>/imports/b1/{qa,qb,qd} 和 <tmp>/imports/b2/qc —— 两个导入目录 = 两个批次。"""
+    from emqc.api.app import app
+    from emqc.api.routers import annotate
+    from emqc.config import settings
+    from emqc.db import session_scope
+    from emqc.db.models import AnnotRelease, Mark, MarkComment, ReviewEvent, ReviewEventMark, SliceReview
+    from sqlalchemy import delete
+
+    with session_scope() as s:
+        for t in (ReviewEventMark, ReviewEvent, SliceReview, AnnotRelease, MarkComment, Mark):
+            s.execute(delete(t))
+    root = tmp_path / "imports"
+    for parts in (("b1", "qa"), ("b1", "qb"), ("b1", "qd"), ("b2", "qc")):
+        _put_block(root, *parts)
+    monkeypatch.setattr(settings, "annotate_root", root)
+    monkeypatch.setattr(settings, "annotate_extra_roots", "")
+    monkeypatch.setattr(settings, "sam_blocks_dir", None)
+    monkeypatch.setattr(settings, "annotate_workdir", tmp_path / "work")
+    annotate.reset_store()
+    annotate._presence.clear()
+    make_user("anna", "annotator", "安娜")
+    make_user("rita", "reviewer", "丽塔")
+    clients = []
+
+    def as_(name):
+        c = TestClient(app)
+        c.__enter__()
+        assert login(c, name).status_code == 200
+        clients.append(c)
+        return c
+
+    yield as_, root
+    for c in clients:
+        c.__exit__(None, None, None)
+    annotate.reset_store()
+
+
+def _blk(bid):
+    return f"/api/v1/annotate/blocks/{bid}"
+
+
+def _approve(anna, rita, bid, *zs):
+    for z in zs:
+        r = anna.post(_blk(bid) + "/paint", json={"z": z, "points": [[1, 1]], "radius": 0, "new_id": 10 + z})
+        assert r.status_code == 200, r.text
+    r = anna.post(_blk(bid) + "/review-range", json={"action": "complete", "z_from": min(zs), "z_to": max(zs)})
+    assert r.status_code == 200, r.text
+    for z in zs:
+        st = rita.get(f"{_blk(bid)}/review/{z}").json()
+        r = rita.post(f"{_blk(bid)}/review/{z}", json={"action": "approve", "expect_version": st["version"], "expect_sha": st["sha"]})
+        assert r.status_code == 200, r.text
+
+
+def test_progress_is_grouped_by_import_directory(batches):
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert [(g["batch_id"], g["blocks"], g["nz"]) for g in sm["batches"]] == [("b1", ["qa", "qb", "qd"], 9), ("b2", ["qc"], 3)]
+    assert sm["batches"][0]["counts"]["approved"] == 1 and sm["batches"][1]["counts"]["not_started"] == 3
+    assert [b["batch_id"] for b in sm["blocks"]] == ["b1", "b1", "b1", "b2"], "数据块按（批次, 块）排序"
+    assert rita.get(_blk("qa") + "/review").json()["batch_id"] == "b1"
+    assert sm["duplicates"] == [] and sm["batches"][0]["ambiguous_dirs"] == []
+
+
+def test_release_is_per_batch_with_one_directory_per_block(batches, tmp_path):
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    _approve(anna, rita, "qb", 1, 2)
+    _approve(anna, rita, "qc", 0)                          # 另一批：不进 b1 的版本
+    pv = rita.get("/api/v1/annotate/review/batches/b1/releases/preview").json()
+    assert pv["expect_included"] == {"qa": [0], "qb": [1, 2]} and pv["n_blocks"] == 2 and pv["n_slices"] == 3
+    assert [(x["block_id"], x["reason"]) for x in pv["skipped"]] == [("qd", "none_approved")], "没有通过的块列出来、不收"
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": pv["expect_included"], "note": "第一次交付"})
+    assert r.status_code == 200, r.text
+    rel = r.json()
+    assert (rel["version"], rel["n_blocks"], rel["n_slices"]) == (1, 2, 3)
+    top = tmp_path / "work" / rel["path"]
+    assert sorted(p.name for p in top.iterdir()) == ["checksums.sha256", "manifest.json", "qa", "qb"]
+    for bid, zs in (("qa", [0]), ("qb", [1, 2])):
+        seg = np.load(top / bid / "seg.npy")
+        assert seg.shape == (8, 6, 3) and seg.dtype == np.uint64
+        keep = np.load(top / bid / "reviewed_z.npy")
+        assert np.flatnonzero(keep).tolist() == zs
+        assert all(seg[1, 1, z] == 10 + z for z in zs) and not seg[:, :, ~keep].any(), "没收的片全是 0"
+    m = json.loads((top / "manifest.json").read_text())
+    assert m["kind"] == "annotation_batch_release" and m["batch_id"] == "b1" and m["n_slices"] == 3
+    assert [b["block_id"] for b in m["blocks"]] == ["qa", "qb"] and m["skipped_blocks"][0]["block_id"] == "qd"
+    names = [line.split("  ")[1] for line in (top / "checksums.sha256").read_text().splitlines()]
+    assert names == ["qa/seg.npy", "qa/reviewed_z.npy", "qb/seg.npy", "qb/reviewed_z.npy", "manifest.json"]
+    for line in (top / "checksums.sha256").read_text().splitlines():
+        digest, name = line.split("  ")
+        assert hashlib.sha256((top / name).read_bytes()).hexdigest() == digest
+    assert not os.access(top / "qb" / "seg.npy", os.W_OK)
+    hist = rita.get("/api/v1/annotate/review/batches/b1/releases").json()["releases"]
+    assert [(h["version"], h["n_blocks"], [b["block_id"] for b in h["blocks"]]) for h in hist] == [(1, 2, ["qa", "qb"])]
+    r = rita.post("/api/v1/annotate/review/batches/b2/releases", json={"expect_included": {"qc": [0]}})
+    assert r.status_code == 200 and r.json()["version"] == 1 and r.json()["path"] == "_releases/b2/v1", "每批各自编号"
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert [g["latest_release"]["version"] for g in sm["batches"]] == [1, 1]
+
+
+def test_batch_release_is_refused_if_any_block_changed_since_preview(batches, tmp_path):
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    _approve(anna, rita, "qb", 1)
+    pv = rita.get("/api/v1/annotate/review/batches/b1/releases/preview").json()
+    r = anna.post(_blk("qb") + "/paint", json={"z": 1, "points": [[2, 2]], "radius": 0, "new_id": 99})
+    assert r.status_code == 200
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": pv["expect_included"]})
+    assert r.status_code == 409 and detail(r)["code"] == "stale"
+    assert not (tmp_path / "work" / "_releases" / "b1").exists() or not any((tmp_path / "work" / "_releases" / "b1").iterdir())
+
+
+def test_next_finishes_the_current_batch_first(batches):
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    for bid, z in (("qa", 0), ("qb", 2), ("qc", 0)):
+        assert anna.post(_blk(bid) + "/review-range", json={"action": "complete", "z_from": z, "z_to": z}).status_code == 200
+    nxt = lambda b, z: rita.get("/api/v1/annotate/review/next", params={"block": b, "z": z}).json()
+    r = nxt("qa", 0)
+    assert r["next"] == {"block_id": "qb", "z": 2, "batch_id": "b1"} and r["crossed_batch"] is False
+    r = nxt("qb", 2)
+    assert r["next"] == {"block_id": "qc", "z": 0, "batch_id": "b2"} and r["crossed_batch"] is True, "本批审完才换批，并说明换了"
+    r = nxt("qc", 0)
+    assert r["next"]["block_id"] == "qa" and r["crossed_batch"] is True
+
+
+def test_same_block_name_in_two_import_directories_is_reported(batches):
+    as_, root = batches
+    rita = as_("rita")
+    _put_block(root, "b2", "qa")                           # 和 b1/qa 同名：块按目录名识别，只能用一个
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert [(d["block_id"], d["used"].endswith("b1/qa"), [p.endswith("b2/qa") for p in d["ignored"]]) for d in sm["duplicates"]] \
+        == [("qa", True, [True])]
+
+
+def test_two_import_directories_with_the_same_name_cannot_be_released(batches):
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _put_block(root, "other", "b1", "qz")                  # 另一个也叫 b1 的导入目录
+    _approve(anna, rita, "qa", 0)
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert len(sm["batches"][0]["ambiguous_dirs"]) == 2
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": {"qa": [0]}})
+    assert r.status_code == 409 and detail(r)["code"] == "ambiguous"
+    assert rita.get("/api/v1/annotate/review/batches/nope/releases/preview").status_code == 404
+
+
+def test_a_broken_block_is_shown_in_its_batch_and_left_out_of_the_release(batches):
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    bad = root / "b1" / "qe"
+    bad.mkdir()
+    np.save(bad / "em.npy", np.zeros((8, 6), dtype=np.uint8))          # 2-D：打不开
+    _approve(anna, rita, "qa", 0)
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    b1 = sm["batches"][0]
+    assert b1["blocks"] == ["qa", "qb", "qd", "qe"] and b1["n_errors"] == 1, "打不开的块留在所属批次里报错，不悄悄消失"
+    pv = rita.get("/api/v1/annotate/review/batches/b1/releases/preview").json()
+    assert ("qe", "unreadable") in [(x["block_id"], x["reason"]) for x in pv["skipped"]]
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": pv["expect_included"]})
+    assert r.status_code == 200 and "qe" in [x["block_id"] for x in r.json()["skipped"]], "版本记录里写明哪块没收、为什么"

@@ -1239,23 +1239,31 @@ class AnnotateStore:
         self.workdir = Path(workdir) if workdir else None
         self.read_only = read_only
         self._blocks: dict[str, Block] = {}
+        self._paths: dict[str, Path] = {}
+        # 同名数据块出现在不止一个目录里（块按目录名识别）：只用第一个，其余的列在这里让页面提示，而不是悄悄忽略
+        self.duplicates: dict[str, list[str]] = {}
         self._lock = threading.Lock()
 
     def refresh(self) -> list[dict]:
         found = [p for r in self.roots for p in find_blocks(r)]
         with self._lock:
+            dup: dict[str, list[str]] = {}
             for p in found:
                 if p.name not in self._blocks:
+                    self._paths[p.name] = p
                     try:
                         self._blocks[p.name] = Block(p, self.workdir, read_only=self.read_only)
                     except Exception as e:  # a half-copied block must not take the page down
                         self._blocks[p.name] = e  # type: ignore[assignment]
+                elif self._paths.get(p.name) != p:
+                    dup.setdefault(p.name, [str(self._paths.get(p.name))]).append(str(p))
+            self.duplicates = dup
             return [self._summary(k) for k in sorted(self._blocks)]
 
     def _summary(self, key: str) -> dict:
         b = self._blocks[key]
         if isinstance(b, Exception):
-            return {"block_id": key, "error": str(b)}
+            return {"block_id": key, "error": str(b), "path": str(self._paths.get(key, ""))}
         z, y, x = b.shape_zyx
         try:
             log = b.edits()
