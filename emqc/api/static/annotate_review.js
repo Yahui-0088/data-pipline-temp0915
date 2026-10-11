@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(`rv-${id}`), API = "/api/v1/annotate";
   const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
   const ME = window.EMQC_USER || null;
-  const S = {summary: null, batch: null, block: null, data: null, names: {}, plan: null, busy: false};
+  const S = {summary: null, batch: null, block: null, data: null, names: {}, plan: null, busy: false, creating: false};
   const ORDER = ["not_started", "in_progress", "pending", "returned", "fixed", "changed", "approved"];
   const BAR = ["approved", "changed", "pending", "returned", "fixed", "in_progress"];
   const when = iso => {
@@ -47,7 +47,7 @@
     $("me").textContent = me ? `${me.name} · ${me.can_decide ? "可以审核" : (me.role === "annotator" ? "标注员" : (me.why_not || "不能审核"))}` : "";
     const dups = S.summary.duplicates || [];
     $("dups").hidden = !dups.length;
-    $("dups").innerHTML = dups.length ? `有 ${dups.length} 个数据块同名出现在不止一个目录里，只用了第一个（请管理员改名或移走）：`
+    $("dups").innerHTML = dups.length ? `有 ${dups.length} 个数据块同名出现在不止一个目录里，只用了列在前面的那个。请管理员把<b>被忽略的</b>那个目录改名或移走（不要动正在用的那个），然后刷新页面：`
       + dups.map(d => `<span class="mono">${esc(d.block_id)}</span>（用 ${esc(d.used)}，忽略 ${d.ignored.map(esc).join("、")}）`).join("；") : "";
     renderBatches();
     const q = new URLSearchParams(location.search), wantBlock = S.block || q.get("block");
@@ -77,6 +77,7 @@
       $("release-count").textContent = "";
       $("releases").innerHTML = '<tr><td colspan="8" class="muted">加载中…</td></tr>';
     }
+    gateRelease();                                                // 汇总已经在手：马上按这一批判断能不能入库，不等版本历史回来
     document.querySelectorAll(".rv-batchcard").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.batch === id)));
     const g = S.summary.batches.find(x => x.batch_id === id);
     $("batch").hidden = false;
@@ -190,16 +191,19 @@
       || '<tr><td colspan="8" class="muted">这一批还没有入库版本</td></tr>';
     gateRelease();
   }
-  function gateRelease() {                                        // 能不能点「预览这次入库」，不能就说原因
-    const blocked = !!(S.summary?.batches.find(g => g.batch_id === S.batch)?.ambiguous_dirs || []).length;
-    $("preview").disabled = !canDecide() || blocked;
-    $("release-why").textContent = !canDecide() ? (S.summary?.me?.why_not || "只有审核员或管理员能入库") : blocked ? "批次名对应了不止一个目录，暂时不能入库（见上方提示）" : "";
+  const blockedBatch = () => !!(S.summary?.batches.find(g => g.batch_id === S.batch)?.ambiguous_dirs || []).length;
+  function gateRelease() {                                        // 能不能预览 / 入库，不能就说原因；入库进行中两个按钮都不能点
+    const blocked = blockedBatch();
+    $("preview").disabled = !canDecide() || blocked || S.creating;
+    $("create").disabled = !S.plan?.n_slices || S.plan.batch_id !== S.batch || blocked || S.creating;
+    $("release-why").textContent = S.creating ? "正在入库，请稍候…" : !canDecide() ? (S.summary?.me?.why_not || "只有审核员或管理员能入库")
+      : blocked ? "批次名对应了不止一个目录，暂时不能入库（见上方提示）" : "";
   }
   $("preview").addEventListener("click", async () => {
     const batch = S.batch; $("preview").disabled = true;
     try {
       const p = await call(`${batchURL(batch)}/releases/preview`);
-      if (batch !== S.batch) return;
+      if (batch !== S.batch) return;                              // 结果回来时已经换了别的批次：丢掉
       S.plan = p;
       $("plan").hidden = false;
       $("plan-summary").innerHTML = p.n_slices
@@ -208,7 +212,7 @@
       const broken = p.skipped.filter(x => x.reason !== "none_approved");
       $("plan-blocks").innerHTML = p.blocks.map(b => `<tr><td class="mono">${esc(b.block_id)}</td>
         <td>${b.included.length ? `${b.included.length} 片：z ${esc(compact(b.included))}` : '<span class="muted">不收（没有可入库的切片）</span>'}</td>
-        <td class="mono">${b.excluded.length + b.not_approved.length}</td></tr>`).join("")
+        <td class="mono">${b.detail_error ? `<span class="rv-flag">${esc(b.detail_error)}</span>` : b.excluded.length + b.not_approved.length}</td></tr>`).join("")
         + broken.map(x => `<tr><td class="mono">${esc(x.block_id)}</td><td colspan="2"><span class="rv-flag">不收：${esc(x.message)}</span></td></tr>`).join("");
       // 不收的切片按原因归并：「未开始：z 3–99」而不是一百行
       const lines = p.blocks.flatMap(b => {
@@ -220,25 +224,33 @@
       $("plan-excluded-wrap").hidden = !nEx;
       $("plan-excluded-title").textContent = `不收的 ${nEx} 片（展开看原因）`;
       $("plan-excluded").innerHTML = lines.join("");
-      $("create").disabled = !p.n_slices;
-    } catch (e) { $("release-result").hidden = false; $("release-result").textContent = `预览失败：${e.message}`; }
+    } catch (e) {
+      if (batch !== S.batch) return;
+      $("release-result").hidden = false; $("release-result").textContent = `预览失败：${e.message}`;
+    }
     finally { gateRelease(); }
   });
   $("create").addEventListener("click", async () => {
     const plan = S.plan, batch = S.batch;
-    if (!plan?.n_slices || plan.batch_id !== batch) return;
+    if (S.creating || !plan?.n_slices || plan.batch_id !== batch) return;
     if (!confirm(`把批次 ${batch} 里 ${plan.n_blocks} 个数据块、共 ${plan.n_slices} 片入库，生成一个新的只读版本？`)) return;
-    $("create").disabled = true;
-    const out = $("release-result"); out.hidden = false; out.textContent = "正在入库（一块一块地写，大批次要等一会儿）…";
+    S.creating = true; gateRelease();
+    const out = $("release-result"); out.hidden = false; out.textContent = `正在入库批次 ${batch}（一块一块地写，大批次要等一会儿）…`;
+    let msg = null, stale = false;
     try {
       const r = await call(`${batchURL(batch)}/releases`, {expect_included: plan.expect_included, note: $("note").value.trim() || null});
-      out.innerHTML = `已生成批次 ${esc(batch)} 的 <b>v${r.version}</b>（${r.n_blocks} 个数据块、${r.n_slices} 片），位置：<span class="mono">${esc(r.path)}</span>`;
-      $("plan").hidden = true; S.plan = null; $("note").value = "";
-      await refresh();
+      msg = `已生成批次 ${esc(batch)} 的 <b>v${r.version}</b>（${r.n_blocks} 个数据块、${r.n_slices} 片），位置：<span class="mono">${esc(r.path)}</span>`;
+      if (batch === S.batch) { $("plan").hidden = true; S.plan = null; $("note").value = ""; }
     } catch (e) {
-      out.textContent = `入库失败：${e.message}`;
-      if (e.code === "stale") $("preview").click();               // 内容和预览时不一样了：重新预览
-    } finally { $("create").disabled = false; }
+      msg = `批次 ${esc(batch)} 入库失败：${esc(e.message)}`;
+      stale = e.code === "stale";
+    } finally { S.creating = false; }
+    // 不管这时停在哪一批，结果都要看得见，并写明是哪一批的
+    out.hidden = false; out.innerHTML = msg;
+    if (batch === S.batch && stale) $("preview").click();          // 内容和预览时不一样了：同一批才自动重新预览
+    await refresh();
+    out.hidden = false; out.innerHTML = msg;
+    gateRelease();
   });
 
   async function refresh() {

@@ -64,6 +64,19 @@ UNDONE_DIR = "undone"            # edits/undone/：撤销掉的改动文件挪�
 MAX_PAINT_STEPS = 200_000        # 一笔画笔插值后的总步数上限：正常一笔几百到几千步，再大就是脚本或异常请求
 _BLOCK_LOCKS = WeakValueDictionary()
 _BLOCK_LOCKS_GUARD = threading.Lock()
+# (工作目录, 块名) → (选用的块目录, 它的 em.npy 是哪个文件)。同名块出现在不止一个目录里时，同一工作目录下的所有 store
+# 都用这里记下的那个；目录在运行中被挪走时按 em.npy 文件认回来
+_CHOSEN: dict[tuple[str, str], tuple[Path, tuple | None]] = {}
+_CHOSEN_GUARD = threading.Lock()
+
+
+def _file_ident(block_dir: Path) -> tuple | None:
+    """块目录里 em.npy 是哪个文件（设备号, inode；跟随符号链接）。整个目录改名 / 挪动后不变。"""
+    try:
+        st = (Path(block_dir) / "em.npy").stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
 _HELD_WORKDIRS: dict[str, object] = {}
 _HELD_GUARD = threading.Lock()
 log = logging.getLogger(__name__)
@@ -296,7 +309,9 @@ class Block:
         self.work = Path(workdir) / self.id if workdir else self.path  # None only for legacy callers/tests
         self.read_only = read_only
         # Comparison and editing stores share a lock, even when they use separate read-only handles.
-        key = (self.path.resolve(), self.work.resolve())
+        # 按工作目录认锁（不连源目录一起）：写同一个 <工作目录>/<块> 的所有句柄共用一把锁和一份像素版本——
+        # 源目录在运行中被改名、或同名块出现在另一个目录里时，两个句柄也不会各算各的
+        key = self.work.resolve()
         with _BLOCK_LOCKS_GUARD:
             self._shared = _BLOCK_LOCKS.get(key)
             if self._shared is None:
@@ -408,7 +423,11 @@ class Block:
             if not p.exists():
                 self.work.mkdir(parents=True, exist_ok=True)
                 src = self.path / "seg.npy"
-                _check_free(self.work, src.stat().st_size)
+                try:
+                    size = src.stat().st_size
+                except OSError as e:
+                    raise ValueError(f"原始分割文件读不到了（{e.strerror or e}），数据块目录可能被移走了，请刷新页面；还不行请联系管理员") from e
+                _check_free(self.work, size)
                 tmp = self.work / (SEG_EDIT + ".part")
                 # 整文件逐字节复制，不用"建一个稀疏的 memmap 再往里填"：稀疏文件建出来不占盘，真正写的时候盘满了
                 # 进程直接收到 SIGBUS 死掉；复制则在盘满时老老实实抛 OSError，这一笔拒绝，服务照常
@@ -1245,20 +1264,57 @@ class AnnotateStore:
         self._lock = threading.Lock()
 
     def refresh(self) -> list[dict]:
-        found = [p for r in self.roots for p in find_blocks(r)]
+        found: dict[str, list[Path]] = {}
+        for p in (p for r in self.roots for p in find_blocks(r)):
+            if p not in found.setdefault(p.name, []):          # 两个根目录指向同一处：同一个目录只算一次
+                found[p.name].append(p)
+        wkey = str(Path(self.workdir).resolve()) if self.workdir else ""
         with self._lock:
+            # 缓存着的块目录已经不在了（被改名、移走）：丢掉，按现在找到的重新选，而不是一直用一个不存在的路径
+            for name, path in list(self._paths.items()):
+                if path not in found.get(name, ()):
+                    self._paths.pop(name, None)
+                    self._blocks.pop(name, None)
             dup: dict[str, list[str]] = {}
-            for p in found:
-                if p.name not in self._blocks:
-                    self._paths[p.name] = p
+            for name, paths in found.items():
+                if name not in self._blocks:
+                    pick, refuse = self._choose(wkey, name, paths)
+                    self._paths[name] = pick
+                    if refuse is not None:
+                        self._blocks[name] = refuse  # type: ignore[assignment]
+                        continue
                     try:
-                        self._blocks[p.name] = Block(p, self.workdir, read_only=self.read_only)
+                        self._blocks[name] = Block(pick, self.workdir, read_only=self.read_only)
                     except Exception as e:  # a half-copied block must not take the page down
-                        self._blocks[p.name] = e  # type: ignore[assignment]
-                elif self._paths.get(p.name) != p:
-                    dup.setdefault(p.name, [str(self._paths.get(p.name))]).append(str(p))
+                        self._blocks[name] = e  # type: ignore[assignment]
+                if len(paths) > 1:
+                    used = self._paths[name]
+                    dup[name] = [str(used)] + [str(p) for p in paths if p != used]
             self.duplicates = dup
             return [self._summary(k) for k in sorted(self._blocks)]
+
+    def _choose(self, wkey: str, name: str, paths: list[Path]) -> tuple[Path, Exception | None]:
+        """同名块用哪个目录。编辑用的和对比 / 审核用的两个 store 必须选同一个：先选定的说了算。
+        先选定的目录不见了：同一份 em.npy 换了地方（目录改名、挪动）就跟过去；换成另一份数据时，如果已经在原来那份上
+        改过（有工作副本）就拒绝——不能把别人的改动悄悄配到另一份图像上。"""
+        with _CHOSEN_GUARD:
+            prev = _CHOSEN.get((wkey, name))
+            if prev is not None and prev[0] in paths:
+                return prev[0], None
+            if prev is not None:
+                moved = [p for p in paths if prev[1] is not None and _file_ident(p) == prev[1]]
+                if moved:
+                    pick = moved[0]
+                elif self.workdir and (Path(self.workdir) / name / SEG_EDIT).exists():
+                    return prev[0], ValueError(
+                        f"数据块 {name} 原来的目录 {prev[0]} 不见了，另一个同名目录不能直接顶替（已有的改动是在原来那份数据上做的）。"
+                        "请把原目录放回原处，或联系管理员")
+                else:
+                    pick = paths[0]
+            else:
+                pick = paths[0]
+            _CHOSEN[(wkey, name)] = (pick, _file_ident(pick))
+            return pick, None
 
     def _summary(self, key: str) -> dict:
         b = self._blocks[key]
@@ -1279,7 +1335,9 @@ class AnnotateStore:
                 "em_source": "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}
 
     def get(self, block_id: str) -> Block:
-        if block_id not in self._blocks:
+        b = self._blocks.get(block_id)
+        # 没见过的块，或者缓存着的块目录已经不在了（被改名 / 挪走）：重新找一遍（一次 stat，开销可以忽略）
+        if b is None or (isinstance(b, Block) and not (b.path / "em.npy").exists()):
             self.refresh()
         b = self._blocks.get(block_id)
         if b is None:

@@ -409,13 +409,31 @@ def block_rows(s: Session, b, user: User | None) -> dict:
     return {"block_id": b.id, "nz": b.nz, "counts": counts, "slices": out}
 
 
+def _root_names() -> dict[str, str]:
+    """解析后的根目录 → 配置里写的目录名。根目录本身是符号链接时，批次按配置里看到的名字（链接名）叫，
+    而不是链接指向的目录名——改链接名就能改批次名，和管理员看到的一致。"""
+    raw = [settings.annotate_root, *(x.strip() for x in settings.annotate_extra_roots.split(";") if x.strip()), settings.sam_blocks_dir]
+    out = {}
+    for r in raw:
+        if r:
+            r = Path(r)
+            out[str(r.resolve())] = r.name or r.resolve().name
+    return out
+
+
+def _batch_id(path: str, names: dict[str, str]) -> str:
+    parent = Path(path).parent
+    return names.get(str(parent)) or rv.batch_of(path)
+
+
 def _blocks(s: Session) -> list[dict]:
     """可审核的数据块（带分割标签的；打不开的也列上，在所属批次里报错），每个带上所属批次（导入目录名）。
     按（批次, 块）排好序：进度页、下一张待审都按这个顺序走。"""
     from .annotate import get_store
 
     st = get_store(read_only=True)
-    out = [{**x, "batch_id": rv.batch_of(x["path"]) if x.get("path") else ""}
+    names = _root_names()
+    out = [{**x, "batch_id": _batch_id(x["path"], names) if x.get("path") else ""}
            for x in st.refresh() if x.get("error") or x.get("has_seg")]
     return sorted(out, key=lambda x: (x["batch_id"], x["block_id"]))
 
@@ -484,7 +502,7 @@ def review_summary(user: User | None = Depends(require_user), s: Session = Depen
 @router.get("/blocks/{block_id}/review")
 def block_review(block_id: str, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
     b = _block(block_id)
-    return {**block_rows(s, b, user), "batch_id": rv.batch_of(b.path)}
+    return {**block_rows(s, b, user), "batch_id": _batch_id(str(b.path), _root_names())}
 
 
 @router.get("/review/next")
@@ -500,24 +518,31 @@ def next_to_review(block: str | None = None, z: int = -1, user: User | None = De
     infos = [x for x in _blocks(s) if not x.get("error")]
     if not infos:
         return {"next": None}
-    ids = [x["block_id"] for x in infos]
     batch_of = {x["block_id"]: x["batch_id"] for x in infos}
-    start = ids.index(block) if block in ids else 0
-    order = ids[start:] + ids[:start]
+    known = block in batch_of
+    if not known:                                       # 没给块或不认识：从第一批第一块从头找
+        block, z = infos[0]["block_id"], -1
+    cur = batch_of[block]
+    same = [x["block_id"] for x in infos if x["batch_id"] == cur]
+    i = same.index(block)
+    # 先审完本批：当前块 z 之后 → 本批其余的块（从下一块起绕一圈）→ 当前块 z 之前（不返回正在看的这一片）；
+    # 本批没有了再按批次顺序从下一批起看其他批，到头绕回
+    plan = [(block, lambda zz: zz > z)] + [(b, None) for b in same[i + 1:] + same[:i]] + [(block, lambda zz: zz < z)]
+    order = list(dict.fromkeys(x["batch_id"] for x in infos))
+    j = order.index(cur)
+    plan += [(x["block_id"], None) for bt in order[j + 1:] + order[:j] for x in infos if x["batch_id"] == bt]
+    rows: dict[str, list] = {}
     with _heavy_slot():
-        for i, bid in enumerate(order + [order[0]]):
-            try:
-                rows = block_rows(s, _block(bid), user)["slices"]
-            except (ValueError, OSError, HTTPException):
-                continue                                  # 这一块的记录坏了：跳过，别让下一张待审整个失灵
-            for r in rows:
-                if i == 0 and r["z"] <= z:
-                    continue
-                if i == len(order) and r["z"] >= z:
-                    break
-                if r["reviewable"]:
+        for bid, keep in plan:
+            if bid not in rows:
+                try:
+                    rows[bid] = block_rows(s, _block(bid), user)["slices"]
+                except (ValueError, OSError, HTTPException):
+                    rows[bid] = []                        # 这一块的记录坏了：跳过，别让下一张待审整个失灵
+            for r in rows[bid]:
+                if r["reviewable"] and (keep is None or keep(r["z"])):
                     return {"next": {"block_id": bid, "z": r["z"], "batch_id": batch_of[bid]},
-                            "crossed_batch": block in batch_of and batch_of[bid] != batch_of[block]}
+                            "crossed_batch": known and batch_of[bid] != cur}
     return {"next": None}
 
 
@@ -562,16 +587,22 @@ def _plan_batch(s: Session, infos: list[dict], *, detail: bool = False):
             continue
         try:
             b = _block(bid)
-            b.audit_entries()                       # 取快照要读流水：读不出来的块现在就说清楚、不收，而不是写到一半失败
+            # 两份编辑记录都要读得出来才收：取快照要读流水；预览（detail）和真正入库按同一个条件判断，不会一个收、一个不收
+            b.audit_entries()
+            b.edits()
             approved = _approved(s, b)
             plan = rv.preview_release(b, approved)
-            if detail:
-                rows = block_rows(s, b, None)["slices"]
-                plan["not_approved"] = [{"z": r["z"], "reason": r["status"], "message": r["status_name"]} for r in rows if r["z"] not in approved]
         except (ValueError, OSError, HTTPException) as e:
             msg = e.detail if isinstance(e, HTTPException) else str(e)
             skipped.append({"block_id": bid, "reason": "history", "message": f"编辑记录读不出来，请联系管理员：{msg}"})
             continue
+        if detail:                                  # 只是给预览页看的明细：算不出来也不影响收不收
+            try:
+                rows = block_rows(s, b, None)["slices"]
+                plan["not_approved"] = [{"z": r["z"], "reason": r["status"], "message": r["status_name"]} for r in rows if r["z"] not in approved]
+            except (ValueError, OSError, HTTPException) as e:
+                plan["not_approved"] = []
+                plan["detail_error"] = f"读不出每片的状态：{e.detail if isinstance(e, HTTPException) else e}"
         plans[bid] = {"nz": b.nz, **plan}
         if plan["included"]:
             members.append((b, approved))
@@ -620,7 +651,8 @@ def create_release(batch_id: str, body: ReleaseIn, user: User | None = Depends(r
     infos = _batch_members(s, batch_id)
     dirs = _ambiguous(infos)
     if dirs:
-        raise _err(409, "ambiguous", f"有 {len(dirs)} 个导入目录都叫 {batch_id}，分不清是哪一批：{'；'.join(dirs)}。请管理员把其中一个改名后再入库")
+        raise _err(409, "ambiguous", f"有 {len(dirs)} 个导入目录都叫 {batch_id}，分不清是哪一批：{'；'.join(dirs)}。"
+                   "请管理员把其中一个目录改名（改名后刷新页面即可），再入库")
     if settings.annotate_workdir is None:
         raise _err(422, "workdir", "没有配置标注工作目录（EMQC_ANNOTATE_WORKDIR），无法入库")
     try:
@@ -639,7 +671,11 @@ def create_release(batch_id: str, body: ReleaseIn, user: User | None = Depends(r
 
         def precommit() -> None:
             # 原子改名之前再核对一遍：写文件的这段时间里有人退回 / 撤销 / 重新通过了某一片，这次入库就作废。
-            # MySQL 上 FOR UPDATE 锁住这些行到提交为止：之后到达的审核动作排在这次入库之后
+            # 先对这些行做一次不改值的 UPDATE 拿到写锁（SQLite 上是整库写锁，MySQL 上是行锁），一直占到下面写完版本记录提交为止：
+            # 核对之后到达的审核动作排在这次入库之后（SQLite 不认 FOR UPDATE，只靠它会漏掉核对后、提交前的那一下）
+            for b, _a in members:
+                s.execute(update(SliceReview).where(SliceReview.block_id == b.id, SliceReview.z.in_(expect[b.id]))
+                          .values(version=SliceReview.version).execution_options(synchronize_session=False))
             for b, approved in members:
                 zs = expect[b.id]
                 rows = {r.z: r for r in s.scalars(select(SliceReview).where(SliceReview.block_id == b.id, SliceReview.z.in_(zs))
@@ -660,6 +696,9 @@ def create_release(batch_id: str, body: ReleaseIn, user: User | None = Depends(r
         except ValueError as e:
             s.rollback()
             raise _err(422, "release", str(e))
+        except OSError as e:
+            s.rollback()
+            raise _err(500, "release", f"写入库文件失败（{e.strerror or e}），这次入库没有生效，请联系管理员")
         row = AnnotRelease(batch_id=batch_id, version=res["version"], path=res["path"], n_blocks=res["n_blocks"], n_slices=res["n_slices"],
                            blocks=res["blocks"], skipped=skipped, manifest_sha256=res["manifest_sha256"], note=_clean(body.note),
                            created_by=user.id, created_by_user=user.username, created_by_name=_who(user)["name"])

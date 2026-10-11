@@ -647,9 +647,15 @@ def test_next_finishes_the_current_batch_first(batches):
     r = nxt("qa", 0)
     assert r["next"] == {"block_id": "qb", "z": 2, "batch_id": "b1"} and r["crossed_batch"] is False
     r = nxt("qb", 2)
+    assert r["next"] == {"block_id": "qa", "z": 0, "batch_id": "b1"} and r["crossed_batch"] is False, "本批前面的块还有待审：先审它"
+    rv_ = rita.get(f"{_blk('qa')}/review/0").json()
+    assert rita.post(f"{_blk('qa')}/review/0", json={"action": "approve", "expect_version": rv_["version"], "expect_sha": rv_["sha"]}).status_code == 200
+    r = nxt("qa", 0)
+    assert r["next"] == {"block_id": "qb", "z": 2, "batch_id": "b1"} and r["crossed_batch"] is False
+    r = nxt("qb", 2)
     assert r["next"] == {"block_id": "qc", "z": 0, "batch_id": "b2"} and r["crossed_batch"] is True, "本批审完才换批，并说明换了"
     r = nxt("qc", 0)
-    assert r["next"]["block_id"] == "qa" and r["crossed_batch"] is True
+    assert r["next"]["block_id"] == "qb" and r["crossed_batch"] is True
 
 
 def test_same_block_name_in_two_import_directories_is_reported(batches):
@@ -687,3 +693,115 @@ def test_a_broken_block_is_shown_in_its_batch_and_left_out_of_the_release(batche
     assert ("qe", "unreadable") in [(x["block_id"], x["reason"]) for x in pv["skipped"]]
     r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": pv["expect_included"]})
     assert r.status_code == 200 and "qe" in [x["block_id"] for x in r.json()["skipped"]], "版本记录里写明哪块没收、为什么"
+
+
+# ------------------------------------------------------------------ 第三轮审查（按批次那次改动）发现的问题
+def test_next_finishes_the_batch_even_when_starting_mid_batch(batches):
+    """从批次中间的块、或某块中间的 z 打开对比页：本批前面的块和本块前面的片也要先审完，才进下一批。"""
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    for bid, z in (("qa", 0), ("qc", 0)):
+        assert anna.post(_blk(bid) + "/review-range", json={"action": "complete", "z_from": z, "z_to": z}).status_code == 200
+    nxt = lambda b, z: rita.get("/api/v1/annotate/review/next", params={"block": b, "z": z}).json()
+    for start in (("qb", 0), ("qd", 2), ("qa", 1)):
+        r = nxt(*start)
+        assert r["next"] == {"block_id": "qa", "z": 0, "batch_id": "b1"} and r["crossed_batch"] is False, start
+    r = nxt("qa", 0)
+    assert r["next"]["block_id"] == "qc" and r["crossed_batch"] is True, "本批只剩正在看的这一片：进下一批"
+    assert nxt(None, -1)["crossed_batch"] is False, "没说从哪儿开始：不算换批"
+
+
+def test_release_preview_and_create_agree_when_edit_history_is_damaged(batches, tmp_path):
+    """某块 edits.jsonl 坏了：预览说不收它，真正入库也不收它，健康的块照常入库（以前永远 409 stale）。"""
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    _approve(anna, rita, "qb", 1)
+    p = tmp_path / "work" / "qb" / "edits.jsonl"
+    p.write_text("{坏了\n" + p.read_text())
+    pv = rita.get("/api/v1/annotate/review/batches/b1/releases/preview").json()
+    assert pv["expect_included"] == {"qa": [0]} and ("qb", "history") in [(x["block_id"], x["reason"]) for x in pv["skipped"]]
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": pv["expect_included"]})
+    assert r.status_code == 200, r.text
+    assert [b["block_id"] for b in r.json()["blocks"]] == ["qa"]
+
+
+def test_release_holds_the_database_write_lock_from_the_final_check_until_it_is_recorded(batches, tmp_path, monkeypatch):
+    """SQLite 不认 FOR UPDATE：最后核对之后、记录写好之前，别人的审核动作必须排在后面（这里直接检查写锁在不在）。"""
+    import sqlite3
+
+    from emqc.annotate import review as rv
+    from emqc.config import settings
+
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    _approve(anna, rita, "qa", 0)
+    db = settings.db_url.split("sqlite:///", 1)[1]
+    seen = {}
+    real = rv.os.rename
+
+    def rename_and_probe(src, dst):
+        real(src, dst)
+        if str(dst).endswith("/v1"):
+            c = sqlite3.connect(db, timeout=0.05)
+            try:
+                c.execute("BEGIN IMMEDIATE")
+                seen["locked"] = False
+                c.execute("ROLLBACK")
+            except sqlite3.OperationalError as e:
+                seen["locked"] = "locked" in str(e)
+            finally:
+                c.close()
+    monkeypatch.setattr(rv.os, "rename", rename_and_probe)
+    r = rita.post("/api/v1/annotate/review/batches/b1/releases", json={"expect_included": {"qa": [0]}})
+    assert r.status_code == 200, r.text
+    assert seen == {"locked": True}, "核对之后到写完记录之前，别人不能改审核结论"
+
+
+def test_read_and_write_handles_share_one_lock_and_follow_a_moved_directory(batches):
+    """对比 / 审核用的只读句柄和编辑用的句柄共用一把锁；块目录在运行中被挪走（改名）后跟过去，不会一直指着旧路径。"""
+    from emqc.api.routers import annotate
+
+    as_, root = batches
+    anna, rita = as_("anna"), as_("rita")
+    ro, rw = annotate.get_store(read_only=True), annotate.get_store()
+    ro.refresh(); rw.refresh()
+    assert ro.get("qa")._shared is rw.get("qa")._shared
+    _approve(anna, rita, "qa", 0)
+    (root / "b1").rename(root / "b1-renamed")                # 整个导入目录改名：同一份数据换了地方
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert [g["batch_id"] for g in sm["batches"]] == ["b1-renamed", "b2"], "刷新后按新目录名分批，不用重启"
+    r = anna.post(_blk("qa") + "/paint", json={"z": 1, "points": [[1, 1]], "radius": 0, "new_id": 77})
+    assert r.status_code == 200, r.text
+    assert ro.get("qa")._shared is rw.get("qa")._shared and str(rw.get("qa").path).endswith("b1-renamed/qa")
+    assert rita.get(_blk("qa") + "/review/0").json()["status"] == "approved", "通过的那一片内容没变：仍然有效"
+
+
+def test_a_different_same_named_block_cannot_silently_replace_an_edited_one(batches):
+    """原来的块目录不见了、另有一个同名的不同数据：已经改过的块拒绝顶替（不把改动配到另一份图像上）。"""
+    import shutil
+
+    as_, root = batches
+    anna = as_("anna")
+    assert anna.post(_blk("qc") + "/paint", json={"z": 0, "points": [[1, 1]], "radius": 0, "new_id": 5}).status_code == 200
+    _put_block(root, "b9", "qc")                             # 另一份同名数据
+    shutil.rmtree(root / "b2")                               # 原来那份不见了
+    blocks = {b["block_id"]: b for b in anna.get("/api/v1/annotate/blocks").json()["blocks"]}
+    assert "不能直接顶替" in blocks["qc"]["error"]
+    assert anna.post(_blk("qc") + "/paint", json={"z": 0, "points": [[2, 2]], "radius": 0, "new_id": 6}).status_code in (404, 422)
+
+
+def test_a_symlinked_import_directory_is_named_after_the_link(batches, tmp_path, monkeypatch):
+    from emqc.api.routers import annotate
+    from emqc.config import settings
+
+    as_, root = batches
+    rita = as_("rita")
+    target = tmp_path / "delivery" / "blocks" / "h01"
+    _put_block(target.parent.parent, "blocks", "h01", "qx")
+    link = tmp_path / "train-2026-10"
+    link.symlink_to(target)
+    monkeypatch.setattr(settings, "annotate_extra_roots", str(link))
+    annotate.reset_store()
+    sm = rita.get("/api/v1/annotate/review/summary").json()
+    assert ("train-2026-10", ["qx"]) in [(g["batch_id"], g["blocks"]) for g in sm["batches"]]

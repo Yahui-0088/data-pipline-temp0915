@@ -782,11 +782,16 @@
       const r = await json(`/api/v1/annotate/review/next?${new URLSearchParams({block: state.block, z: state.z})}`);
       if (nav !== RV.nav) return;
       if (!r.next) { $("status").textContent = r.why ? `不能审核：${r.why}` : "没有待审的切片了。审核进度见左侧「审核进度」。"; return; }
+      if (r.next.block_id !== state.block && ![...$("block").options].some(o => o.value === r.next.block_id)) {
+        $("status").textContent = `下一张待审在新加入的数据块 ${r.next.block_id} 里，这个页面的数据块列表里还没有它：请刷新页面后再按「下一张待审」`;
+        return;
+      }
       if (r.next.block_id !== state.block) $("block").value = r.next.block_id;
       RV.nav = 0;
       await load(r.next.z, r.next.block_id !== state.block);
-      // 先审完当前批次才会换批：换了就明说，免得以为还在原来那一批
-      if (r.crossed_batch) $("status").textContent = `原来那一批没有你能审的切片了，已进入批次 ${r.next.batch_id} · ${$("status").textContent}`;
+      // 先审完当前批次才会换批：换了就明说，免得以为还在原来那一批（只在确实切过去了的时候说）
+      if (r.crossed_batch && state.block === r.next.block_id && state.z === r.next.z)
+        $("status").textContent = `原来那一批没有你能审的切片了，已进入批次 ${r.next.batch_id} · ${$("status").textContent}`;
     } catch (e) { $("status").textContent = `找下一张待审失败：${e.message}`; }
     finally { if (nav === RV.nav) RV.nav = 0; renderReview(); settleFocus(); }
   }

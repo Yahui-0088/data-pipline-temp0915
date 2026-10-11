@@ -86,7 +86,8 @@ _SHA_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 def _sha_key(block: Block, z: int):
-    return (block._gen(z), block.work_path(SEG_EDIT).exists())
+    # 带上源目录：还没有工作副本时内容来自源 seg.npy，换了源目录（改名、同名块）就不能沿用旧的哈希
+    return (block._gen(z), block.work_path(SEG_EDIT).exists(), str(block.path))
 
 
 def remember_sha(block: Block, z: int, plane: np.ndarray) -> str:
