@@ -43,7 +43,8 @@ async def _same_origin(request: Request, call_next):
     脚本（不带 Origin）不受影响。"""
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/"):
         origin = request.headers.get("origin")
-        if origin and origin != "null" and urlsplit(origin).netloc != request.headers.get("host", ""):
+        # Origin: null（沙箱 iframe、本地文件、某些跳转后的页面）也算外站：正常的本站页面总会带上本站地址
+        if origin is not None and (origin == "null" or urlsplit(origin).netloc != request.headers.get("host", "")):
             return JSONResponse({"detail": {"code": "origin", "message": "请求来自别的网站，已拒绝"}}, status_code=403)
     response = await call_next(request)
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")

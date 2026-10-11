@@ -261,7 +261,7 @@ def test_marks_cited_by_a_decision_are_kept_as_evidence(env):
     complete(anna, 0)
     m = rita.post(URL + "/marks", json={"z": 0, "x": 2, "y": 2, "text": "这里断开了"}).json()
     r = act(rita, 0, "approve")
-    assert r.status_code == 409 and detail(r)["what"] == "open_marks", "还有未解决的标记，通过前要确认"
+    assert r.status_code == 409 and detail(r)["what"] == ["open_marks"], "还有未解决的标记，通过前要确认"
     r = act(rita, 0, "request_changes")                      # 有标记就不必再写一遍原因
     assert r.status_code == 200 and r.json()["events"][0]["marks"][0]["text"] == "这里断开了"
     assert rita.delete(f"/api/v1/annotate/marks/{m['id']}").status_code == 409
@@ -277,8 +277,8 @@ def test_unattributed_edits_need_confirmation(env):
     st = state(rita, 1)
     assert st["unattributed"] == 1
     r = act(rita, 1, "approve", st)
-    assert r.status_code == 409 and detail(r)["what"] == "unattributed"
-    assert act(rita, 1, "approve", st, confirm=True).status_code == 200
+    assert r.status_code == 409 and detail(r)["what"] == ["unattributed"]
+    assert act(rita, 1, "approve", st, confirm=["unattributed"]).status_code == 200
 
 
 def test_progress_and_next(env):
@@ -349,3 +349,82 @@ def test_writes_from_another_origin_are_refused(env):
     r = anna.post(URL + "/review-range", json={"action": "complete", "z_from": 0, "z_to": 0},
                   headers={"Origin": "http://testserver"})
     assert r.status_code == 200
+
+
+def test_each_confirmation_must_be_given(env):
+    """未解决标记和没署名的改动要分别确认：确认了一项不能顺带跳过另一项。"""
+    as_, b = env
+    anna, rita = as_("anna"), as_("rita")
+    b.paint(0, [(1, 1)], 0, 4, by=None)
+    complete(anna, 0)
+    rita.post(URL + "/marks", json={"z": 0, "x": 2, "y": 2, "text": "看一下"})
+    r = act(rita, 0, "approve")
+    assert r.status_code == 409 and sorted(detail(r)["what"]) == ["open_marks", "unattributed"], "一次说清两件事"
+    r = act(rita, 0, "approve", confirm=["open_marks"])
+    assert r.status_code == 409 and detail(r)["what"] == ["unattributed"]
+    assert act(rita, 0, "approve", confirm=["open_marks", "unattributed"]).status_code == 200
+
+
+def test_release_is_void_if_a_decision_changes_while_writing(env, monkeypatch):
+    """入库写文件的途中有人退回了某一片：这次入库作废（409），不留下任何版本目录。"""
+    from emqc.annotate import review as rv
+
+    as_, b = env
+    anna, rita, rex = as_("anna"), as_("rita"), as_("rex")
+    paint(anna, 0, 1, 7)
+    complete(anna, 0)
+    assert act(rita, 0, "approve").status_code == 200
+    real = rv._write
+
+    def write_and_meanwhile_reject(path, data):
+        real(path, data)
+        if path.name == "manifest.json":
+            assert act(rex, 0, "request_changes", comment="不对").status_code == 200
+    monkeypatch.setattr(rv, "_write", write_and_meanwhile_reject)
+    r = rita.post(URL + "/releases", json={"expect_included": [0]})
+    assert r.status_code == 409 and detail(r)["code"] == "stale"
+    root = b.work.parent / "_releases" / "who"
+    assert not [p for p in root.iterdir()], "什么都不留：没有版本目录，也没有临时目录"
+    assert rita.get(URL + "/releases").json()["releases"] == []
+
+
+def test_release_version_never_reuses_a_recorded_number(env):
+    """旧版本目录被人删了腾空间：下一个版本号仍然接着库里的最大号，不会造出一个和记录对不上的同号版本。"""
+    as_, b = env
+    anna, rita = as_("anna"), as_("rita")
+    complete(anna, 0)
+    assert act(rita, 0, "approve").status_code == 200
+    assert rita.post(URL + "/releases", json={"expect_included": [0]}).json()["version"] == 1
+    v1 = b.work.parent / "_releases" / "who" / "v1"
+    for f in v1.iterdir():
+        f.chmod(0o644)
+        f.unlink()
+    v1.rmdir()
+    r = rita.post(URL + "/releases", json={"expect_included": [0]})
+    assert r.status_code == 200 and r.json()["version"] == 2
+
+
+def test_a_damaged_block_does_not_take_the_progress_page_down(env):
+    as_, b = env
+    anna, rita = as_("anna"), as_("rita")
+    paint(anna, 0, 1, 7)
+    paint(anna, 1, 1, 8)
+    p = b.work / "audit.jsonl"
+    lines = p.read_text().splitlines()
+    p.write_text("\n".join([lines[0], "{坏了", *lines[1:]]) + "\n")      # 中间一行坏了：存储层拒绝读取
+    r = rita.get("/api/v1/annotate/review/summary")
+    assert r.status_code == 200 and "error" in r.json()["blocks"][0]
+    assert rita.get("/api/v1/annotate/review/next").status_code == 200
+
+
+def test_release_preview_is_for_reviewers(env):
+    as_, b = env
+    anna = as_("anna")
+    assert anna.get(URL + "/releases/preview").status_code == 403
+
+
+def test_origin_null_is_refused(env):
+    as_, b = env
+    anna = as_("anna")
+    r = anna.post(URL + "/review-range", json={"action": "complete", "z_from": 0, "z_to": 0}, headers={"Origin": "null"})
+    assert r.status_code == 403

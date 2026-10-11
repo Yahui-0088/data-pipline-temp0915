@@ -32,11 +32,12 @@
     renderBlocks();
     const want = new URLSearchParams(location.search).get("block");
     const pick = S.summary.blocks.find(b => b.block_id === (S.block || want)) || S.summary.blocks[0];
-    if (pick) await selectBlock(pick.block_id);
+    if (pick) await selectBlock(pick.block_id, {keepMessages: true});
     else $("blocks").innerHTML = '<div class="card muted">没有可审核的数据块（需要带分割标签的数据块）。</div>';
   }
   function renderBlocks() {
     $("blocks").innerHTML = S.summary.blocks.map(b => {
+      if (b.error) return `<div class="rv-block" aria-disabled="true"><b>${esc(b.block_id)}</b><span class="rv-flag">这个数据块的编辑记录读不出来：${esc(b.error)}（请联系管理员）</span></div>`;
       const n = b.nz, c = b.counts;
       const seg = k => c[k] ? `<i data-status="${k}" style="width:${(100 * c[k] / n).toFixed(2)}%" title="${esc(S.names[k])} ${c[k]}"></i>` : "";
       const rel = b.latest_release ? `已入库 v${b.latest_release.version}（${b.latest_release.n_slices} 片）` : "未入库";
@@ -48,21 +49,31 @@
       </button>`;
     }).join("");
   }
-  $("blocks").addEventListener("click", ev => { const b = ev.target.closest(".rv-block"); if (b) selectBlock(b.dataset.block); });
+  $("blocks").addEventListener("click", ev => { const b = ev.target.closest(".rv-block"); if (b && b.dataset.block) selectBlock(b.dataset.block); });
 
   // ---------------------------------------------------------------- 一块的明细
-  async function selectBlock(id) {
-    S.block = id; S.plan = null; $("plan").hidden = true; $("release-result").hidden = true;
+  async function selectBlock(id, {keepMessages = false} = {}) {
+    const changed = S.block !== id;
+    S.block = id;
+    if (changed || !keepMessages) { S.plan = null; $("plan").hidden = true; $("release-result").hidden = true; $("range-result").hidden = true; }
     history.replaceState(null, "", `/annotate/review?${new URLSearchParams({block: id})}`);
     document.querySelectorAll(".rv-block").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.block === id)));
     $("detail").hidden = false;
     $("detail-title").textContent = id;
-    $("rows").innerHTML = '<tr><td colspan="9" class="muted">加载中…</td></tr>';
-    S.data = await call(`${API}/blocks/${encodeURIComponent(id)}/review`);
-    $("to").value = Math.min(+$("to").value || 0, S.data.nz - 1) || S.data.nz - 1;
-    $("from").max = $("to").max = S.data.nz - 1;
+    if (changed) $("rows").innerHTML = '<tr><td colspan="9" class="muted">加载中…</td></tr>';
+    let data;
+    try { data = await call(`${API}/blocks/${encodeURIComponent(id)}/review`); }
+    catch (e) {
+      if (S.block === id) $("rows").innerHTML = `<tr><td colspan="9">读取失败：${esc(e.message)}（点「刷新」重试）</td></tr>`;
+      return;
+    }
+    if (S.block !== id) return;                                   // 结果到的时候已经换了别的块：丢掉
+    const first = !S.data || S.data.block_id !== id;
+    S.data = data;
+    $("from").max = $("to").max = data.nz - 1;
+    if (first) { $("from").value = 0; $("to").value = data.nz - 1; }   // 只在换块时给默认范围，别把用户填的值改掉
     renderDetail();
-    loadReleases();
+    loadReleases().catch(e => { $("release-why").textContent = `版本历史读取失败：${e.message}`; });
   }
   function renderDetail() {
     const d = S.data; if (!d) return;

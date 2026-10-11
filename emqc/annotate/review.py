@@ -32,13 +32,14 @@ import os
 import shutil
 import threading
 import uuid
+import weakref
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
-from emqc.annotate.store import CREATED_LABELS, Actor, Block, _check_free
+from emqc.annotate.store import CREATED_LABELS, SEG_EDIT, Actor, Block, _check_free
 
 STORED = ("open", "completed", "approved", "changes_requested")
 DISPLAY_NAMES = {
@@ -79,9 +80,39 @@ def current_plane(block: Block, z: int) -> np.ndarray:
     return _read_arrays(block, z)[1]
 
 
+# 每个块（按共享状态对象）每一片的哈希缓存：{z: ((像素版本, 有没有工作副本), sha)}。像素一写版本就加一（工作台、对比页共享），
+# 缓存自然失效；整块合并之类让版本号前进但没动这一片像素的操作不会让它失效——这一片的像素版本没变。
+_SHA_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _sha_key(block: Block, z: int):
+    return (block._gen(z), block.work_path(SEG_EDIT).exists())
+
+
+def remember_sha(block: Block, z: int, plane: np.ndarray) -> str:
+    """调用方持有 block.lock、手里正好有这一片当前的平面（例如对比页刚读出来的）：算哈希并记进缓存。"""
+    sha = plane_sha(plane)
+    _SHA_CACHE.setdefault(block._shared, {})[z] = (_sha_key(block, z), sha)
+    return sha
+
+
 def current_sha(block: Block, z: int) -> str:
+    """第 z 片当前内容的哈希。在块锁里取（写像素也都在块锁里，读到的就是某一个完整的版本）；缓存命中就不读像素。
+    没命中时优先用已经缓存的标签索引图还原平面（ids[idx] 与原平面逐位相同），否则读一次工作副本。"""
     with block.lock:
-        return plane_sha(current_plane(block, z))
+        key = _sha_key(block, z)
+        memo = _SHA_CACHE.setdefault(block._shared, {})
+        hit = memo.get(z)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        try:
+            idx, ids = block.labels(z)
+            plane = ids[idx]
+        except ValueError:                       # 一片里标签太多，索引图放不下：直接读平面
+            plane = block.seg_slice(z)
+        sha = plane_sha(plane)
+        memo[z] = (key, sha)
+        return sha
 
 
 # ------------------------------------------------------------------ 参与人（四眼原则）
@@ -95,7 +126,7 @@ def _key(e: dict):
     return None
 
 
-def contributors(block: Block, z: int) -> tuple[list[dict], int]:
+def contributors(block: Block, z: int, records: list[dict] | None = None) -> tuple[list[dict], int]:
     """谁动过第 z 片：(参与人列表, 没署名的笔数)。
 
     算进来的有：这一片上仍然有效的改动的作者；所有落在这一片上的写入流水（包括后来被撤销掉的——做过就是参与过）；
@@ -117,14 +148,15 @@ def contributors(block: Block, z: int) -> tuple[list[dict], int]:
             if p.get(f) is None and e.get(f) is not None:
                 p[f] = e[f]
 
-    with block.lock:
-        for rec in block.edits(z):
-            add(rec)
-        for e in block.audit_entries():
-            if e.get("action") == "undo" and (e.get("z") is None or e.get("z") == z):
-                add(e)
-            elif e.get("action") == "edit" and e.get("z") == z:
-                add(e, count_unattributed=False)
+    # records：调用方已经在块锁里取好的这一片有效改动（省得再解压一遍 3-D 改动的像素记录）；
+    # 审计流水是只追加、按文件状态缓存的列表，扫它不用占锁
+    for rec in (block.edits(z) if records is None else records):
+        add(rec)
+    for e in block.audit_entries():
+        if e.get("action") == "undo" and (e.get("z") is None or e.get("z") == z):
+            add(e)
+        elif e.get("action") == "edit" and e.get("z") == z:
+            add(e, count_unattributed=False)
     # 同一个人在有效改动和流水里各算了一次：n 只是给人看的笔数，按流水为准大致即可，不用精确去重
     return list(people.values()), unattributed
 
@@ -184,7 +216,9 @@ def slice_editors(block: Block) -> dict[int, dict]:
             add(int(rec["z"]), rec)
             continue
         try:
-            data = block._load_edit(rec["n"], ("zs", "z", "xs"))
+            data = block._load_edit(rec["n"], ("zs",))            # 只解压 zs；没有 zs 的旧记录才去读 xs
+            if "zs" not in data:
+                data = block._load_edit(rec["n"], ("z", "xs"))
         except ValueError:
             continue
         zs = data["zs"] if "zs" in data else np.full(np.shape(data.get("xs", [])), int(data.get("z", -1)))
@@ -283,56 +317,68 @@ def _sha_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def plan_release(block: Block, approved: dict[int, dict]) -> dict:
-    """看一眼这次入库会收哪些片、不收哪些片（不写任何东西）。approved: {z: {"sha": 通过时的哈希, ...}}。
-    读盘一次（整块拷到内存）在块锁里做，保证所有片是同一时刻的内容。"""
-    with block.lock:
-        vol = np.array(block._seg())                 # (X, Y, Z)，整块一次读出：同一时刻的快照
-        audit = block.audit_entries()
-        seq = int(audit[-1]["seq"]) if audit else 0
+class ReleaseStale(ValueError):
+    """入库途中有人改了某一片的审核结论（退回、撤销通过、重新通过）：这次入库作废，要重新预览。"""
+
+
+def preview_release(block: Block, approved: dict[int, dict]) -> dict:
+    """这次入库会收哪些片、不收哪些片（不写任何东西、不整块读盘）：已通过且当前内容哈希 = 通过时哈希的才收。"""
     included, excluded = [], []
-    for z in range(block.nz):
-        a = approved.get(z)
-        if a is None:
-            continue
-        sha = plane_sha(vol[:, :, z].T)
-        if sha == a["sha"]:
+    for z in sorted(approved):
+        if current_sha(block, z) == approved[z]["sha"]:
             included.append(z)
         else:
             excluded.append({"z": z, "reason": "changed", "message": "通过后被修改，重新通过后才能入库"})
-    return {"vol": vol, "audit_seq": seq, "included": included, "excluded": excluded}
+    return {"included": included, "excluded": excluded}
+
+
+def snapshot_release(block: Block, approved: dict[int, dict]) -> dict:
+    """在块锁里把整块拷进内存（同一时刻的快照），并按同一时刻的内容决定收哪些片。只给真正入库用（要占一份整块大小的内存）。"""
+    with block.lock:
+        vol = np.array(block._seg())             # (X, Y, Z) 私有拷贝；保持源文件的 C / F 顺序
+        audit = block.audit_entries()
+        seq = int(audit[-1]["seq"]) if audit else 0
+        plan = preview_release(block, approved)  # 锁还在手里：哈希和 vol 是同一时刻的内容
+    return {**plan, "vol": vol, "audit_seq": seq}
 
 
 def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, dict], *, created_by: dict, note: str | None,
-                  code_commit: str | None) -> dict:
-    """把计划好的片冻结成一个只读版本：<工作目录>/_releases/<块>/v<N>/。
+                  code_commit: str | None, db_max_version: int = 0, precommit=None) -> dict:
+    """把快照里要收的片冻结成一个只读版本：<工作目录>/_releases/<块>/v<N>/。
 
     seg.npy 与原始 seg.npy 形状、类型、轴顺序（含是否 F 顺序）完全一致；没收的片全是 0，reviewed_z.npy 标出哪些片有效。
-    先写进临时目录、逐个文件落盘，最后原子改名成 v<N>——要么整个版本出现，要么什么都没有。"""
-    vol = plan["vol"]
+    先写进临时目录、逐个文件落盘；原子改名成 v<N> 之前调用 precommit()（入库接口在这里再核对一遍库里的审核结论，
+    途中有人退回或撤销就抛 ReleaseStale）——要么整个版本出现，要么什么都没有。
+    版本号取「已有目录」和「库里记录」两者的最大值加一：有人删了旧版本目录腾空间，也不会造出一个和库里记录对不上的同号版本。"""
+    rel = plan["vol"]                             # 快照是私有拷贝，直接在上面把不收的片清零，不再多占一份内存
     included = plan["included"]
     if not included:
         raise ValueError("没有可以入库的切片：需要至少一片「已通过」且通过后没再改过")
+    keep = np.zeros(block.nz, dtype=bool)
+    keep[included] = True
+    for z in np.flatnonzero(~keep):
+        rel[:, :, z] = 0
+    src = block._seg_ro
+    if src is not None and src.flags.f_contiguous and not src.flags.c_contiguous and not rel.flags.f_contiguous:
+        rel = np.asfortranarray(rel)
     root = releases_root(workdir) / block.id
     root.mkdir(parents=True, exist_ok=True)
-    rel = np.zeros_like(vol)
-    for z in included:
-        rel[:, :, z] = vol[:, :, z]
-    if block._seg_ro is not None and block._seg_ro.flags.f_contiguous and not block._seg_ro.flags.c_contiguous:
-        rel = np.asfortranarray(rel)
-    mask = np.zeros(block.nz, dtype=bool)
-    mask[included] = True
     _check_free(root, int(rel.nbytes) + (64 << 20))
     created = set()
     try:
         created = {str(i) for i in json.loads((block.work_path(CREATED_LABELS)).read_text())}
     except (OSError, ValueError):
         pass
-    created_present = sorted(i for i in {str(int(v)) for z in included for v in np.unique(vol[:, :, z])} if i in created)
+    created_present = sorted(i for i in {str(int(v)) for z in included for v in np.unique(rel[:, :, z])} if i in created)
 
     with _release_locks[block.id]:
+        for old in root.glob(".tmp-*"):          # 上次入库写到一半崩了留下的临时目录（同一时间只有本进程在写这个工作目录）
+            shutil.rmtree(old, ignore_errors=True)
         existing = [int(p.name[1:]) for p in root.iterdir() if p.is_dir() and p.name.startswith("v") and p.name[1:].isdigit()]
-        version = max(existing, default=0) + 1
+        version = max(max(existing, default=0), int(db_max_version)) + 1
+        final = root / f"v{version}"
+        if final.exists():
+            raise ValueError(f"版本目录 {final} 已存在，请联系管理员检查入库目录")
         tmp = root / f".tmp-{uuid.uuid4().hex[:8]}"
         tmp.mkdir()
         try:
@@ -341,16 +387,15 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
                 fh.flush()
                 os.fsync(fh.fileno())
             with open(tmp / "reviewed_z.npy", "wb") as fh:
-                np.save(fh, mask)
+                np.save(fh, keep)
                 fh.flush()
                 os.fsync(fh.fileno())
             slices = []
             for z in included:
                 a = approved[z]
-                slices.append({"z": z, "sha256": a["sha"], "approved_rev": a.get("rev"), "approved_by": a.get("by"),
-                               "approved_at": a.get("at"), "decision_event_id": a.get("event_id"),
+                slices.append({"z": z, "sha256": a["sha"], "approved_rev": a.get("rev"), "review_version": a.get("version"),
+                               "approved_by": a.get("by"), "approved_at": a.get("at"), "decision_event_id": a.get("event_id"),
                                "contributors": a.get("contributors") or []})
-            seg_src = block.path / "seg.npy"
             manifest = {
                 "schema_version": RELEASE_SCHEMA, "kind": "annotation_release", "block_id": block.id, "version": version,
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "created_by": created_by, "note": note,
@@ -362,7 +407,7 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
                           "unreviewed_slices": "全为 0；以 reviewed_z.npy 为准"},
                 "reviewed_z_file": "reviewed_z.npy", "n_reviewed": len(included), "z_list": included,
                 "excluded": plan["excluded"],
-                "source": {"block_path": str(block.path), "seg": str(seg_src), "em": str(block.path / "em.npy"),
+                "source": {"block_path": str(block.path), "seg": str(block.path / "seg.npy"), "em": str(block.path / "em.npy"),
                            "em_shape": list(block.em.shape), "meta": block.meta, "workdir_audit_seq": plan["audit_seq"]},
                 "slice_hash": "sha256(seg[:, :, z].tobytes(order='F')) 按小端 uint64，等于显示方向平面按 C 顺序的字节",
                 "slices": slices, "created_label_ids": created_present, "platform_commit": code_commit,
@@ -371,7 +416,8 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
             sums = "".join(f"{_sha_file(tmp / f)}  {f}\n" for f in ("seg.npy", "reviewed_z.npy", "manifest.json"))
             _write(tmp / "checksums.sha256", sums.encode())
             _fsync_dir(tmp)
-            final = root / f"v{version}"
+            if precommit is not None:
+                precommit()                          # 途中有人改了审核结论就在这里抛出，什么都不留
             os.rename(tmp, final)                    # ← 提交点：之前失败什么都不留，之后就是一个完整版本
             _fsync_dir(root)
         except BaseException:
@@ -385,3 +431,13 @@ def write_release(block: Block, workdir: Path, plan: dict, approved: dict[int, d
                 pass
         return {"version": version, "path": str(final.relative_to(Path(workdir))), "manifest_sha256": _sha_file(final / "manifest.json"),
                 "n_slices": len(included), "z_list": included, "audit_seq": plan["audit_seq"], "excluded": plan["excluded"]}
+
+
+def set_aside(workdir: Path, rel_path: str) -> str | None:
+    """入库目录已经改名生效、库里那一行却没写成：把目录挪开（.failed-…），不让一个库里没有记录的版本留在原位。"""
+    src = Path(workdir) / rel_path
+    if not src.exists():
+        return None
+    dst = src.with_name(f".failed-{src.name}-{uuid.uuid4().hex[:6]}")
+    os.rename(src, dst)
+    return str(dst)

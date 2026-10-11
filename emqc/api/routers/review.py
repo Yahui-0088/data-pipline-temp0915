@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -31,6 +33,21 @@ router = APIRouter(prefix="/api/v1/annotate", tags=["review"], dependencies=[Dep
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# 要扫整块的请求（进度汇总、下一张待审、入库预览、入库）同时最多两个：大数据块上一次可能要几秒，
+# 不限的话几个人一起刷新就把线程池占满，工作台的画笔请求也跟着排队
+_heavy = threading.BoundedSemaphore(2)
+
+
+@contextmanager
+def _heavy_slot():
+    if not _heavy.acquire(timeout=20):
+        raise HTTPException(429, {"code": "busy", "message": "服务器正忙（别人在汇总或入库），请稍后再试"})
+    try:
+        yield
+    finally:
+        _heavy.release()
 
 
 def _err(status: int, code: str, message: str, **extra):
@@ -135,12 +152,16 @@ def _why_not(action: str, s: Session, user: User | None, display: str, row: Slic
     return None
 
 
-def slice_state(s: Session, b, z: int, user: User | None) -> dict:
+def _slice_now(b, z: int) -> tuple[str, int, list[dict]]:
+    """这一片此刻的 (内容哈希, 版本号, 有效改动)，同一把锁里取。哈希按像素版本缓存，像素没变就不读盘。"""
     with b.lock:
-        sha = rv.plane_sha(rv.current_plane(b, z))
-        rev = b.slice_rev(z)
-        has_edits = bool(b.edits(z))
-    people, unattributed = rv.contributors(b, z)
+        return rv.current_sha(b, z), b.slice_rev(z), b.edits(z)
+
+
+def slice_state(s: Session, b, z: int, user: User | None) -> dict:
+    sha, rev, recs = _slice_now(b, z)
+    has_edits = bool(recs)
+    people, unattributed = rv.contributors(b, z, recs)
     row = _row(s, b.id, z)
     display = _display(b, row, sha, has_edits)
     marks = _open_marks(s, b.id, z)
@@ -150,6 +171,7 @@ def slice_state(s: Session, b, z: int, user: User | None) -> dict:
                             .order_by(ReviewEvent.id.desc()).limit(20)))
     actor = _actor(user) if user else None
     can = {a: _why_not(a, s, user, display, row, people) for a in rv.TRANSITIONS}
+    decider = _decider_problem(s, user) if user else ("disabled", "这个实例没有开启登录")
     return {
         "block_id": b.id, "z": z, "sha": sha, "rev": rev, "status": display, "status_name": rv.DISPLAY_NAMES[display],
         "stored": row.status if row else "open", "version": row.version if row else 0, "in_queue": display in rv.QUEUE,
@@ -162,6 +184,9 @@ def slice_state(s: Session, b, z: int, user: User | None) -> dict:
         "since_decision": {"n": len(changes), "n_px": sum(int(e.get("n_px") or 0) for e in changes),
                            "by": sorted({e.get("by") or "未署名" for e in changes})},
         "can": {a: why is None for a, why in can.items()}, "why_not": {a: why[1] for a, why in can.items() if why},
+        "can_decide": decider is None, "why_not_decide": decider[1] if decider else None,
+        # 最近一次审核结论是什么（通过 / 退回 / 撤销通过）：页面据此描述「谁在什么时候做了什么」
+        "decision": next((e.action for e in events if e.action in rv.DECISIONS), None),
         "events": [_event_dict(e) for e in events],
     }
 
@@ -180,7 +205,8 @@ class ReviewActionIn(BaseModel):
     expect_version: int = Field(ge=0)                                     # 页面看到的审核版本：别人先动了就 409
     expect_sha: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")  # 页面上这一片的内容哈希（通过 / 退回 / 撤销必带）
     comment: str | None = Field(default=None, max_length=4000)
-    confirm: bool = False                                                 # 还有未解决标记、或有未署名改动时，确认仍要通过
+    # 通过时要确认的事项：还有未解决标记（open_marks）、有没署名的改动（unattributed）。每一项都要单独确认过才放行
+    confirm: list[Literal["open_marks", "unattributed"]] = Field(default_factory=list, max_length=2)
 
 
 def _apply(s: Session, b, z: int, row: SliceReview | None, action: str, user: User, *, sha: str | None, rev: int,
@@ -243,29 +269,30 @@ def review_action(block_id: str, z: int, body: ReviewActionIn, user: User | None
         _need_decider(s, user)
         if body.expect_sha is None:
             raise _err(422, "sha", "缺少 expect_sha：审核结论要绑定你看到的那一版内容")
-    with b.lock:
-        sha = rv.plane_sha(rv.current_plane(b, z))
-        rev = b.slice_rev(z)
-        has_edits = bool(b.edits(z))
+    sha, rev, recs = _slice_now(b, z)
+    has_edits = bool(recs)
     if action in rv.DECISIONS and body.expect_sha != sha:
         raise _err(409, "stale", "这一片在你看过之后被改过了，已刷新为最新内容，请看过再操作", sha=sha, rev=rev)
     row = _row(s, b.id, z)
     if (row.version if row else 0) != body.expect_version:
         raise _err(409, "conflict", "别人刚对这一片做了审核操作，已刷新为最新状态，请再看一眼")
     display = _display(b, row, sha, has_edits)
-    people, unattributed = rv.contributors(b, z)
+    people, unattributed = rv.contributors(b, z, recs)
     why = _why_not(action, s, user, display, row, people)
     if why:
         code, message = why
         raise _err(409 if code in ("state", "open_mode", "disabled") else 403, code, message)
     comment = _clean(body.comment)
     marks = _open_marks(s, b.id, z) if action in ("approve", "request_changes") else []
-    if action == "approve" and not body.confirm:
-        if marks:
-            raise _err(409, "confirm", f"这一片还有 {len(marks)} 个未解决的标记，确认没问题、仍要通过吗？", what="open_marks", n=len(marks))
-        if unattributed:
-            raise _err(409, "confirm", f"这一片有 {unattributed} 笔没有署名的改动（无法确认是谁做的），确认仍要通过吗？",
-                       what="unattributed", n=unattributed)
+    if action == "approve":
+        need = []
+        if marks and "open_marks" not in body.confirm:
+            need.append(("open_marks", f"这一片还有 {len(marks)} 个未解决的标记"))
+        if unattributed and "unattributed" not in body.confirm:
+            need.append(("unattributed", f"这一片有 {unattributed} 笔没有署名的改动（无法确认是谁做的）"))
+        if need:                                    # 一次把要确认的都说出来；页面确认后带上全部 what 再发
+            raise _err(409, "confirm", "；".join(m for _, m in need) + "。确认没问题、仍要通过吗？",
+                       what=[k for k, _ in need], n_marks=len(marks), n_unattributed=unattributed)
     if action == "request_changes" and not comment and not marks:
         raise _err(422, "comment", "退回修改要写明原因（或先在图上钉标记说明问题）")
     if action == "revoke" and not comment:
@@ -365,16 +392,23 @@ def _blocks(s: Session):
 
 @router.get("/review/summary")
 def review_summary(user: User | None = Depends(require_user), s: Session = Depends(get_session)):
-    """所有数据块的审核进度汇总（进度页顶部），以及我是谁、能不能下结论。"""
+    """所有数据块的审核进度汇总（进度页顶部），以及我是谁、能不能下结论。
+    某一块的编辑记录坏了：那一块单独报错，其余照常显示（不能一块坏了整页打不开）。"""
     out = []
-    for info in _blocks(s):
-        b = _block(info["block_id"])
-        rows = block_rows(s, b, user)
-        latest = s.scalars(select(AnnotRelease).where(AnnotRelease.block_id == b.id).order_by(AnnotRelease.version.desc())).first()
-        out.append({"block_id": b.id, "nz": b.nz, "counts": rows["counts"],
-                    "todo": sum(1 for r in rows["slices"] if r["todo"]), "reviewable": sum(1 for r in rows["slices"] if r["reviewable"]),
-                    "latest_release": None if latest is None else {"version": latest.version, "n_slices": latest.n_slices,
-                                                                   "at": rv.db_iso(latest.created_at)}})
+    with _heavy_slot():
+        for info in _blocks(s):
+            try:
+                b = _block(info["block_id"])
+                rows = block_rows(s, b, user)
+            except (ValueError, OSError, HTTPException) as e:
+                msg = e.detail if isinstance(e, HTTPException) else str(e)
+                out.append({"block_id": info["block_id"], "error": msg if isinstance(msg, str) else str(msg)})
+                continue
+            latest = s.scalars(select(AnnotRelease).where(AnnotRelease.block_id == b.id).order_by(AnnotRelease.version.desc())).first()
+            out.append({"block_id": b.id, "nz": b.nz, "counts": rows["counts"],
+                        "todo": sum(1 for r in rows["slices"] if r["todo"]), "reviewable": sum(1 for r in rows["slices"] if r["reviewable"]),
+                        "latest_release": None if latest is None else {"version": latest.version, "n_slices": latest.n_slices,
+                                                                       "at": rv.db_iso(latest.created_at)}})
     me = None
     if user is not None:
         p = _decider_problem(s, user)
@@ -390,23 +424,31 @@ def block_review(block_id: str, user: User | None = Depends(require_user), s: Se
 
 @router.get("/review/next")
 def next_to_review(block: str | None = None, z: int = -1, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
-    """从 (block, z) 往后找下一张我能审的片：待审核或通过后被修改，而且我没参与过。按数据块、z 顺序，到头绕回来。"""
-    if user is None or _decider_problem(s, user) is not None:
-        return {"next": None}
+    """从 (block, z) 往后找下一张我能审的片：待审核或通过后被修改，而且我没参与过。按数据块、z 顺序，到头绕回来。
+    不能审的人返回原因（页面显示原因，而不是说「没有待审」）。"""
+    if user is None:
+        return {"next": None, "why": "这个实例没有开启登录，审核功能不可用"}
+    p = _decider_problem(s, user)
+    if p is not None:
+        return {"next": None, "why": p[1]}
     ids = [x["block_id"] for x in _blocks(s)]
     if not ids:
         return {"next": None}
     start = ids.index(block) if block in ids else 0
     order = ids[start:] + ids[:start]
-    for i, bid in enumerate(order + [order[0]]):
-        rows = block_rows(s, _block(bid), user)["slices"]
-        for r in rows:
-            if i == 0 and r["z"] <= z:
-                continue
-            if i == len(order) and r["z"] >= z:
-                break
-            if r["reviewable"]:
-                return {"next": {"block_id": bid, "z": r["z"]}}
+    with _heavy_slot():
+        for i, bid in enumerate(order + [order[0]]):
+            try:
+                rows = block_rows(s, _block(bid), user)["slices"]
+            except (ValueError, OSError, HTTPException):
+                continue                                  # 这一块的记录坏了：跳过，别让下一张待审整个失灵
+            for r in rows:
+                if i == 0 and r["z"] <= z:
+                    continue
+                if i == len(order) and r["z"] >= z:
+                    break
+                if r["reviewable"]:
+                    return {"next": {"block_id": bid, "z": r["z"]}}
     return {"next": None}
 
 
@@ -418,7 +460,8 @@ def _approved(s: Session, b) -> dict[int, dict]:
     out = {}
     for r in rows:
         e = events.get(r.last_event_id)
-        out[r.z] = {"sha": r.approved_sha256, "rev": r.approved_rev, "at": rv.db_iso(r.decided_at), "event_id": r.last_event_id,
+        out[r.z] = {"sha": r.approved_sha256, "rev": r.approved_rev, "version": r.version, "at": rv.db_iso(r.decided_at),
+                    "event_id": r.last_event_id,
                     "by": {"id": r.decided_by, "user": r.decided_by_user, "name": r.decided_by_name},
                     "contributors": (e.contributors if e is not None else None) or []}
     return out
@@ -437,20 +480,26 @@ def list_releases(block_id: str, s: Session = Depends(get_session)):
 
 
 @router.get("/blocks/{block_id}/releases/preview")
-def preview_release(block_id: str, s: Session = Depends(get_session)):
-    """这次入库会收哪些片、不收哪些（不写任何东西）。"""
+def preview_release(block_id: str, user: User | None = Depends(require_user), s: Session = Depends(get_session)):
+    """这次入库会收哪些片、不收哪些（不写任何东西，不整块读盘）。只有能入库的人用得到，也就只给他们算。"""
+    user = _human(user)
+    _need_decider(s, user)
     b = _block(block_id)
-    approved = _approved(s, b)
-    plan = rv.plan_release(b, approved)
-    rows = block_rows(s, b, None)["slices"]
+    with _heavy_slot():
+        approved = _approved(s, b)
+        plan = rv.preview_release(b, approved)
+        rows = block_rows(s, b, None)["slices"]
     not_approved = [{"z": r["z"], "reason": r["status"], "message": r["status_name"]} for r in rows if r["z"] not in approved]
     return {"included": plan["included"], "excluded": plan["excluded"], "not_approved": not_approved, "nz": b.nz}
 
 
 class ReleaseIn(BaseModel):
     model_config = {"extra": "forbid"}
-    expect_included: list[int]                                     # 预览时看到的那份清单：入库前内容又变了就 409
+    expect_included: list[int] = Field(max_length=100_000)          # 预览时看到的那份清单：入库前内容又变了就 409
     note: str | None = Field(default=None, max_length=2000)
+
+
+_release_gate = threading.BoundedSemaphore(1)                         # 入库要占一份整块大小的内存：同一时间只做一个
 
 
 @router.post("/blocks/{block_id}/releases")
@@ -464,21 +513,53 @@ def create_release(block_id: str, body: ReleaseIn, user: User | None = Depends(r
         b._hold()                                         # 和写像素一样：先占住工作目录（同一时间只有一个服务进程在写）、查磁盘
     except ValueError as e:
         raise _err(409, "workdir", str(e))
-    approved = _approved(s, b)
-    plan = rv.plan_release(b, approved)
-    if sorted(plan["included"]) != sorted(set(body.expect_included)):
-        raise _err(409, "stale", "可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库",
-                   included=plan["included"], excluded=plan["excluded"])
-    from emqc.logs import _git_commit
-
+    if not _release_gate.acquire(timeout=5):
+        raise _err(429, "busy", "另一个入库正在进行，请等它完成后再试")
     try:
-        res = rv.write_release(b, settings.annotate_workdir, plan, approved, created_by=_who(user), note=_clean(body.note),
-                               code_commit=_git_commit())
-    except ValueError as e:
-        raise _err(422, "release", str(e))
-    row = AnnotRelease(block_id=b.id, version=res["version"], path=res["path"], n_slices=res["n_slices"], z_list=res["z_list"],
-                       manifest_sha256=res["manifest_sha256"], audit_seq=res["audit_seq"], note=_clean(body.note),
-                       created_by=user.id, created_by_user=user.username, created_by_name=_who(user)["name"])
-    s.add(row)
-    s.commit()
-    return {**_release_dict(row), "excluded": res["excluded"]}
+        approved = _approved(s, b)
+        if sorted(rv.preview_release(b, approved)["included"]) != sorted(set(body.expect_included)):
+            raise _err(409, "stale", "可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库")
+        plan = rv.snapshot_release(b, approved)
+        if sorted(plan["included"]) != sorted(set(body.expect_included)):
+            raise _err(409, "stale", "可入库的切片和你预览时不一样了（有人又通过或修改了），请重新预览后再入库")
+        db_max = s.scalar(select(func.max(AnnotRelease.version)).where(AnnotRelease.block_id == b.id)) or 0
+
+        def precommit() -> None:
+            # 原子改名之前再核对一遍：写文件的这几十秒里有人退回 / 撤销 / 重新通过了某一片，这次入库就作废。
+            # MySQL 上 FOR UPDATE 锁住这些行到提交为止：之后到达的审核动作排在这次入库之后
+            rows = {r.z: r for r in s.scalars(select(SliceReview).where(SliceReview.block_id == b.id, SliceReview.z.in_(plan["included"]))
+                                              .with_for_update().execution_options(populate_existing=True))}
+            for z in plan["included"]:
+                r, a = rows.get(z), approved[z]
+                if r is None or r.status != "approved" or r.approved_sha256 != a["sha"] or r.version != a["version"]:
+                    raise rv.ReleaseStale(f"z {z} 的审核结论在入库途中被改了，这次入库没有生效，请重新预览")
+
+        from emqc.logs import _git_commit
+
+        try:
+            res = rv.write_release(b, settings.annotate_workdir, plan, approved, created_by=_who(user), note=_clean(body.note),
+                                   code_commit=_git_commit(), db_max_version=db_max, precommit=precommit)
+        except rv.ReleaseStale as e:
+            s.rollback()
+            raise _err(409, "stale", str(e))
+        except ValueError as e:
+            s.rollback()
+            raise _err(422, "release", str(e))
+        finally:
+            plan.pop("vol", None)                     # 整块的拷贝尽早放掉
+        row = AnnotRelease(block_id=b.id, version=res["version"], path=res["path"], n_slices=res["n_slices"], z_list=res["z_list"],
+                           manifest_sha256=res["manifest_sha256"], audit_seq=res["audit_seq"], note=_clean(body.note),
+                           created_by=user.id, created_by_user=user.username, created_by_name=_who(user)["name"])
+        try:
+            s.add(row)
+            s.commit()
+        except Exception:
+            s.rollback()
+            moved = rv.set_aside(settings.annotate_workdir, res["path"])
+            import logging
+
+            logging.getLogger(__name__).exception("入库目录已生成但记录没写成，目录已挪到 %s", moved)
+            raise _err(500, "release", "入库记录没写成，这次入库没有生效（生成的目录已挪开），请重试或联系管理员")
+        return {**_release_dict(row), "excluded": res["excluded"]}
+    finally:
+        _release_gate.release()
