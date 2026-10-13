@@ -164,7 +164,7 @@ def browser(tmp_path):
             page.call("Network.enable")
             page.call("Fetch.enable", patterns=[{"urlPattern": "*", "requestStage": "Request"}])
             page.call("Page.navigate", url=f"http://127.0.0.1:{port}/annotate?block=pairs")
-            page.wait("document.querySelector('#an-meta')?.textContent.startsWith('64×32×2') && document.querySelectorAll('#an-segs .row').length >= 4")
+            page.wait("document.querySelector('#an-meta')?.textContent.includes('64×32×2') && document.querySelectorAll('#an-segs .row').length >= 4")
             page.evaluate("document.getElementById('an-stage').scrollIntoView({block:'center'})")
             yield page, data, original
             assert not page.errors, page.errors

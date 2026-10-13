@@ -93,8 +93,9 @@ def test_cuts_tiles_exactly_like_the_current_batch(world):
     assert m["geometry"]["origin"] == {"x": 1000, "y": 2000, "z": 30, "unit": "mip1 voxel"}, "原点用原始块的，不加偏移"
     assert m["geometry"]["offset_in_parent"] == {"y0": 4, "x0": 0} and m["quadrant"]["index"] == 2
     assert m["dataset"]["id"] == "h01-q" and "qc" not in m
-    assert m["parent_splits"] == {"h01-seg3d": {"dataset_id": "abc123", "split": "train", "group": "g1"}}
-    assert json.loads((imp / "h01_b0102_y0000_x0000" / "meta.json").read_text())["parent_splits"]["h01-seg3d"]["split"] == "val"
+    assert m["parent_splits"] == {"abc123": {"name": "h01-seg3d", "split": "train", "group": "g1"}}
+    assert json.loads((imp / "h01_b0102_y0000_x0000" / "meta.json").read_text())["parent_splits"]["abc123"]["split"] == "val"
+    assert m["arrays"]["em"]["file"] == "em.npy" and "parent_arrays" in m["workspace_import"]
     f = snap / "tiles" / tile.name / "seg.npy"
     assert not os.access(f, os.W_OK) and stat.S_IMODE(f.stat().st_mode) == 0o444 and stat.S_IMODE(f.parent.stat().st_mode) == 0o555
     man = json.loads((T / "var" / "manifests" / "h01-train512-v1.json").read_text())
@@ -166,3 +167,68 @@ def test_bad_inputs_are_refused(world, capsys):
     bad = list(args); bad[bad.index("h01-train512-v1")] = ".hidden"
     assert ct.main(bad + ["h01_b0101"]) == 2
     assert ct.main(args + ["h01_b9999"]) == 2
+
+
+@pytest.mark.parametrize("bad", ["ABS", "h01_b0101/", "../h01_b0101", "h01/h01_b0101"])
+def test_parents_must_be_plain_directory_names(world, capsys, bad):
+    """原始块写成路径：以前会绕过所有检查、把小块写到原始块旁边（交付区或正在用的导入目录里）。"""
+    T, D, work, db, args = world
+    name = str(D / "blocks" / "h01" / "h01_b0101") if bad == "ABS" else bad
+    before = _tree_hashes(D, T / "var")
+    assert ct.main(args + [name]) == 2 and "目录名" in capsys.readouterr().err
+    assert _tree_hashes(D, T / "var") == before and not (T / "var" / "datasets").exists()
+
+
+def test_a_failed_platform_check_publishes_nothing(world, monkeypatch):
+    """平台读法核对没过：var/annotation 和 var/datasets 里都不出现这个批次（以前导入目录已经改名到位了）。"""
+    T, D, work, db, args = world
+
+    def boom(*a, **k):
+        raise RuntimeError("核对失败")
+    monkeypatch.setattr(ct, "_self_check", boom)
+    with pytest.raises(RuntimeError):
+        ct.main(args + ["h01_b0101"])
+    assert not (T / "var" / "annotation" / "h01-train512-v1").exists()
+    assert not (T / "var" / "datasets" / "h01-train512-v1").exists()
+    assert not (T / "var" / "manifests" / "h01-train512-v1.json").exists()
+
+
+def test_parent_without_an_origin_is_refused_before_writing(world, capsys):
+    T, D, work, db, args = world
+    meta = D / "blocks" / "h01" / "h01_b0101" / "meta.json"
+    m = json.loads(meta.read_text()); m["geometry"]["origin"] = [1, 2, 3]; meta.write_text(json.dumps(m))
+    assert ct.main(args + ["h01_b0101"]) == 2 and "origin" in capsys.readouterr().err
+    assert not (T / "var" / "datasets").exists()
+
+
+def test_name_clash_inside_a_symlinked_import_directory_is_found(world, tmp_path, capsys):
+    """导入目录是符号链接（平台解析后照样会读）：里面的同名块也要算重名。"""
+    T, D, work, db, args = world
+    real = tmp_path / "elsewhere" / "h01-old" / "h01_b0101_y0000_x0000"
+    real.mkdir(parents=True)
+    np.save(real / "em.npy", np.zeros((4, 4, 3), np.uint8))
+    (T / "var" / "annotation" / "h01-old").symlink_to(real.parent)
+    assert ct.main(args + ["h01_b0101"]) == 2 and "同名数据块" in capsys.readouterr().err
+
+
+def test_configured_root_outside_var_annotation_is_checked(world, tmp_path, capsys):
+    T, D, work, db, args = world
+    root = tmp_path / "other-root" / "h01_b0101_y0004_x0004"
+    root.mkdir(parents=True)
+    np.save(root / "em.npy", np.zeros((4, 4, 3), np.uint8))
+    assert ct.main(args + ["--root", str(root.parent), "h01_b0101"]) == 2 and "同名数据块" in capsys.readouterr().err
+
+
+def test_symlinked_var_annotation_is_refused(world, tmp_path, capsys):
+    T, D, work, db, args = world
+    ann = T / "var" / "annotation"
+    moved = tmp_path / "ann-real"
+    ann.rename(moved)
+    ann.symlink_to(moved)
+    assert ct.main(args + ["h01_b0101"]) == 2 and "符号链接" in capsys.readouterr().err
+
+
+def test_tile_arrays_describe_the_tile_not_the_parent():
+    arr = ct._tile_arrays({"seg": {"file": "seg.npy", "dtype": "uint64", "shape": [1024, 1024, 100], "fortran_order": True,
+                                   "bytes": 1, "sha256": "x"}}, 512, 100)
+    assert arr == {"seg": {"file": "seg.npy", "dtype": "uint64", "shape": [512, 512, 100], "fortran_order": False}}

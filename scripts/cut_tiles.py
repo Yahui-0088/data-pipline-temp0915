@@ -10,11 +10,13 @@
   var/datasets/<批次>/tiles/<小块>/{em.npy, seg.npy, meta.json}   只读原件（文件 0444、目录 0555）
   var/annotation/<批次>/<小块>/{em.npy, seg.npy, meta.json}       导入目录：两个数组是指向原件的相对链接
   var/manifests/<批次>.json                                         清单：每个文件的 sha256，来源原始块的 uid 和它在各训练数据集里的划分
-都先写在 var/datasets/ 下的 .incoming-* 临时目录里，每块都和原始块逐字节核对、并用平台自己的读法核对一遍之后，才一次改名到位；
-中途失败什么都不会出现在 var/annotation 里（临时目录留着，不自动删，路径会打印出来）。
+都先写在 var/datasets/ 下的 .incoming-* 临时目录里：每块和原始块逐字节核对、用平台自己的读法核对之后，先把原件改名到
+var/datasets/<批次>（平台不读这里），再确认导入目录的链接都指到这些原件，最后才把导入目录改名到 var/annotation/<批次>。
+中途失败不会有任何东西出现在 var/annotation 里（临时目录留着，不自动删）。
 
-动手之前检查（--dry-run 只做这些）：批次名合法、三个目标都不存在；原始块形状 / 类型对；小块名字和所有导入目录里的块、
-标注工作目录、数据库里的审核和标记记录都不重名（重名会把别人已有的改动配到新数据上）；磁盘够。
+动手之前检查（--dry-run 只做这些）：批次名合法、三个目标都不存在；原始块只写目录名、形状 / 类型对、meta 里有原点；
+小块名字和平台能看到的所有数据块（var/annotation、var/sam_blocks 下每一项，以及 --root 给的根目录）、标注工作目录、
+数据库里的审核和标记记录都不重名（重名会把别人已有的改动配到新数据上）；磁盘够。
 
 接进服务（另外做，要重启）：run.sh 里加 export EMQC_ANNOTATE_EXTRA_ROOTS=$T/var/annotation/<批次>，再
 systemctl --user restart emqc-8792。
@@ -44,6 +46,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 BATCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")      # 原始块只能写目录名：不许路径、..、末尾斜杠
 REVIEW_TABLES = ("annot_marks", "annot_slice_reviews", "annot_review_events")
 
 
@@ -90,13 +93,17 @@ def _git_commit() -> str | None:
         return None
 
 
-def _existing_block_names(instance: Path) -> set[str]:
-    """实例里所有导入目录（var/annotation 下任意层）和 SAM 目录里的数据块名字。"""
-    names = set()
+def _existing_block_names(instance: Path, extra_roots: list[Path]) -> set[str]:
+    """平台能看到的所有数据块名字：var/annotation 和 var/sam_blocks 下的每一项（是符号链接就先解析，和平台对根目录的处理一样），
+    再加上实例配置里写的根目录（--root）。找法用平台自己的 find_blocks。"""
+    sys.path.insert(0, str(ROOT))
+    from emqc.annotate.store import find_blocks
+
+    roots = [Path(r).resolve() for r in extra_roots]
     for base in (instance / "var" / "annotation", instance / "var" / "sam_blocks"):
         if base.is_dir():
-            names |= {p.parent.name for p in base.rglob("em.npy") if len(p.relative_to(base).parts) <= 5}
-    return names
+            roots += [c.resolve() for c in base.iterdir() if c.is_dir()]
+    return {p.name for r in roots for p in find_blocks(r)}
 
 
 def _db_block_ids(db: Path) -> set[str]:
@@ -125,8 +132,9 @@ def _splits(delivery: Path) -> dict[str, dict]:
             name = members.parent.name
         with open(members, newline="") as fh:
             for r in csv.DictReader(fh):
-                out.setdefault(r["block_id"], {})[name] = {"dataset_id": members.parent.name, "split": r.get("split"),
-                                                          "group": r.get("group")}
+                # 按数据集 id 记（同名的数据集可能重建过好几次，按名字记会互相覆盖）
+                out.setdefault(r["block_id"], {})[members.parent.name] = {"name": name, "split": r.get("split"),
+                                                                          "group": r.get("group")}
     return out
 
 
@@ -149,6 +157,13 @@ def plan(args) -> dict:
         raise Refuse(f"标注工作目录 {workdir} 不存在（用来检查重名，必须给对）")
     if len(set(args.parents)) != len(args.parents):
         raise Refuse("原始块重复了")
+    for name in args.parents:
+        if not NAME_RE.match(name) or Path(name).name != name:
+            raise Refuse(f"原始块要写目录名（如 h01_b0004），不能写路径：{name!r}")
+    # 导入目录里的链接是 ../../../datasets/...：var/annotation 和 var/datasets 必须真的是同一个 var 下的兄弟目录
+    va, vd = (T / "var" / "annotation"), (T / "var" / "datasets")
+    if (va.exists() and va.resolve().parent != (T / "var").resolve()) or (vd.exists() and vd.resolve().parent != (T / "var").resolve()):
+        raise Refuse("var/annotation 或 var/datasets 是指到别处的符号链接，导入目录里的相对链接会断，先确认目录结构")
     tiles, nbytes = [], 0
     for name in args.parents:
         pdir = parents_dir / name
@@ -161,13 +176,20 @@ def plan(args) -> dict:
             raise Refuse(f"{name}: 类型应为 em uint8、seg uint64，实际 {ed} / {sd}")
         if es[0] % S or es[1] % S:
             raise Refuse(f"{name}: {es[0]}×{es[1]} 不是 {S} 的整数倍")
+        try:
+            o = json.loads((pdir / "meta.json").read_text()).get("geometry", {}).get("origin")
+            ok = isinstance(o, dict) and all(isinstance(o.get(k), int) for k in ("x", "y", "z"))
+        except (OSError, ValueError, AttributeError):
+            ok = False
+        if not ok:
+            raise Refuse(f"{name}: meta.json 里没有整数的 geometry.origin {{x, y, z}}（Neuroglancer 定位要用）")
         for y0 in range(0, es[0], S):
             for x0 in range(0, es[1], S):
                 tiles.append({"name": f"{name}_y{y0:04d}_x{x0:04d}", "parent": name, "pdir": pdir, "y0": y0, "x0": x0,
                               "index": (y0 // S) * (es[1] // S) + x0 // S, "z": es[2], "pw": es[1]})
                 nbytes += S * S * es[2] * (1 + 8)
     names = [t["name"] for t in tiles]
-    clash = sorted(set(names) & _existing_block_names(T))
+    clash = sorted(set(names) & _existing_block_names(T, [Path(r) for r in (args.root or [])]))
     if clash:
         raise Refuse(f"这些名字已经有同名数据块了：{', '.join(clash)}")
     clash = sorted(n for n in names if (workdir / n).exists())
@@ -198,7 +220,7 @@ def _tile_meta(p: dict, t: dict, pmeta: dict, fp: dict, batch: str, commit: str 
         "dataset": ds,
         "geometry": {"origin": g.get("origin"), "size": {"rows": S, "cols": S, "z": Z}, "voxel_size_nm": vox,
                      "physical_size_um": phys, "offset_in_parent": {"y0": t["y0"], "x0": t["x0"]}},
-        "arrays": pmeta.get("arrays"),
+        "arrays": _tile_arrays(pmeta.get("arrays"), S, Z),
         "provenance": pmeta.get("provenance"),
         "parent_block": pmeta.get("block_id") or t["parent"],
         "parent_uid": fp.get("uid"),
@@ -215,9 +237,26 @@ def _tile_meta(p: dict, t: dict, pmeta: dict, fp: dict, batch: str, commit: str 
             "geometry_note": ("Origin is the source parent origin, not the tile corner. Neuroglancer adds offset_in_parent exactly once: "
                               "volume X = origin.x + y0 + screen_x; volume Y = origin.y + x0 + screen_y; volume Z = origin.z + z. "
                               f"Physical size recalculated for {S}x{S}x{Z}; parent QC not copied."),
+            "parent_arrays": pmeta.get("arrays"),
             "cut_by": "scripts/cut_tiles.py", "platform_commit": commit, "cut_at": now,
         },
     }
+
+
+def _tile_arrays(parent: dict | None, S: int, Z: int) -> dict:
+    """meta.arrays 写小块自己的事实：保留文件名、类型、含义这类描述，形状和存储顺序按小块改；原始块的 bytes / sha256 不抄
+    （小块文件的 sha256 在清单里）。原始块的 arrays 原样留在 workspace_import.parent_arrays。"""
+    out = {}
+    for key, info in (parent or {"em": {"file": "em.npy", "dtype": "uint8"}, "seg": {"file": "seg.npy", "dtype": "uint64"}}).items():
+        info = dict(info) if isinstance(info, dict) else {}
+        for drop in ("bytes", "sha256", "byte_order_sha256"):
+            info.pop(drop, None)
+        if "shape" in info:
+            info["shape"] = [S, S, Z]
+        if "fortran_order" in info:
+            info["fortran_order"] = False
+        out[key] = info
+    return out
 
 
 def _self_check(tile_dir: Path, pem: np.ndarray, t: dict, S: int) -> None:
@@ -275,18 +314,25 @@ def cut(p: dict, batch: str) -> dict:
         parents.setdefault(t["parent"], {"parent_block": meta["parent_block"], "uid": meta["parent_uid"],
                                          "splits": meta["parent_splits"], "source": str(pdir), "tiles": []})["tiles"].append(t["name"])
         print(f"  {t['name']}  ✓", flush=True)
-    # 原件设只读，然后两次改名到位：先原件，再导入目录（导入目录一出现，链接就解析得通）
+    # 先在暂存区里用平台自己的读法核对每一块（这时还什么都没发布）
+    for t in p["tiles"]:
+        _self_check(stage / "tiles" / t["name"], np.load(t["pdir"] / "em.npy", mmap_mode="r"), t, S)
+    # 原件设只读，改名到位（var/datasets/<批次>：平台不读这里，出现了也不会被服务）
     for f in (stage / "tiles").rglob("*"):
         if f.is_file():
             f.chmod(0o444)
     for d in sorted((x for x in stage.rglob("*") if x.is_dir()), key=lambda x: -len(x.parts)):
         d.chmod(0o555)
+    if p["snap"].exists() or p["imp"].exists():
+        raise RuntimeError("切的过程中目标目录被别人建了：停下，什么都没发布")
     os.rename(stage, p["snap"])
     p["snap"].chmod(0o555)
-    os.rename(stage_imp, p["imp"])
+    # 导入目录的链接（和最终位置同样深，现在已经能解析）必须指到刚发布的原件，确认后才改名到 var/annotation
     for t in p["tiles"]:
-        pem = np.load(t["pdir"] / "em.npy", mmap_mode="r")
-        _self_check(p["imp"] / t["name"], pem, t, S)
+        for fname in ("em.npy", "seg.npy"):
+            if not os.path.samefile(stage_imp / t["name"] / fname, p["snap"] / "tiles" / t["name"] / fname):
+                raise RuntimeError(f"{t['name']}/{fname} 的链接没有指到原件")
+    os.rename(stage_imp, p["imp"])
     manifest = {"batch": batch, "created_at": now, "tool": "scripts/cut_tiles.py", "platform_commit": commit, "tile_size": S,
                 "order": "C", "naming": "<parent>_yYYYY_xXXXX = parent[YYYY:YYYY+S, XXXX:XXXX+S, :]",
                 "snapshot": f"var/datasets/{batch}", "import_root": f"var/annotation/{batch}",
@@ -307,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--batch", required=True, help="新批次名 = 导入目录名，定了以后不要改")
     ap.add_argument("--workdir", required=True, help="实例的 EMQC_ANNOTATE_WORKDIR，用来检查重名")
     ap.add_argument("--db", required=True, help="实例的 SQLite 数据库，用来检查重名（只读）")
+    ap.add_argument("--root", action="append", help="实例配置的数据块根目录（EMQC_ANNOTATE_ROOT / EXTRA_ROOTS / SAM 目录），可重复；用来查重名")
     ap.add_argument("--size", type=int, default=512)
     ap.add_argument("--dry-run", action="store_true", help="只检查，什么都不写")
     a = ap.parse_args(argv)

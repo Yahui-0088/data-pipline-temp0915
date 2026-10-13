@@ -18,8 +18,11 @@ window.EMQCBlockPicker = (() => {
     }
     const batchOf = new Map(blocks.map(b => [b.block_id, b.batch_id]));
     const last = new Map();                       // 每个批次最后看的块：切回这一批时回到它
-    batchSel.innerHTML = [...byBatch].map(([bt, list]) =>
-      `<option value="${esc(bt)}">${esc(bt || "（目录不明）")}（${list.length} 块）</option>`).join("");
+    // 一块都读不出来的批次选了也打不开：灰掉，免得选了之后两个下拉框和正在看的块对不上
+    batchSel.innerHTML = [...byBatch].map(([bt, list]) => {
+      const dead = list.every(b => b.error);
+      return `<option value="${esc(bt)}"${dead ? " disabled" : ""}>${esc(bt || "（目录不明）")}（${list.length} 块${dead ? " · 无法读取" : ""}）</option>`;
+    }).join("");
 
     function fill(batch) {
       const list = byBatch.get(batch) || [], html = [];
@@ -53,7 +56,8 @@ window.EMQCBlockPicker = (() => {
       if (want) { blockSel.value = want; last.set(bt, want); onPick(want); }
     });
     blockSel.addEventListener("change", () => { last.set(batchSel.value, blockSel.value); onPick(blockSel.value); });
-    if (blocks.length) { const first = blocks[0].batch_id; batchSel.value = first; fill(first); }
+    const first = blocks.find(b => !b.error)?.batch_id ?? blocks[0]?.batch_id;
+    if (first !== undefined) { batchSel.value = first; fill(first); }
     return { show, has: id => batchOf.has(id), batchOf: id => batchOf.get(id) };
   }
   return { create, parts };

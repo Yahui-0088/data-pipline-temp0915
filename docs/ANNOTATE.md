@@ -16,9 +16,11 @@
 **新增一批数据：`scripts/cut_tiles.py`。** 在服务器上从交付区的原始块（1024²×100）切出 512² 的小块，放进一个新的导入目录
 （= 新批次）。切法、存储顺序、`meta.json` 约定和现有批次 `h01-demo-v2` 完全一样（小块 `_yYYYY_xXXXX` = 原始块
 `[YYYY:+512, XXXX:+512, :]`，C 顺序；`geometry.origin` 用原始块原点、偏移记在 `offset_in_parent`），并在 meta 里记下来源原始块的
-`uid` 和它在各训练数据集里的划分（`parent_splits`：同一原始块的小块必须进同一个划分）。脚本只新建、不改不删：
-批次名、目标目录、小块名和所有导入目录 / 标注工作目录 / 数据库里已有的块重名就拒绝；先写进 `var/datasets/.incoming-*`，
-每块和原始块逐字节核对、用平台自己的读法核对之后才一次改名到位。先加 `--dry-run` 看计划。接进服务：`run.sh` 里加
+`uid` 和它在各训练数据集里的划分（`parent_splits`，按数据集 id 记：同一原始块的小块必须进同一个划分）。脚本只新建、不改不删：
+原始块只能写目录名；批次名、目标目录、小块名和平台能看到的所有数据块（含符号链接的导入目录、`--root` 给的根目录）、
+标注工作目录、数据库里已有的块重名就拒绝。先写进 `var/datasets/.incoming-*`，每块和原始块逐字节核对、用平台自己的读法核对，
+再把原件改名到 `var/datasets/<批次>`、确认导入目录的链接都指到原件，最后才把导入目录改名到 `var/annotation/<批次>`——
+中途失败不会有东西出现在 `var/annotation` 里。先加 `--dry-run` 看计划。接进服务：`run.sh` 里加
 `export EMQC_ANNOTATE_EXTRA_ROOTS=$T/var/annotation/<批次>`，再 `systemctl --user restart emqc-8792`。
 
 **数据目录是只读的。** 页面写出的一切——`seg_edit.npy` 工作副本、`edits/` 逐次记录、`edits.jsonl` 摘要、`created_labels.json` 新建标签——都放在
