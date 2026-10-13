@@ -112,7 +112,12 @@
     document.querySelectorAll("#rv-blocks .rv-block").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.block === id)));
     $("detail").hidden = false;
     $("detail-title").textContent = id;
-    if (changed) $("rows").innerHTML = '<tr><td colspan="9" class="muted">加载中…</td></tr>';
+    if (changed) {
+      $("rows").innerHTML = '<tr><td colspan="9" class="muted">加载中…</td></tr>';
+      // 换块时立刻清掉范围：「到 z」留空，数据回来再补默认值——以前是数据回来时整个重设，用户在加载期间填的范围会被
+      // 悄悄改成 0–最后一片，一点确定就把整块都标记完成了
+      $("from").value = 0; $("to").value = "";
+    }
     let data;
     try { data = await call(`${API}/blocks/${encodeURIComponent(id)}/review`); }
     catch (e) {
@@ -123,7 +128,7 @@
     const first = !S.data || S.data.block_id !== id;
     S.data = data;
     $("from").max = $("to").max = data.nz - 1;
-    if (first) { $("from").value = 0; $("to").value = data.nz - 1; }   // 只在换块时给默认范围，别把用户填的值改掉
+    if (first && $("to").value === "") $("to").value = data.nz - 1;   // 只补还空着的「到 z」，用户已经填的不动
     renderDetail();
   }
   function renderDetail() {
@@ -163,6 +168,7 @@
   $("range-form").addEventListener("submit", async ev => {
     ev.preventDefault();
     if (S.busy || !S.block) return;
+    if (!S.data || S.data.block_id !== S.block) { const out = $("range-result"); out.hidden = false; out.textContent = "这个数据块还在加载，请稍候再点"; return; }
     const lo = +$("from").value, hi = +$("to").value;
     const what = rangeAction === "complete" ? "标记完成" : "撤回完成";
     if (!confirm(`把 ${S.block} 的 z ${Math.min(lo, hi)}–${Math.max(lo, hi)} ${what}？`)) return;
