@@ -7,6 +7,20 @@
 页面：独立的「切片标注」工作区（侧栏顶部与「数据清洗」切换）——`/annotate` 标注工作台（全宽，按 `?` 看快捷键）、`/annotate/compare` 前后对比与溯源、`/annotate/guide` 使用说明。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
 该目录下每个含 `em.npy` 的子目录是一个数据块，H01 交付的 `blocks/h01/<block>/` 布局直接可用。
 
+**选数据块：先选批次，再选块。** 工作台和前后对比页左上角是两个选择框：「批次」= 数据块所在的导入目录（和审核进度页、入库
+同一个名字，由 `GET /blocks`、`/comparison-blocks` 每项的 `batch_id` 给出，列表按（批次, 块）排序）；「数据块」只列这一批，
+同一个原始块切出来的 `<原始块>_yYYYY_xXXXX` 归在一组（组名 = 原始块），选项只写 `yYYYY_xXXXX`，完整名字在悬停提示和
+下面一行里。跳到别的块（`?block=` 链接、对比页「下一张待审」、标记链接）都会先切到那个块所在的批次。代码在
+`emqc/api/static/block_picker.js`，两页共用。
+
+**新增一批数据：`scripts/cut_tiles.py`。** 在服务器上从交付区的原始块（1024²×100）切出 512² 的小块，放进一个新的导入目录
+（= 新批次）。切法、存储顺序、`meta.json` 约定和现有批次 `h01-demo-v2` 完全一样（小块 `_yYYYY_xXXXX` = 原始块
+`[YYYY:+512, XXXX:+512, :]`，C 顺序；`geometry.origin` 用原始块原点、偏移记在 `offset_in_parent`），并在 meta 里记下来源原始块的
+`uid` 和它在各训练数据集里的划分（`parent_splits`：同一原始块的小块必须进同一个划分）。脚本只新建、不改不删：
+批次名、目标目录、小块名和所有导入目录 / 标注工作目录 / 数据库里已有的块重名就拒绝；先写进 `var/datasets/.incoming-*`，
+每块和原始块逐字节核对、用平台自己的读法核对之后才一次改名到位。先加 `--dry-run` 看计划。接进服务：`run.sh` 里加
+`export EMQC_ANNOTATE_EXTRA_ROOTS=$T/var/annotation/<批次>`，再 `systemctl --user restart emqc-8792`。
+
 **数据目录是只读的。** 页面写出的一切——`seg_edit.npy` 工作副本、`edits/` 逐次记录、`edits.jsonl` 摘要、`created_labels.json` 新建标签——都放在
 `EMQC_ANNOTATE_WORKDIR`（默认平台的 `var/annotate/<block_id>/`），交付目录里一个字节都不会多。早期版本曾把这些写进数据目录，
 打开数据块时会自动迁移到工作目录，已有的改动不会丢。

@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -411,33 +410,24 @@ def block_rows(s: Session, b, user: User | None) -> dict:
 
 
 def _root_names() -> dict[str, str]:
-    """解析后的根目录 → 配置里写的目录名。根目录本身是符号链接时，批次按配置里看到的名字（链接名）叫，
-    而不是链接指向的目录名——改链接名就能改批次名，和管理员看到的一致。"""
-    raw = [settings.annotate_root, *(x.strip() for x in settings.annotate_extra_roots.split(";") if x.strip()), settings.sam_blocks_dir]
-    out = {}
-    for r in raw:
-        if r:
-            r = Path(r)
-            name = Path(os.path.normpath(r)).name           # 「x/..」这类写法按规整后的名字；「.」退回解析后的目录名
-            out[str(r.resolve())] = name if name not in ("", ".", "..") else r.resolve().name
-    return out
+    from .annotate import root_names
+
+    return root_names()
 
 
 def _batch_id(path: str, names: dict[str, str]) -> str:
-    parent = Path(path).parent
-    return names.get(str(parent)) or rv.batch_of(path)
+    from .annotate import batch_id_for
+
+    return batch_id_for(path, names)
 
 
 def _blocks(s: Session) -> list[dict]:
     """可审核的数据块（带分割标签的；打不开的也列上，在所属批次里报错），每个带上所属批次（导入目录名）。
     按（批次, 块）排好序：进度页、下一张待审都按这个顺序走。"""
-    from .annotate import get_store
+    from .annotate import get_store, with_batch
 
     st = get_store(read_only=True)
-    names = _root_names()
-    out = [{**x, "batch_id": _batch_id(x["path"], names) if x.get("path") else ""}
-           for x in st.refresh() if x.get("error") or x.get("has_seg")]
-    return sorted(out, key=lambda x: (x["batch_id"], x["block_id"]))
+    return with_batch([x for x in st.refresh() if x.get("error") or x.get("has_seg")])
 
 
 def _duplicates() -> list[dict]:

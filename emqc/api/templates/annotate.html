@@ -12,7 +12,8 @@
 {% block content %}
 <div class="vast full" id="vast">
   <aside class="vast-panel vast-tools">
-    <div class="field" style="margin-top:0"><label>数据块</label><select id="an-block" class="text mono"></select></div>
+    <div class="field" style="margin-top:0"><label for="an-batch">批次</label><select id="an-batch" class="text mono" title="数据块所在的导入目录，和审核进度页的批次一致"></select></div>
+    <div class="field"><label for="an-block">数据块</label><select id="an-block" class="text mono"></select></div>
     <div class="vast-meta mono muted" id="an-meta">—</div>
 
     <div class="vast-sec">工具</div>
@@ -244,6 +245,7 @@
     });
   })();
 </script>
+<script src="/static/block_picker.js?v={{ static_v('block_picker.js') }}" defer></script>
 <script src="/static/annotate_seed.js?v={{ static_v('annotate_seed.js') }}" defer></script>
 <script src="/static/annotate.js?v={{ static_v('annotate.js') }}" defer></script>
 {% endblock %}

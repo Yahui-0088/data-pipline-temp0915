@@ -314,7 +314,7 @@
       ngCentre(x, y);
     });
   });
-  $("block").addEventListener("change", () => load(0)); $("z").addEventListener("change", () => load($("z").value));
+  $("z").addEventListener("change", () => load($("z").value));     // 换块由批次 / 数据块选择器回调 load(0)
   $("z").addEventListener("wheel", ev => ev.preventDefault(), {passive: false});  // No native number-input wheel increments.
   $("prev").addEventListener("click", () => load(state.z-1)); $("next").addEventListener("click", () => load(state.z+1));
   $("refresh").addEventListener("click", () => state.blocks.length ? load(state.z, true) : init());
@@ -627,7 +627,7 @@
   }
   function hideMarkForm() { $("mark-form").hidden = true; document.querySelectorAll(".cmp-pin.draft").forEach(e => e.remove()); }
   async function focusMark(m) {
-    if (m.block_id !== state.block) { if (!state.blocks.some(b => b.block_id === m.block_id)) return; $("block").value = m.block_id; await load(m.z, true); }
+    if (m.block_id !== state.block) { if (!state.picker?.show(m.block_id)) return; await load(m.z, true); }
     else if (m.z !== state.z) await load(m.z);
     state.markSel = m.id; renderMarks(); renderPins();
     focusRegion({cx: m.x, cy: m.y, x0: m.x - 6, x1: m.x + 7, y0: m.y - 6, y1: m.y + 7});
@@ -782,11 +782,11 @@
       const r = await json(`/api/v1/annotate/review/next?${new URLSearchParams({block: state.block, z: state.z})}`);
       if (nav !== RV.nav) return;
       if (!r.next) { $("status").textContent = r.why ? `不能审核：${r.why}` : "没有待审的切片了。审核进度见左侧「审核进度」。"; return; }
-      if (r.next.block_id !== state.block && ![...$("block").options].some(o => o.value === r.next.block_id)) {
+      if (r.next.block_id !== state.block && !state.picker?.has(r.next.block_id)) {
         $("status").textContent = `下一张待审在新加入的数据块 ${r.next.block_id} 里，这个页面的数据块列表里还没有它：请刷新页面后再按「下一张待审」`;
         return;
       }
-      if (r.next.block_id !== state.block) $("block").value = r.next.block_id;
+      if (r.next.block_id !== state.block) state.picker.show(r.next.block_id);   // 跨批时批次下拉也跟着切过去
       RV.nav = 0;
       await load(r.next.z, r.next.block_id !== state.block);
       // 先审完当前批次才会换批：换了就明说，免得以为还在原来那一批（只在确实切过去了的时候说）
@@ -846,15 +846,15 @@
 
   async function init() {
     $("page").setAttribute("aria-busy", "true");
-    for (const id of ["block", "z", "prev", "next", "refresh"]) $(id).disabled = true;
+    for (const id of ["batch", "block", "z", "prev", "next", "refresh"]) $(id).disabled = true;
     $("status").textContent = "正在加载数据块…";
     try {
       const r = await json("/api/v1/annotate/comparison-blocks"); state.blocks = r.blocks.filter(b => !b.error);
-      $("block").replaceChildren(...state.blocks.map(b => { const o = document.createElement("option"); o.value = b.block_id; o.textContent = b.block_id; return o; }));
-      if (!state.blocks.length) { $("status").textContent = "没有可读取的数据块。请检查数据配置后点击刷新重试。"; return; }
-      $("block").disabled = $("z").disabled = false;
+      if (!state.blocks.length) { $("block").replaceChildren(); $("batch").replaceChildren(); $("status").textContent = "没有可读取的数据块。请检查数据配置后点击刷新重试。"; return; }
+      if (!state.picker) state.picker = window.EMQCBlockPicker.create({ batchSel: $("batch"), blockSel: $("block"), blocks: state.blocks, onPick: () => load(0) });
+      $("batch").disabled = $("block").disabled = $("z").disabled = false;
       const p = new URLSearchParams(location.search);
-      if (state.blocks.some(b => b.block_id === p.get("block"))) $("block").value = p.get("block");
+      if (state.blocks.some(b => b.block_id === p.get("block"))) state.picker.show(p.get("block"));
       await load(p.get("z") || 0, true);
       if (p.get("mark")) await openMarkLink(+p.get("mark"));       // 同事发来的链接：跳到那一片、定位到那个点
     } catch (e) { $("status").textContent = `加载失败：${e.message}。可点击刷新重试。`; }

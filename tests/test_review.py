@@ -858,3 +858,12 @@ def test_a_symlinked_import_directory_is_named_after_the_link(batches, tmp_path,
     annotate.reset_store()
     sm = rita.get("/api/v1/annotate/review/summary").json()
     assert ("train-2026-10", ["qx"]) in [(g["batch_id"], g["blocks"]) for g in sm["batches"]]
+
+
+def test_block_lists_carry_the_batch_and_are_ordered_by_batch_then_block(batches):
+    """工作台和对比页的块列表带上批次（和审核进度页同名），按（批次, 块）排：页面据此先选批次、再选数据块。"""
+    as_, root = batches
+    anna = as_("anna")
+    for url in ("/api/v1/annotate/blocks", "/api/v1/annotate/comparison-blocks"):
+        rows = anna.get(url).json()["blocks"]
+        assert [(r["batch_id"], r["block_id"]) for r in rows] == [("b1", "qa"), ("b1", "qb"), ("b1", "qd"), ("b2", "qc")], url

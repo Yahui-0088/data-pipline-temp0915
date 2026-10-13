@@ -9,7 +9,8 @@
 .cmp-controls output { position: absolute; right: 0; top: 0; font: 12px var(--mono); color: var(--muted); }
 .cmp-controls input[type=range] { width: 180px; height: 32px; margin: 0; }
 .cmp-block { flex: 1; min-width: 180px; max-width: 430px; }
-.cmp-block select { width: 100%; }
+.cmp-block select, .cmp-batch select { width: 100%; }
+.cmp-batch { min-width: 150px; max-width: 240px; }
 .cmp-z, .cmp-download, .cmp-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .cmp-download button { white-space: nowrap; }
 .cmp-download select { width: auto; }

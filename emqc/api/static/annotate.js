@@ -1230,7 +1230,8 @@
 
   // ------------------------------------------------------------------ blocks
   async function selectBlock(id) {
-    if (S.mergeBusy) return;
+    if (S.mergeBusy) { S.picker?.show(S.block); return; }      // 合并还在进行：下拉框退回正在用的块，别显示一个没加载的块
+    S.picker?.show(id);
     if (S.ngMode) setTool("pick");
     clearSAM(); seed.clear(); clearSelection();
     S.bfLast = null; clearBF();
@@ -1246,7 +1247,8 @@
     // 实际有 100 片，所以把总数一并写出来。
     $("an-nz").textContent = `/ ${nz - 1}　共 ${nz} 片`;
     const g = S.info.voxel_size_nm ? ` · ${S.info.voxel_size_nm.join("×")} nm` : "";
-    $("an-meta").textContent = `${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;
+    // 下拉框里只写 yYYYY_xXXXX，完整名字写在这里
+    $("an-meta").textContent = `${id} · ${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;
     history.replaceState(null, "", `/annotate?block=${encodeURIComponent(id)}`);
     setCur("0"); fit(); await goZ(Math.min(S.z, nz - 1));
   }
@@ -1258,10 +1260,14 @@
     }).catch(() => { $("an-sam-status").textContent = "模型状态暂不可用"; });
     const r = await getJSON(`${API}/blocks`);
     const sel = $("an-block");
-    if (!r.blocks.length) { sel.innerHTML = `<option>没有数据块</option>`; $("an-status").textContent = r.root ? `在 ${r.root} 下没有找到 em.npy` : "未配置 EMQC_ANNOTATE_ROOT"; return; }
-    sel.innerHTML = r.blocks.map(b => `<option value="${b.block_id}" ${b.error ? "disabled" : ""}>${b.block_id}${b.error ? " · 无法读取" : b.has_seg ? "" : " · 无分割"}${b.n_edits ? ` · ${b.n_edits} 改动` : ""}</option>`).join("");
-    const pre = window.AN_PRESELECT && r.blocks.some(b => b.block_id === window.AN_PRESELECT) ? window.AN_PRESELECT : r.blocks.find(b => !b.error)?.block_id;
-    sel.value = pre; sel.addEventListener("change", () => selectBlock(sel.value));
+    if (!r.blocks.length) { sel.innerHTML = `<option>没有数据块</option>`; $("an-batch").innerHTML = ""; $("an-status").textContent = r.root ? `在 ${r.root} 下没有找到 em.npy` : "未配置 EMQC_ANNOTATE_ROOT"; return; }
+    S.picker = window.EMQCBlockPicker.create({
+      batchSel: $("an-batch"), blockSel: sel, blocks: r.blocks,
+      note: b => b.error ? " · 无法读取" : `${b.has_seg ? "" : " · 无分割"}${b.n_edits ? ` · ${b.n_edits} 改动` : ""}`,
+      onPick: id => selectBlock(id),
+    });
+    const pre = window.AN_PRESELECT && r.blocks.some(b => b.block_id === window.AN_PRESELECT && !b.error) ? window.AN_PRESELECT : r.blocks.find(b => !b.error)?.block_id;
+    if (!pre) { $("an-status").textContent = "所有数据块都读不出来，请联系管理员"; return; }
     await selectBlock(pre);
     heartbeat();
     if (!ME && !S.who) ensureWho();     // 没开登录的实例：一进来就问名字；"先看看"可以跳过，改标签时会再问

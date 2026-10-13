@@ -1,6 +1,7 @@
 """Annotation API behind the VAST-style slice viewer: per-slice images, label index maps, pick / fill / paint / undo."""
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -34,6 +35,33 @@ def _roots() -> list:
     if settings.sam_blocks_dir:
         extra.append(Path(settings.sam_blocks_dir).resolve())
     return extra
+
+
+def root_names() -> dict[str, str]:
+    """解析后的根目录 → 配置里写的目录名。根目录本身是符号链接时，批次按配置里看到的名字（链接名）叫，
+    而不是链接指向的目录名——改链接名就能改批次名，和管理员看到的一致。"""
+    raw = [settings.annotate_root, *(x.strip() for x in settings.annotate_extra_roots.split(";") if x.strip()), settings.sam_blocks_dir]
+    out = {}
+    for r in raw:
+        if r:
+            r = Path(r)
+            name = Path(os.path.normpath(r)).name           # 「x/..」这类写法按规整后的名字；「.」退回解析后的目录名
+            out[str(r.resolve())] = name if name not in ("", ".", "..") else r.resolve().name
+    return out
+
+
+def batch_id_for(path: str, names: dict[str, str]) -> str:
+    """数据块属于哪个批次（导入目录）：直接放在某个根目录下的，用配置里那个根目录的名字；更深的用上一级目录名。"""
+    from emqc.annotate.review import batch_of
+
+    return names.get(str(Path(path).parent)) or batch_of(path)
+
+
+def with_batch(rows: list[dict]) -> list[dict]:
+    """给块列表的每一项加上 batch_id，并按（批次, 块）排序——工作台、对比页、审核进度页、下一张待审都是这个顺序。"""
+    names = root_names()
+    out = [{**x, "batch_id": batch_id_for(x["path"], names) if x.get("path") else ""} for x in rows]
+    return sorted(out, key=lambda x: (x["batch_id"], x["block_id"]))
 
 
 def get_store(*, read_only: bool = False) -> AnnotateStore:
@@ -130,13 +158,13 @@ def _fresh(b, z, body: EditIn, actor: Actor | None) -> None:
 @router.get("/blocks")
 def list_blocks():
     st = get_store()
-    return {"root": str(st.root) if st.root else None, "blocks": st.refresh()}
+    return {"root": str(st.root) if st.root else None, "blocks": with_batch(st.refresh())}
 
 
 @router.get("/comparison-blocks")
 def comparison_blocks():
     st = get_store(read_only=True)
-    return {"root": str(st.root) if st.root else None, "blocks": st.refresh()}
+    return {"root": str(st.root) if st.root else None, "blocks": with_batch(st.refresh())}
 
 
 class SAMPredictIn(BaseModel):
