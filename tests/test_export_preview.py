@@ -57,3 +57,19 @@ def test_overview_defaults_to_the_latest_run(registered, qc_run):
     html = c.get("/?scope=all").text
     assert "全部数据集汇总" in html and "总留存率" in html and "只看本次运行" in html
     assert "运行历史" in html and f'href="/runs/{rid}"' in html and "耗时" in html
+
+
+def test_infer_demo_model_shape_and_range():
+    import importlib.util
+    from pathlib import Path
+
+    import numpy as np
+
+    spec = importlib.util.spec_from_file_location("infer_demo", Path(__file__).resolve().parents[1] / "scripts/infer_demo.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    arr = np.full((3, 64, 64), 180, np.uint8)
+    arr[:, 30:33, :] = 40                                  # one dark membrane line
+    pred = mod.model(arr)
+    assert pred.shape == arr.shape and pred.dtype == np.uint8
+    assert pred[:, 31, 10:54].mean() > 3 * pred[:, 10, 10:54].mean()
