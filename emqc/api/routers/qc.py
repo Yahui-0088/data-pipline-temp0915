@@ -281,6 +281,61 @@ def get_run_workflow(run_id: int, after_id: int = 0, limit: int = 2000, s: Sessi
             "trace": trace, "last_id": trace[-1]["id"] if trace else after_id}
 
 
+_SIM_CACHE: dict = {}
+
+
+def _similar_space(s: Session, run_ids: tuple[int, ...]):
+    """Feature space over every readable slice of the given runs; cached until those runs gain / lose slices."""
+    from emqc.qc.similar import build_space
+
+    n = s.scalar(select(func.count()).select_from(QCSlice).where(QCSlice.run_id.in_(run_ids))) or 0
+    key = (run_ids, n)
+    if key in _SIM_CACHE:
+        return _SIM_CACHE[key]
+    rows = s.execute(select(QCSlice.run_id, QCSlice.dataset_id, QCSlice.block_id, QCSlice.z, QCSlice.stats_json, QCSlice.scores_json, QCSlice.failure_types,
+                            QCSlice.max_severity, QCSlice.passed, QCSlice.preview_path, QCSlice.quality_score)
+                     .where(QCSlice.run_id.in_(run_ids), QCSlice.status == "ok").order_by(QCSlice.dataset_id, QCSlice.z, QCSlice.block_id)).all()
+    space = build_space([(r.stats_json or {}, r.scores_json or {}) for r in rows], keys=[(r.run_id, r.block_id, r.z) for r in rows], meta=rows) if rows else None
+    _SIM_CACHE.clear()  # keep only the newest pool
+    _SIM_CACHE[key] = space
+    return space
+
+
+@router.get("/similar")
+def similar_slices(run_id: int, block_id: str, z: int, k: int = 12, s: Session = Depends(get_session)):
+    """Slices that look most like this one, by the numbers QC already computed (statistics + check scores; no model).
+
+    Searched over the latest run of every dataset plus this run. Other tiles of the same section are left out
+    (they are trivially similar). Each hit carries its problems, severity, a thumbnail and a distance (smaller = closer)."""
+    from emqc.api.routers.dashboard import FAILURE_ZH
+
+    from ..serializers import preview_url
+
+    _run(s, run_id)
+    latest = {r for (r,) in s.execute(select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None))).all()}
+    space = _similar_space(s, tuple(sorted(latest | {run_id})))
+    if space is None:
+        return {"query": None, "hits": []}
+    try:
+        i = space.keys.index((run_id, block_id, z))
+    except ValueError:
+        raise HTTPException(404, f"no QC record for {block_id} z{z} in run {run_id}")
+    q = space.meta[i]
+    hits = []
+    for j, dist in space.nearest(i, k=max(1, min(k, 50)), exclude=lambda j: space.meta[j].dataset_id == q.dataset_id and space.meta[j].z == q.z):
+        m = space.meta[j]
+        types = list(m.failure_types or [])
+        url = preview_url(m.preview_path) or f"/api/v1/data/{m.dataset_id}/preview/z/{m.z}.png"
+        hits.append({"dataset_id": m.dataset_id, "block_id": m.block_id, "z": m.z, "run_id": m.run_id, "distance": round(dist, 3),
+                     "failure_types": types, "zh": [FAILURE_ZH.get(t, t) for t in types], "severity": m.max_severity, "passed": m.passed,
+                     "quality": None if m.quality_score is None else round(m.quality_score, 3), "url": url,
+                     "href": f"/datasets/{m.dataset_id}/blocks/{m.block_id}?run_id={m.run_id}#z{m.z}"})
+    qtypes = list(q.failure_types or [])
+    same = sum(1 for h in hits if set(h["failure_types"]) & set(qtypes)) if qtypes else None
+    return {"query": {"dataset_id": q.dataset_id, "block_id": q.block_id, "z": q.z, "failure_types": qtypes, "zh": [FAILURE_ZH.get(t, t) for t in qtypes]},
+            "n_pool": len(space.keys), "n_same_problem": same, "features": {"stats": space.stat_names, "scores": space.score_names}, "hits": hits}
+
+
 @router.get("/runs/{run_id}/blocks")
 def get_run_blocks(run_id: int, s: Session = Depends(get_session)):
     _run(s, run_id)

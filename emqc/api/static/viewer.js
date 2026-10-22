@@ -21,6 +21,7 @@
         <div class="vw-stage"><button class="vw-nav vw-prev" aria-label="上一张">‹</button>
           <figure class="vw-fig"><img alt=""><figcaption></figcaption></figure>
           <button class="vw-nav vw-next" aria-label="下一张">›</button></div>
+        <div class="vw-sim" hidden></div>
         <div class="vw-strip"></div>
         <div class="vw-hint muted">← → 翻页 · Esc 关闭</div></div>`;
     document.body.appendChild(el);
@@ -60,11 +61,36 @@
        <b>${esc(x.zh)}</b><span class="pill sv-pill-${esc(x.severity)}">${esc(x.severity)}</span>
        <span class="mono">${esc(x.dataset_id)} · z${x.z}${x.tile ? " · " + esc(x.tile) : ""}</span>
        <span class="muted mono">${esc(x.check)}${x.score == null ? "" : " · 分数 " + x.score}</span>
-       <a href="${esc(x.href)}">打开这一段 →</a>`;
+       <a href="${esc(x.href)}">打开这一段 →</a>
+       <button class="vw-simbtn">🔍 找相似</button>`;
+    el.querySelector(".vw-simbtn").onclick = () => similar(x);
+    const sim = el.querySelector(".vw-sim"); sim.hidden = true; sim.innerHTML = "";
     el.querySelectorAll(".vw-th.on").forEach(b => b.classList.remove("on"));
     const th = el.querySelector(`.vw-th[data-i="${pos}"]`);
     if (th) { th.classList.add("on"); th.scrollIntoView({ block: "nearest", inline: "center" }); }
     [list[pos + 1], list[pos - 1]].forEach(n => { if (n) { const p = new Image(); p.src = n.url; } });  // preload neighbours
+  }
+
+  // 「找相似」：用 QC 算好的数值（统计量 + 各检查分数）在最近一次运行的所有切片里找最近邻
+  async function similar(x) {
+    const box = el.querySelector(".vw-sim");
+    box.hidden = false;
+    box.innerHTML = '<span class="muted">正在找相似的切片…</span>';
+    let d;
+    try {
+      const r = await fetch(`/api/v1/qc/similar?run_id=${x.run_id}&block_id=${encodeURIComponent(x.block_id)}&z=${x.z}&k=12`);
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      d = await r.json();
+    } catch (e) { box.innerHTML = `<span class="muted">找不到：${esc(e.message)}</span>`; return; }
+    if (list[pos] !== x) return;  // user moved on meanwhile
+    const qz = (d.query && d.query.zh) || [];
+    const head = d.n_same_problem == null ? "" :
+      `最像的 ${d.hits.length} 张里，<b>${d.n_same_problem}</b> 张也有「${esc(qz.join("、"))}」中的问题`;
+    box.innerHTML = `<div class="vw-sim-h"><b>和这张最像的切片</b><span class="muted">在 ${d.n_pool} 张切片里，按 QC 算出的数值比较（亮度、对比度、清晰度、黑块形状、各项检查分数），不用图像模型</span>${head ? `<span>${head}</span>` : ""}<button class="vw-sim-x" aria-label="收起">✕</button></div>
+      <div class="vw-sim-row">${d.hits.map(h => `<a class="vw-sim-c ${h.passed ? "ok" : "bad"}" href="${esc(h.href)}" target="_blank" rel="noopener" title="距离 ${h.distance}（越小越像）">
+        <img loading="lazy" src="${esc(h.url)}" alt=""><span class="t">${h.zh.length ? esc(h.zh.slice(0, 2).join("、")) : "正常"}</span>
+        <span class="s mono">${esc(h.dataset_id)} · z${h.z}</span></a>`).join("") || '<span class="muted">没有可比较的切片</span>'}</div>`;
+    box.querySelector(".vw-sim-x").onclick = () => { box.hidden = true; };
   }
 
   function key(e) {

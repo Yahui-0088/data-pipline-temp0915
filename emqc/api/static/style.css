@@ -559,3 +559,13 @@ body.vw-open { overflow: hidden; }
   .vw-stage { grid-template-columns: 30px minmax(0, 1fr) 30px; gap: 4px; }
   .vw-fig figcaption { font-size: 12.5px; }
 }
+.vw-simbtn { font-size: 12.5px; padding: 3px 10px; }
+.vw-sim { border-top: 1px solid var(--border); padding-top: 8px; }
+.vw-sim-h { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 13px; margin-bottom: 8px; }
+.vw-sim-h .muted { font-size: 11.5px; } .vw-sim-x { margin-left: auto; padding: 2px 8px; }
+.vw-sim-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.vw-sim-c { flex: 0 0 auto; width: 92px; display: flex; flex-direction: column; gap: 2px; color: var(--text); font-size: 11.5px; }
+.vw-sim-c:hover { text-decoration: none; } .vw-sim-c img { width: 92px; height: 92px; object-fit: cover; border-radius: 5px; border: 2px solid var(--good); background: #000; }
+.vw-sim-c.bad img { border-color: var(--high); } .vw-sim-c .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-sim-c.ok .t { color: var(--good); } .vw-sim-c .s { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vw-box { overflow-y: auto; }
