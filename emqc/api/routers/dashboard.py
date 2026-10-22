@@ -128,6 +128,26 @@ def _profile_chart(profile: list[dict], blocks: list[dict]) -> dict | None:
             "bands": [{"z_start": a, "z_end": b, "grade": g} for (a, b), g in sorted(bands.items())]}
 
 
+def _viewer_items(rows, limit: int = 1500) -> list[dict]:
+    """(failure_type, z, block_id, severity, check, score, preview_path, dataset_id, run_id) rows -> items for the
+    one-by-one viewer (static/viewer.js). One item per stored crop and problem type, in z order."""
+    from ..serializers import preview_url
+
+    out, seen = [], set()
+    for ft, z, bid, sev, chk, score, pp, ds_id, run_id in rows:
+        url = preview_url(pp)
+        if not url or (url, ft) in seen:
+            continue
+        seen.add((url, ft))
+        tile = bid.split("_", 1)[1] if bid and "_" in bid else None
+        out.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "z": z, "dataset_id": ds_id, "block_id": bid, "tile": tile, "severity": sev,
+                    "check": chk, "score": None if score is None else round(float(score), 3), "url": url, "run_id": run_id,
+                    "href": f"/datasets/{ds_id}/blocks/{bid}?run_id={run_id}#z{z}"})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _gallery(s: Session, run_id: int, dataset_id: str, profile: list[dict], per_type: int = 4, max_types: int = 12) -> dict:
     """Flagged slices (high / critical, with a stored preview) grouped by failure type + one clean reference slice."""
     rows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.preview_path)
@@ -155,7 +175,11 @@ def _gallery(s: Session, run_id: int, dataset_id: str, profile: list[dict], per_
         mid = (worst[0]["z"] + worst[-1]["z"]) / 2
         best = max(clean, key=lambda p: ((p["q"] or 0) >= 0.95, -abs(p["z"] - mid)))
         ref = {"z": best["z"], "url": f"/api/v1/data/{dataset_id}/preview/z/{best['z']}.png"}
-    return {"groups": out, "ref": ref, "n_types": len(groups), "n_sections": sum(g["n"] for g in out)}
+    allrows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
+                               QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
+                        .where(QCFinding.run_id == run_id, QCFinding.severity.in_(["high", "critical"]), QCFinding.z.is_not(None))
+                        .order_by(QCFinding.z, QCFinding.block_id)).all()
+    return {"groups": out, "ref": ref, "n_types": len(groups), "n_sections": sum(g["n"] for g in out), "all": _viewer_items(allrows)}
 
 
 # ----------------------------------------------------------------------------- pages
@@ -189,17 +213,20 @@ def index(request: Request, s: Session = Depends(get_session)):
     n_served = s.scalar(select(func.count()).select_from(ServeLog)) or 0
     from ..serializers import preview_url
 
-    examples, seen, seen_z = [], set(), set()
-    for ft, z, ds_id, pp, sev in s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.dataset_id, QCFinding.preview_path, QCFinding.severity)
-                                          .where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"]), QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None))
-                                          .order_by(QCFinding.severity.desc(), QCFinding.z)).all():
-        if ft in seen or (ds_id, z) in seen_z or len(examples) >= 6:
-            continue  # one card per problem type, and never the same section twice
-        seen.add(ft)
-        seen_z.add((ds_id, z))
-        examples.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "z": z, "dataset_id": ds_id, "url": preview_url(pp), "severity": sev})
+    flagged = _viewer_items(s.execute(
+        select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
+               QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
+        .where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"]), QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None))
+        .order_by(QCFinding.dataset_id, QCFinding.z, QCFinding.block_id)).all())
+    per_type = Counter(x["type"] for x in flagged)
+    examples, used = [], set()
+    for ft, _n in per_type.most_common():  # one card per type, preferring a section no other card shows
+        cands = [x for x in flagged if x["type"] == ft]
+        pick = next((x for x in cands if (x["dataset_id"], x["z"]) not in used), cands[0])
+        used.add((pick["dataset_id"], pick["z"]))
+        examples.append({**pick, "n": _n})
     by_type_zh = [(FAILURE_ZH.get(ft, ft), n) for ft, n in by_type]
-    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type_zh, runs=runs, n_served=n_served, examples=examples, active="datasets")
+    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type_zh, runs=runs, n_served=n_served, examples=examples, flagged=flagged, active="datasets")
 
 
 @router.get("/datasets/{dataset_id}", response_class=HTMLResponse)

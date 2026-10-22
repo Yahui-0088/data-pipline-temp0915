@@ -38,14 +38,16 @@
 {% endif %}
 
 {% if gallery and gallery.groups %}
-<h2>自动抓到的问题切片 <span class="cnt">{{ gallery.n_types }} 类 · 左边第一张是正常切片作对照 · 点图看大图</span></h2>
+<h2>自动抓到的问题切片 <span class="cnt">{{ gallery.n_types }} 类 · {{ gallery.all|length }} 张 · 左边第一张是正常切片作对照 · 点图一张一张往下翻</span>
+  <button class="ex-all" data-view-type="">查看全部 {{ gallery.all|length }} 张 ▶</button></h2>
+<script type="application/json" id="viewer-data">{{ gallery.all|tojson }}</script>
 <div class="viz-gallery">
 {% for g in gallery.groups %}
   <section class="card gal-row">
-    <div class="gal-head"><b>{{ g.zh }}</b><span class="mono muted">{{ g.type }}</span><span class="pill">{{ g.n }} 张</span></div>
+    <div class="gal-head"><b>{{ g.zh }}</b><span class="mono muted">{{ g.type }}</span><span class="pill">{{ g.n }} 张</span>{% if g.shots %}<button class="gal-all" data-view-type="{{ g.type }}">逐张查看 ▶</button>{% endif %}</div>
     <div class="gal-strip">
       {% if gallery.ref %}<figure class="gal-ref"><a href="{{ gallery.ref.url }}" target="_blank"><img loading="lazy" src="{{ gallery.ref.url }}" alt="正常切片 z{{ gallery.ref.z }}"></a><figcaption>正常 · z{{ gallery.ref.z }}</figcaption></figure>{% endif %}
-      {% for it in g.shots %}<figure class="gal-bad gs-{{ it.severity }}"><a href="/datasets/{{ run.dataset_id }}/blocks/{{ it.block_id }}?run_id={{ run.run_id }}#z{{ it.z }}"><img loading="lazy" src="{{ it.url }}" alt="{{ g.zh }} z{{ it.z }}"></a><figcaption title="{{ it.severity }}"><span class="sevdot"></span>z{{ it.z }}</figcaption></figure>{% else %}<figure class="gal-none"><div>无图像</div><figcaption>{{ '文件不存在' if g.type == 'missing' else ('无法解码' if g.type == 'corrupt' else '未存预览') }}</figcaption></figure>{% endfor %}
+      {% for it in g.shots %}<figure class="gal-bad gs-{{ it.severity }}"><a href="/datasets/{{ run.dataset_id }}/blocks/{{ it.block_id }}?run_id={{ run.run_id }}#z{{ it.z }}" data-view-type="{{ g.type }}" data-view-url="{{ it.url }}"><img loading="lazy" src="{{ it.url }}" alt="{{ g.zh }} z{{ it.z }}"></a><figcaption title="{{ it.severity }}"><span class="sevdot"></span>z{{ it.z }}</figcaption></figure>{% else %}<figure class="gal-none"><div>无图像</div><figcaption>{{ '文件不存在' if g.type == 'missing' else ('无法解码' if g.type == 'corrupt' else '未存预览') }}</figcaption></figure>{% endfor %}
     </div>
   </section>
 {% endfor %}

@@ -522,3 +522,40 @@ details.eng { margin-top: 22px; } details.eng > summary { cursor: pointer; list-
 .gal-none div { display: grid !important; place-items: center; color: var(--muted); font-size: 12px; border: 2px dashed var(--border-2); border-radius: 6px; }
 .viz-gallery > .card { margin: 0; }
 .gal-none div { background: var(--surface-2) !important; }
+
+/* ---------------------------------------------------------------- problem-slice viewer (static/viewer.js) */
+.ex-all, .gal-all { margin-left: auto; font-size: 12.5px; padding: 4px 10px; }
+h2 .ex-all { float: right; margin-top: -3px; }
+.ex-n { font-weight: 400; font-size: 11.5px; color: var(--muted); margin-left: 4px; }
+body.vw-open { overflow: hidden; }
+.vw { position: fixed; inset: 0; z-index: 50; background: rgba(8, 10, 14, .78); display: grid; place-items: center; padding: 16px; }
+.vw[hidden] { display: none; }
+.vw-box { background: var(--surface); border-radius: 12px; width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.vw-top { display: flex; gap: 10px; align-items: flex-start; }
+.vw-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.vw-chip { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; } .vw-chip b { font-variant-numeric: tabular-nums; margin-left: 2px; }
+.vw-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.vw-x { font-size: 16px; line-height: 1; padding: 6px 10px; }
+.vw-stage { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 8px; min-height: 0; }
+.vw-nav { height: 64px; font-size: 30px; line-height: 1; padding: 0; }
+.vw-fig { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; min-height: 0; }
+.vw-fig img { width: min(56vh, 100%); aspect-ratio: 1; object-fit: contain; background: #000; border-radius: 8px; border: 3px solid var(--high); image-rendering: auto; }
+.vw-fig img.sv-critical { border-color: var(--critical); }
+.vw-fig figcaption { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: center; font-size: 14px; }
+.vw-fig figcaption b { font-size: 16px; } .vw-n { color: var(--muted); }
+.sv-pill-critical { background: var(--critical); color: #fff; border-color: var(--critical); } .sv-pill-high { background: var(--high); color: #fff; border-color: var(--high); }
+.vw-strip { display: flex; gap: 6px; overflow-x: auto; padding: 4px 2px; }
+.vw-th { flex: 0 0 auto; padding: 0; border: 2px solid transparent; border-radius: 5px; background: none; opacity: .6; }
+.vw-th img { display: block; width: 52px; height: 52px; object-fit: cover; border-radius: 3px; }
+.vw-th.on { border-color: var(--accent); opacity: 1; } .vw-th:hover { opacity: 1; }
+.vw-hint { text-align: center; font-size: 12px; }
+@media (max-width: 640px) { .vw-stage { grid-template-columns: 34px 1fr 34px; } .vw-nav { height: 48px; font-size: 24px; } }
+.vw-box { width: min(1100px, calc(100vw - 32px)); min-width: 0; overflow: hidden; }
+.vw-stage { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+.vw-top, .vw-chips, .vw-strip { min-width: 0; }
+@media (max-width: 640px) {
+  .vw { padding: 8px; } .vw-box { width: calc(100vw - 16px); padding: 10px; }
+  .vw-chips { flex-wrap: nowrap; overflow-x: auto; } .vw-chip { flex: 0 0 auto; }
+  .vw-stage { grid-template-columns: 30px minmax(0, 1fr) 30px; gap: 4px; }
+  .vw-fig figcaption { font-size: 12.5px; }
+}

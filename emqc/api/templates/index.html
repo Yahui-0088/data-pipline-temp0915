@@ -15,8 +15,10 @@
 </div>
 
 {% if examples %}
-<h2>平台自动抓到的问题 <span class="cnt">最近一次运行，每类一张 · {{ failure_counts|length }} 类问题</span></h2>
-<div class="ex-row">{% for e in examples %}<a class="ex-card gs-{{ e.severity }}" href="/datasets/{{ e.dataset_id }}"><img loading="lazy" src="{{ e.url }}" alt="{{ e.zh }}"><span class="ex-t"><b>{{ e.zh }}</b><span class="mono">{{ e.dataset_id }} · z{{ e.z }}</span></span></a>{% endfor %}</div>
+<h2>平台自动抓到的问题 <span class="cnt">最近一次运行 · {{ examples|length }} 类 · 共 {{ flagged|length }} 张 · 点图一张一张往下翻</span>
+  <button class="ex-all" data-view-type="">查看全部 {{ flagged|length }} 张 ▶</button></h2>
+<div class="ex-row">{% for e in examples %}<a class="ex-card gs-{{ e.severity }}" href="{{ e.href }}" data-view-type="{{ e.type }}" data-view-url="{{ e.url }}"><img loading="lazy" src="{{ e.url }}" alt="{{ e.zh }}"><span class="ex-t"><b>{{ e.zh }} <span class="ex-n">{{ e.n }} 张</span></b><span class="mono">{{ e.dataset_id }} · z{{ e.z }}</span></span></a>{% endfor %}</div>
+<script type="application/json" id="viewer-data">{{ flagged|tojson }}</script>
 {% endif %}
 
 <h2>数据集 <span class="cnt">{{ datasets|length }}</span></h2>
