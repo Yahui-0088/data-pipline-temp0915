@@ -38,3 +38,20 @@ def test_preview_matches_the_real_export(registered, qc_run, tmp_path, monkeypat
     reasons = {r["code"]: r["n"] for r in pv["reasons"]}
     assert sum(reasons.values()) == pv["n_sections"] == 40 and reasons["K"] == pv["n_keep"]
     assert c.get("/api/v1/exports/preview", params={"dataset_id": "nope"}).status_code == 404
+
+
+def test_overview_defaults_to_the_latest_run(registered, qc_run):
+    from sqlalchemy import select
+
+    from emqc.api.app import app
+    from emqc.db import session_scope
+    from emqc.db.models import QCRun
+
+    with session_scope() as s:
+        last = s.scalars(select(QCRun).where(QCRun.status == "done").order_by(QCRun.id.desc())).first()
+        rid, ds = last.id, last.dataset_id
+    c = TestClient(app)
+    html = c.get("/").text
+    assert "本次运行" in html and f'href="/runs/{rid}"' in html and ds in html and "看全部数据集汇总" in html
+    html = c.get("/?scope=all").text
+    assert "全部数据集汇总" in html and "总留存率" in html and "只看本次运行" in html

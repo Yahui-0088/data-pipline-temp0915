@@ -590,3 +590,8 @@ body.vw-open { overflow: hidden; }
 .pl-job { margin-top: 10px; } .pl-logs { margin-top: 8px; font-size: 12.5px; }
 @media (max-width: 640px) { .pl-grid { grid-template-columns: max-content 1fr max-content; } .pl-grid .grade { display: none; } }
 .pl-more { margin-top: 4px; font-size: 12.5px; } .pl-more .pl-grid { margin-top: 8px; }
+
+/* ---------------------------------------------------------------- overview scope switch (this run / all datasets) */
+.scope-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 10px; font-size: 14px; }
+.scope-bar .btn { margin-left: auto; font-size: 12.5px; padding: 4px 10px; }
+.ds-name { font-size: 16px !important; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

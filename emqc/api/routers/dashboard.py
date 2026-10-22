@@ -207,7 +207,16 @@ def index(request: Request, s: Session = Depends(get_session)):
             dd["n_findings"] = m.get("n_findings")
         rows.append(dd)
     kpi["retention"] = (kpi["passed"] / kpi["evaluated"]) if kpi["evaluated"] else None
-    latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None))
+    # 顶部数字和问题样例默认只看「本次」= 最近一次完成的运行；?scope=all 看所有数据集各自最近一次运行的汇总
+    scope = "all" if request.query_params.get("scope") == "all" else "latest"
+    last_run = s.scalars(select(QCRun).where(QCRun.status == "done").order_by(QCRun.id.desc()).limit(1)).first()
+    if last_run is None:
+        scope = "all"
+    this_run = run_summary(s, last_run) if last_run is not None else None
+    if this_run is not None:
+        ds_row = s.get(Dataset, last_run.dataset_id)
+        this_run["dataset_size"] = {"z": ds_row.size_z, "y": ds_row.size_y, "x": ds_row.size_x, "size_class": ds_row.size_class} if ds_row else None
+    latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None)) if scope == "all" else select(QCRun.id).where(QCRun.id == last_run.id)
     by_type = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.failure_type).order_by(func.count().desc())).all()
     runs = [run_to_dict(r) for r in s.scalars(select(QCRun).order_by(QCRun.id.desc()).limit(6))]
     n_served = s.scalar(select(func.count()).select_from(ServeLog)) or 0
@@ -226,7 +235,7 @@ def index(request: Request, s: Session = Depends(get_session)):
         used.add((pick["dataset_id"], pick["z"]))
         examples.append({**pick, "n": _n})
     by_type_zh = [(FAILURE_ZH.get(ft, ft), n) for ft, n in by_type]
-    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type_zh, runs=runs, n_served=n_served, examples=examples, flagged=flagged, active="datasets")
+    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type_zh, runs=runs, n_served=n_served, examples=examples, flagged=flagged, scope=scope, this_run=this_run, active="datasets")
 
 
 @router.get("/datasets/{dataset_id}", response_class=HTMLResponse)

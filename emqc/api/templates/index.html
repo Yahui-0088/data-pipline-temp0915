@@ -6,6 +6,19 @@
 <p class="sub">已注册的数据集及其最近一次 QC 结果。</p></div>
 <div class="actions"><a class="btn" href="/pipeline">去流水线启动</a><button class="primary" onclick="scanDatasets(this)">扫描</button></div></div>
 
+{% if scope == 'latest' and this_run %}{% set r = this_run %}{% set mt = r.metrics %}
+<div class="scope-bar"><span>本次运行 <a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a> · <a href="/datasets/{{ r.dataset_id }}"><b>{{ r.dataset_id }}</b></a> · <span class="muted mono">{{ (r.finished_at or '')|replace('T',' ') }}</span></span>
+  <a class="btn" href="/?scope=all">看全部数据集汇总</a></div>
+<div class="tiles">
+  <div class="tile"><div class="k">数据集</div><div class="v ds-name" title="{{ r.dataset_id }}">{{ r.dataset_id }}</div><div class="sub">{% if r.dataset_size %}{{ r.dataset_size.z }}×{{ r.dataset_size.y }}×{{ r.dataset_size.x }} · {{ r.dataset_size.size_class }}{% endif %}</div></div>
+  <div class="tile"><div class="k">切片</div><div class="v">{{ r.dataset_size.z if r.dataset_size else '–' }}</div><div class="sub">{{ r.n_blocks }} 个 block{% if mt.get('n_slices_input') and r.dataset_size and mt.get('n_slices_input') != r.dataset_size.z %} · {{ mt.get('n_slices_input')|int }} tile-sections{% endif %}</div></div>
+  <div class="tile accent"><div class="k">留存率</div><div class="v">{{ r.retention_rate|pct }}</div><div class="sub">{{ mt.get('n_slices_passed')|fmt(0) }} / {{ mt.get('n_slices_input')|fmt(0) }} 通过</div></div>
+  <div class="tile"><div class="k">block 等级</div><div class="v" style="font-size:14px;margin-top:8px">{% set tot = r.grade_counts.values()|sum %}{% if tot %}<div class="stack" style="height:12px">{% for g in ['A','B','C','D'] %}{% if r.grade_counts.get(g) %}<i style="width:{{ (100*r.grade_counts[g]/tot)|round(1) }}%;background:var(--g{{ g }})" title="{{ g }} × {{ r.grade_counts[g] }}"></i>{% endif %}{% endfor %}</div>{% endif %}</div><div class="sub">{% for g in ['A','B','C','D'] %}{% if r.grade_counts.get(g) %}{{ g }}×{{ r.grade_counts[g] }} {% endif %}{% endfor %}</div></div>
+  <div class="tile"><div class="k">发现问题</div><div class="v">{{ r.findings_by_severity.values()|sum }}</div>{{ m.sevstack(r.findings_by_severity) }}</div>
+  <div class="tile"><div class="k">耗时</div><div class="v">{{ mt.get('duration_s')|fmt(1) }}<small>s</small></div><div class="sub">读入 {{ mt.get('bytes_read')|bytes }}</div></div>
+</div>
+{% else %}
+<div class="scope-bar"><span>全部数据集汇总 <span class="muted">（每个数据集各自最近一次运行）</span></span>{% if this_run %}<a class="btn" href="/">只看本次运行</a>{% endif %}</div>
 <div class="tiles">
   <div class="tile"><div class="k">数据集</div><div class="v">{{ kpi.n_datasets }}<small>{{ kpi.size.small or 0 }} small · {{ kpi.size.large or 0 }} large</small></div></div>
   <div class="tile"><div class="k">切片</div><div class="v">{{ kpi.n_sections }}</div><div class="sub">{{ kpi.n_blocks }} 个 block</div></div>
@@ -13,9 +26,10 @@
   <div class="tile"><div class="k">block 等级</div><div class="v" style="font-size:14px;margin-top:8px">{% set tot = kpi.grades.values()|sum %}{% if tot %}<div class="stack" style="height:12px">{% for g in ['A','B','C','D'] %}{% if kpi.grades[g] %}<i style="width:{{ (100*kpi.grades[g]/tot)|round(1) }}%;background:var(--g{{ g }})" title="{{ g }} × {{ kpi.grades[g] }}"></i>{% endif %}{% endfor %}</div>{% else %}<span class="muted">尚未运行</span>{% endif %}</div><div class="sub">{% for g in ['A','B','C','D'] %}{% if kpi.grades[g] %}{{ g }}×{{ kpi.grades[g] }} {% endif %}{% endfor %}</div></div>
   <div class="tile"><div class="k">取数请求</div><div class="v">{{ n_served }}</div><div class="sub">算法侧已取切片 / 子块次数</div></div>
 </div>
+{% endif %}
 
 {% if examples %}
-<h2>平台自动抓到的问题 <span class="cnt">最近一次运行 · {{ examples|length }} 类 · 共 {{ flagged|length }} 张 · 点图一张一张往下翻</span>
+<h2>平台自动抓到的问题 <span class="cnt">{{ '本次运行' if scope == 'latest' else '各数据集最近一次运行' }} · {{ examples|length }} 类 · 共 {{ flagged|length }} 张 · 点图一张一张往下翻</span>
   <button class="ex-all" data-view-type="">查看全部 {{ flagged|length }} 张 ▶</button></h2>
 <div class="ex-row">{% for e in examples %}<a class="ex-card gs-{{ e.severity }}" href="{{ e.href }}" data-view-type="{{ e.type }}" data-view-url="{{ e.url }}"><img loading="lazy" src="{{ e.url }}" alt="{{ e.zh }}"><span class="ex-t"><b>{{ e.zh }} <span class="ex-n">{{ e.n }} 张</span></b><span class="mono">{{ e.dataset_id }} · z{{ e.z }}</span></span></a>{% endfor %}</div>
 <script type="application/json" id="viewer-data">{{ flagged|tojson }}</script>
