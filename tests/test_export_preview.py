@@ -52,6 +52,8 @@ def test_overview_defaults_to_the_latest_run(registered, qc_run):
         rid, ds = last.id, last.dataset_id
     c = TestClient(app)
     html = c.get("/").text
-    assert "本次运行" in html and f'href="/runs/{rid}"' in html and ds in html and "看全部数据集汇总" in html
+    assert "本次运行" in html and f'href="/runs/{rid}"' in html and ds in html and "历史记录" in html
+    assert "本次运行的数据集" in html and "运行历史" not in html        # history stays folded away
     html = c.get("/?scope=all").text
     assert "全部数据集汇总" in html and "总留存率" in html and "只看本次运行" in html
+    assert "运行历史" in html and f'href="/runs/{rid}"' in html and "耗时" in html

@@ -218,7 +218,15 @@ def index(request: Request, s: Session = Depends(get_session)):
         this_run["dataset_size"] = {"z": ds_row.size_z, "y": ds_row.size_y, "x": ds_row.size_x, "size_class": ds_row.size_class} if ds_row else None
     latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None)) if scope == "all" else select(QCRun.id).where(QCRun.id == last_run.id)
     by_type = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.failure_type).order_by(func.count().desc())).all()
-    runs = [run_to_dict(r) for r in s.scalars(select(QCRun).order_by(QCRun.id.desc()).limit(6))]
+    runs = []
+    for r in s.scalars(select(QCRun).order_by(QCRun.id.desc()).limit(100 if scope == "all" else 6)):
+        rd = run_to_dict(r)
+        rd["wall_s"] = (r.finished_at - r.started_at).total_seconds() if r.started_at and r.finished_at else None
+        runs.append(rd)
+    run_time = dict(s.execute(select(QCRun.id, QCRun.finished_at).where(QCRun.id.in_([d["latest_run_id"] for d in rows if d.get("latest_run_id")] or [-1]))).all())
+    for dd in rows:
+        t = run_time.get(dd.get("latest_run_id"))
+        dd["latest_run_at"] = t.isoformat(sep=" ", timespec="minutes") if t else None
     n_served = s.scalar(select(func.count()).select_from(ServeLog)) or 0
     from ..serializers import preview_url
 
