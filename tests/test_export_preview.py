@@ -149,5 +149,6 @@ def test_pipeline_dashboard(registered, qc_run):
     ds = d["datasets"][0]["dataset_id"]
     one = c.get("/api/v1/pipeline/dashboard", params={"dataset_id": ds, "days": 7}).json()
     assert all(r["dataset_id"] == ds for r in one["runs"]) and one["kpi"]["n_datasets"] == 1
-    page = c.get("/pipeline").text
-    assert 'id="dashboard"' in page and "dashboard.js" in page
+    page = c.get("/overview").text
+    assert 'id="dashboard"' in page and "dashboard.js" in page and 'href="/overview"' in page
+    assert 'id="dashboard"' not in c.get("/pipeline").text

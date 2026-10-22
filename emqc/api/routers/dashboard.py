@@ -344,6 +344,11 @@ def traces_page(request: Request, s: Session = Depends(get_session)):
     return _render("traces.html", request, traces=traces, served=served, served_kinds=served_kinds, active="traces")
 
 
+@router.get("/overview", response_class=HTMLResponse)
+def overview_page(request: Request):
+    return _render("overview.html", request, active="overview")
+
+
 @router.get("/pipeline", response_class=HTMLResponse)
 def pipeline_page(request: Request, s: Session = Depends(get_session)):
     status = pipeline_status(s)
