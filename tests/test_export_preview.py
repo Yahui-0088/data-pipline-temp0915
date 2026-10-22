@@ -120,3 +120,16 @@ def test_attach_to_existing_session_and_close_unused(registered, qc_run, monkeyp
     assert n == made["n_items"] and m["status"] == "done" and m["counts"] == {"ok": n}
     closed = c.post("/api/v1/streams/close-unused").json()["closed"]
     assert idle["stream_id"] in closed and made["stream_id"] not in closed
+
+
+def test_npy_label_respects_declared_axes(tmp_path):
+    import numpy as np
+
+    from emqc.registry.fs import LocalFS
+    from emqc.registry.labels import open_label_volume
+
+    seg = np.zeros((32, 48, 5), np.uint32)       # (y, x, z) as annotation tiles store it
+    seg[:, :, 3] = 7
+    np.save(tmp_path / "seg.npy", seg)
+    r = open_label_volume(LocalFS(), str(tmp_path), "seg.npy", "npy", {"axes": "yxz"})
+    assert r.shape == (5, 32, 48) and r.read_slice(3).max() == 7 and r.read_slice(2).max() == 0
