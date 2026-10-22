@@ -14,6 +14,11 @@
   <div class="tile"><div class="k">取数请求</div><div class="v">{{ n_served }}</div><div class="sub">算法侧已取切片 / 子块次数</div></div>
 </div>
 
+{% if examples %}
+<h2>平台自动抓到的问题 <span class="cnt">最近一次运行，每类一张 · {{ failure_counts|length }} 类问题</span></h2>
+<div class="ex-row">{% for e in examples %}<a class="ex-card gs-{{ e.severity }}" href="/datasets/{{ e.dataset_id }}"><img loading="lazy" src="{{ e.url }}" alt="{{ e.zh }}"><span class="ex-t"><b>{{ e.zh }}</b><span class="mono">{{ e.dataset_id }} · z{{ e.z }}</span></span></a>{% endfor %}</div>
+{% endif %}
+
 <h2>数据集 <span class="cnt">{{ datasets|length }}</span></h2>
 {% if datasets %}
 <div class="scroll"><table>

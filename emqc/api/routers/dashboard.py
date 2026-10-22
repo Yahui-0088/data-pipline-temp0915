@@ -91,6 +91,73 @@ def _worst_per_z(profile: list[dict]) -> list[dict]:
     return [best[z] for z in sorted(best)]
 
 
+# ----------------------------------------------------------------------------- visual summaries (run page, overview)
+
+FAILURE_ZH = {
+    "missing": "缺失切片", "corrupt": "损坏切片", "blank": "空白切片", "blur": "严重模糊", "saturation": "过曝 / 饱和",
+    "crack": "裂缝 / 褶皱", "no_coverage": "无数据区", "missing_region": "缺块", "brightness_jump": "亮度突变",
+    "contrast_drift": "对比度漂移", "charging": "荷电伪影", "contamination": "表面污染", "slice_jump": "切片跳变",
+    "local_misalign": "局部错位", "global_misalign": "整体错位", "z_order": "顺序错误", "local_deformation": "局部形变",
+    "section_deformation": "切片形变",
+}
+
+
+def _profile_chart(profile: list[dict], blocks: list[dict]) -> dict | None:
+    """Worst tile per z -> points for the quality-along-depth chart, failed z's, labelled worst spots, grade bands."""
+    worst = _worst_per_z(profile)
+    if not worst:
+        return None
+    z0, z1 = worst[0]["z"], worst[-1]["z"]
+    pts = [{"z": p["z"], "q": 0.0 if p["status"] != "ok" else (p["q"] if p["q"] is not None else 1.0), "sev": p["sev"] if p["status"] == "ok" else "critical",
+            "status": p["status"], "passed": p["passed"]} for p in worst]
+    # grade per z range: the worst tile grade in that range
+    order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    bands: dict[tuple[int, int], str] = {}
+    for b in blocks:
+        g = b.get("grade")
+        if not g:
+            continue
+        c = b.get("coordinate") or {}
+        if c.get("z_start") is None:
+            continue
+        k = (c["z_start"], c["z_end"])
+        if k not in bands or order.get(g, 0) > order.get(bands[k], 0):
+            bands[k] = g
+    n_failed = sum(1 for p in pts if not p["passed"])
+    return {"z0": z0, "z1": z1, "points": pts, "n": len(pts), "n_failed": n_failed,
+            "bands": [{"z_start": a, "z_end": b, "grade": g} for (a, b), g in sorted(bands.items())]}
+
+
+def _gallery(s: Session, run_id: int, dataset_id: str, profile: list[dict], per_type: int = 4, max_types: int = 12) -> dict:
+    """Flagged slices (high / critical, with a stored preview) grouped by failure type + one clean reference slice."""
+    rows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.preview_path)
+                     .where(QCFinding.run_id == run_id, QCFinding.severity.in_(["high", "critical"]), QCFinding.z.is_not(None))
+                     .order_by(QCFinding.z)).all()
+    from ..serializers import preview_url
+
+    groups: dict[str, dict] = {}
+    for ft, z, bid, sev, chk, pp in rows:
+        g = groups.setdefault(ft, {"type": ft, "zh": FAILURE_ZH.get(ft, ft), "zs": set(), "shots": []})
+        if z in g["zs"]:
+            continue  # same section flagged in several tiles: show it once
+        g["zs"].add(z)
+        url = preview_url(pp)
+        if url and len(g["shots"]) < per_type:
+            g["shots"].append({"z": z, "block_id": bid, "severity": sev, "check": chk, "url": url})
+    out = sorted(groups.values(), key=lambda g: -len(g["zs"]))[:max_types]
+    for g in out:
+        g["n"] = len(g.pop("zs"))
+    # reference: the cleanest passed section closest to the middle of the volume
+    worst = _worst_per_z(profile)
+    clean = [p for p in worst if p["passed"] and p["status"] == "ok"]
+    ref = None
+    if clean:
+        mid = (worst[0]["z"] + worst[-1]["z"]) / 2
+        best = max(clean, key=lambda p: ((p["q"] or 0) >= 0.95, -abs(p["z"] - mid)))
+        ref = {"z": best["z"], "url": f"/api/v1/data/{dataset_id}/preview/z/{best['z']}.png"}
+    return {"groups": out, "ref": ref, "n_types": len(groups), "n_sections": sum(g["n"] for g in out)}
+
+
 # ----------------------------------------------------------------------------- pages
 
 
@@ -120,7 +187,19 @@ def index(request: Request, s: Session = Depends(get_session)):
     by_type = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.failure_type).order_by(func.count().desc())).all()
     runs = [run_to_dict(r) for r in s.scalars(select(QCRun).order_by(QCRun.id.desc()).limit(6))]
     n_served = s.scalar(select(func.count()).select_from(ServeLog)) or 0
-    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type, runs=runs, n_served=n_served, active="datasets")
+    from ..serializers import preview_url
+
+    examples, seen, seen_z = [], set(), set()
+    for ft, z, ds_id, pp, sev in s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.dataset_id, QCFinding.preview_path, QCFinding.severity)
+                                          .where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"]), QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None))
+                                          .order_by(QCFinding.severity.desc(), QCFinding.z)).all():
+        if ft in seen or (ds_id, z) in seen_z or len(examples) >= 6:
+            continue  # one card per problem type, and never the same section twice
+        seen.add(ft)
+        seen_z.add((ds_id, z))
+        examples.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "z": z, "dataset_id": ds_id, "url": preview_url(pp), "severity": sev})
+    by_type_zh = [(FAILURE_ZH.get(ft, ft), n) for ft, n in by_type]
+    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type_zh, runs=runs, n_served=n_served, examples=examples, active="datasets")
 
 
 @router.get("/datasets/{dataset_id}", response_class=HTMLResponse)
@@ -194,7 +273,11 @@ def run_page(run_id: int, request: Request, s: Session = Depends(get_session)):
     summary = run_summary(s, run)
     qc_blocks = {b["block_id"]: b for b in summary["blocks"]}
     max_dur = max([b.get("duration_s") or 0 for b in summary["blocks"]] + [1])
-    return _render("run.html", request, run=summary, graph=run_graph(s, run), per_block=per_block, ds=dataset_to_dict(ds) if ds else None, blocks=blocks, qc_blocks=qc_blocks, max_dur=max_dur, active="runs")
+    prof = _profile(s, run_id)
+    chart = _profile_chart(prof, summary["blocks"])
+    gallery = _gallery(s, run_id, run.dataset_id, prof) if prof else None
+    return _render("run.html", request, run=summary, graph=run_graph(s, run), per_block=per_block, ds=dataset_to_dict(ds) if ds else None, blocks=blocks, qc_blocks=qc_blocks, max_dur=max_dur,
+                   chart=chart, gallery=gallery, failure_zh=FAILURE_ZH, active="runs")
 
 
 @router.get("/runs", response_class=HTMLResponse)
