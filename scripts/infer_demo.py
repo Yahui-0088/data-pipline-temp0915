@@ -2,6 +2,7 @@
 
     .venv/bin/python scripts/infer_demo.py h01-demo-v1-y0000_x0512
     .venv/bin/python scripts/infer_demo.py h01-demo-v1 --api http://127.0.0.1:8793 --z-chunk 16 --delay 0.5
+    .venv/bin/python scripts/infer_demo.py --stream-id 6     # 接上「数据交付」页上已经建好的会话 #6
 
 「模型」是一个不需要 GPU 的经典膜检测：电镜里细胞膜是暗的细线，用 Sato 脊线滤波把它们找出来，
 输出 0–255 的膜概率图。换成真模型时，只要把 model() 换掉，其余不用动。
@@ -63,7 +64,8 @@ def preview(pairs: list[tuple[str, np.ndarray, np.ndarray]], path: Path) -> None
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("dataset")
+    ap.add_argument("dataset", nargs="?", help="数据集名（用 --stream-id 接已有会话时可省）")
+    ap.add_argument("--stream-id", type=int, default=None, help="接上页面上已经建好的会话，而不是新建一个")
     ap.add_argument("--api", default="http://127.0.0.1:8793")
     ap.add_argument("--z-chunk", type=int, default=16)
     ap.add_argument("--client", default="demo-membrane")
@@ -71,10 +73,12 @@ def main():
     ap.add_argument("--delay", type=float, default=0.5, help="每块之间停一下，方便在网页上看进度")
     ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args()
+    if a.stream_id is None and not a.dataset:
+        ap.error("给一个数据集名，或者用 --stream-id 接上已有的会话")
+    sc = StreamClient(a.api, a.dataset, z_chunk=a.z_chunk, client=a.client, skip_failed=a.skip_failed, stream_id=a.stream_id)
+    a.dataset = sc.session["dataset_id"]
     out = a.out or ROOT / "var" / "infer_demo" / a.dataset
     out.mkdir(parents=True, exist_ok=True)
-
-    sc = StreamClient(a.api, a.dataset, z_chunk=a.z_chunk, client=a.client, skip_failed=a.skip_failed)
     print(f"会话 #{sc.stream_id}：{sc.session['n_items']} 个子块，约 {sc.session['est_bytes'] / 1e6:.1f} MB。去「数据交付」页看进度。", flush=True)
     t0, n, nbytes, pairs, frac = time.time(), 0, 0, [], []
     for item, arr in sc.items():                       # 和页面上「推理侧怎么接」是同一个写法

@@ -92,3 +92,31 @@ def test_stream_map_tracks_each_chunk(registered, qc_run):
     st = {x["i"]: x["state"] for b in m["blocks"] for x in b["cells"] if x["i"] is not None}
     assert st[got[0]["i"]] == "ok" and st[got[1]["i"]] == "fail" and m["counts"]["pending"] == n - 2
     assert m["n_acked"] == 1 and m["n_failed_items"] == 1
+
+
+def test_attach_to_existing_session_and_close_unused(registered, qc_run, monkeypatch):
+    import io
+
+    import numpy as np
+
+    from emqc import loader
+    from emqc.api.app import app
+
+    c = TestClient(app)
+
+    def fake_open(req, timeout=600):  # route StreamClient's urllib calls through the test client
+        path = req.full_url.replace("http://t", "")
+        r = c.post(path, content=req.data, headers={"Content-Type": "application/json"}) if req.data is not None else c.get(path)
+        assert r.status_code < 400, r.text
+        return r.content
+
+    monkeypatch.setattr(loader, "_open", fake_open)
+    made = c.post("/api/v1/streams", json={"dataset_id": registered, "z_chunk": 20}).json()
+    idle = c.post("/api/v1/streams", json={"dataset_id": registered, "z_chunk": 20}).json()
+    sc = loader.StreamClient("http://t", stream_id=made["stream_id"])
+    assert sc.stream_id == made["stream_id"]
+    n = sum(1 for _ in sc.items())
+    m = c.get(f"/api/v1/streams/{made['stream_id']}/map").json()
+    assert n == made["n_items"] and m["status"] == "done" and m["counts"] == {"ok": n}
+    closed = c.post("/api/v1/streams/close-unused").json()["closed"]
+    assert idle["stream_id"] in closed and made["stream_id"] not in closed

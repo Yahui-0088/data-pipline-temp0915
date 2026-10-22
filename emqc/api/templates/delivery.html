@@ -39,6 +39,8 @@ patch, meta = store.random_patch(rng, (8, 256, 256))</pre></details>
     <div class="actions"><button class="primary" type="submit">创建会话</button><label class="choice"><input type="checkbox" name="skip_failed"> 跳过含未通过切片的子块</label><span id="stream-msg" class="muted"></span></div>
   </form>
   <details style="margin-top:12px"><summary>推理侧怎么接</summary><pre class="json" style="max-width:none">from emqc.loader import StreamClient
+# 新建会话：StreamClient(api, "&lt;dataset&gt;", z_chunk=16, client="unet-infer")
+# 接上页面上建好的会话 #N：StreamClient(api, stream_id=N)
 for item, arr in StreamClient("{{ api_base }}", "&lt;dataset&gt;", z_chunk=16, client="unet-infer").items():
     pred = model(arr)                            # arr: (z1-z0, H, W)，一个 tile 的一段
     ...                                          # 每个子块用完自动 ack，结束自动关闭会话</pre>

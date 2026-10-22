@@ -607,3 +607,4 @@ body.vw-open { overflow: hidden; }
 .pl-bar .sm-ok, .pl-bar .sm-out { display: block; height: 100%; }
 @keyframes smpulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (max-width: 640px) { .sm-grid { grid-template-columns: max-content 1fr; } .sm-grid .grade { display: none; } }
+.sm-tools { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; font-size: 13px; }

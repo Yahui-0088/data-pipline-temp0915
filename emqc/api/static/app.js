@@ -489,7 +489,7 @@ async function launchStream(ev) {
   const f = ev.target, msg = document.getElementById("stream-msg");
   const body = { dataset_id: f.dataset_id.value, z_chunk: +f.z_chunk.value || 16, order: f.order.value, skip_failed: f.skip_failed.checked, client: f.client.value || null };
   msg.textContent = "创建中…";
-  try { const sess = await postJSON("/api/v1/streams", body); msg.innerHTML = `会话 #${sess.stream_id}：${sess.n_items} 个子块，约 ${fmtBytes(sess.est_bytes)}，计划图在下方「推理流会话」。客户端用 <code>stream_id=${sess.stream_id}</code> 或直接用 StreamClient 新建。`; refreshStreams(); refreshStreamMaps(); }
+  try { const sess = await postJSON("/api/v1/streams", body); msg.innerHTML = `会话 #${sess.stream_id}：${sess.n_items} 个子块，约 ${fmtBytes(sess.est_bytes)}，计划图在下方「推理流会话」。在服务器上运行 <code>.venv/bin/python scripts/infer_demo.py --stream-id ${sess.stream_id}</code> 接上它，或在自己的代码里用 <code>StreamClient(api, stream_id=${sess.stream_id})</code>。`; refreshStreams(); refreshStreamMaps(); }
   catch (e) { msg.textContent = "创建失败: " + e.message; }
   return false;
 }
@@ -518,7 +518,8 @@ function renderStreamMap(d) {
   const c = d.counts || {};
   const done = (c.ok || 0), total = d.n_items || 0, pct = total ? Math.round(100 * done / total) : 0;
   const eta = open && d.chunks_per_min && total > done ? Math.ceil((total - done) / d.chunks_per_min) : null;
-  const cur = d.current ? `正在处理 <span class="mono">${esc(d.current.block_id.includes("_") ? d.current.block_id.slice(d.current.block_id.indexOf("_") + 1) : d.current.block_id)} z${d.current.z0}–${d.current.z1 - 1}</span>` : "";
+  const waiting = open && !d.cursor;
+  const cur = waiting ? `<span class="pill" style="background:var(--surface-2)">等待推理程序接入</span> <span class="muted">服务器上运行 <code>scripts/infer_demo.py --stream-id ${d.stream_id}</code> 即可接上</span>` : d.current ? `正在处理 <span class="mono">${esc(d.current.block_id.includes("_") ? d.current.block_id.slice(d.current.block_id.indexOf("_") + 1) : d.current.block_id)} z${d.current.z0}–${d.current.z1 - 1}</span>` : "";
   const rows = d.blocks.map(b => {
     const span = Math.max(1, b.z_end - b.z_start);
     const cells = b.cells.map(x => `<i class="sm-${x.state}${x.n_failed ? " qcbad" : ""}" style="flex-grow:${x.z1 - x.z0}" title="z${x.z0}–${x.z1 - 1} · ${ST_ZH[x.state] || x.state}${x.n_failed ? " · " + x.n_failed + " 张未通过 QC" : ""}"></i>`).join("");
@@ -549,7 +550,13 @@ async function refreshStreamMaps() {
     _mapCache[x.stream_id] = { key, d };
     return d;
   }));
-  box.innerHTML = maps.map(renderStreamMap).join("");
+  const nWaiting = rows.filter(x => x.status === "open" && !x.cursor).length;
+  box.innerHTML = (nWaiting > 1 ? `<div class="sm-tools"><span class="muted">${nWaiting} 个会话建好了但还没有推理程序来取数据</span><button onclick="closeUnusedStreams(this)">终止这 ${nWaiting} 个未开始的会话</button></div>` : "") + maps.map(renderStreamMap).join("");
+}
+async function closeUnusedStreams(btn) {
+  btn.disabled = true;
+  try { const r = await postJSON("/api/v1/streams/close-unused"); flash(`已终止 ${r.closed.length} 个未开始的会话`); refreshStreams(); refreshStreamMaps(); }
+  catch (e) { flash("终止失败: " + e.message, true); btn.disabled = false; }
 }
 
 function deliveryInit() { initExportPreview(); refreshExports(); refreshStreams(); refreshStreamMaps(); setInterval(refreshExports, 2000); setInterval(refreshStreams, 2000); setInterval(refreshStreamMaps, 1000); }

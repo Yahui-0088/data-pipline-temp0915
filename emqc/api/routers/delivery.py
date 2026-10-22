@@ -214,6 +214,16 @@ def list_streams(dataset_id: str | None = None, status: str | None = None, limit
     return [stream_to_dict(x) for x in s.scalars(q)]
 
 
+@streams.post("/close-unused", dependencies=[Depends(require_reviewer)])
+def close_unused(s: Session = Depends(get_session)):
+    """Close every open session no client has taken anything from yet (created on the page and never picked up)."""
+    rows = list(s.scalars(select(StreamSession).where(StreamSession.status == "open", StreamSession.cursor == 0)))
+    for x in rows:
+        x.status, x.finished_at = "aborted", _now()
+    s.commit()
+    return {"closed": [x.id for x in rows]}
+
+
 def _sess(s: Session, stream_id: int) -> StreamSession:
     x = s.get(StreamSession, stream_id)
     if x is None:
@@ -238,7 +248,11 @@ def stream_map(stream_id: int, s: Session = Depends(get_session)):
     (pending / out = handed to the client / ok / fail / skipped = left out by skip_failed), plus progress and rate."""
     sess = _sess(s, stream_id)
     p = sess.params_json or {}
-    in_plan = {(it["block_id"], it["z0"]): it for it in sess.plan_json}
+    plan = list(sess.plan_json)
+    if (sess.n_acked or sess.cursor) and not any(it.get("state") for it in plan):
+        # sessions from before per-chunk tracking: only the counters exist; items are handed out in order
+        plan = [{**it, "state": "ok" if it["i"] < sess.n_acked else ("out" if it["i"] < sess.cursor else "pending")} for it in plan]
+    in_plan = {(it["block_id"], it["z0"]): it for it in plan}
     ds = s.get(Dataset, sess.dataset_id)
     full = in_plan.values()
     if ds is not None and p.get("skip_failed"):  # show what skip_failed left out, so the gaps are explained
@@ -252,7 +266,7 @@ def stream_map(stream_id: int, s: Session = Depends(get_session)):
         b["cells"].append({"i": mine["i"] if mine else None, "z0": it["z0"], "z1": it["z1"], "state": state, "n_failed": it.get("n_failed", 0)})
     for b in blocks.values():
         b["cells"].sort(key=lambda c: c["z0"])
-    acks = sorted(it["t_ack"] for it in sess.plan_json if it.get("t_ack"))
+    acks = sorted(it["t_ack"] for it in plan if it.get("t_ack"))
     rate = None
     if len(acks) >= 2:
         span = (datetime.fromisoformat(acks[-1]) - datetime.fromisoformat(acks[0])).total_seconds()
@@ -261,7 +275,7 @@ def stream_map(stream_id: int, s: Session = Depends(get_session)):
     for b in blocks.values():
         for c in b["cells"]:
             counts[c["state"]] = counts.get(c["state"], 0) + 1
-    current = next((it for it in sess.plan_json if it.get("state") == "out"), None)
+    current = next((it for it in plan if it.get("state") == "out"), None) if sess.status == "open" else None
     return {**stream_to_dict(sess), "blocks": list(blocks.values()), "counts": counts, "chunks_per_min": rate,
             "current": {"block_id": current["block_id"], "z0": current["z0"], "z1": current["z1"]} if current else None}
 
