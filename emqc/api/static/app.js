@@ -383,6 +383,66 @@ async function launchExport(ev) {
   return false;
 }
 
+// ---------------------------------------------------------------- export preview / result strips
+const PLAN_CLS = { K: "keep", Q: "qc", L: "lowq", S: "short", M: "norec" };
+function renderPlan(d, opts = {}) {
+  if (d.error) return `<div class="muted">${esc(d.error)}</div>`;
+  const tot = d.n_sections || 1;
+  const bar = d.reasons.filter(r => r.n).map(r => `<i class="pl-${PLAN_CLS[r.code]}" style="width:${(100 * r.n / tot).toFixed(2)}%" title="${esc(r.zh)} ${r.n} 张"></i>`).join("");
+  const legend = d.reasons.filter(r => r.n || r.code === "K").map(r => `<span class="pl-lg"><i class="pl-${PLAN_CLS[r.code]}"></i>${esc(r.zh)} <b>${r.n}</b></span>`).join("");
+  const short = d.reasons.find(r => r.code === "S");
+  const tip = short && short.n > d.n_keep * 0.3 ? `<div class="pl-tip">⚠ 有 ${short.n} 张切片通过了 QC，但因为连续段不够长（最短连续段 = ${d.params.min_run}）没有交付。把最短连续段调小，可以多交付这些切片。</div>` : "";
+  const maxRows = opts.maxRows || 48;
+  const rows = d.blocks.slice(0, maxRows).map(b => {
+    const starts = new Set(b.shards.map(s => s[0] - b.z_start));
+    const cells = [...b.codes].map((c, i) => `<i class="pl-${PLAN_CLS[c]}${starts.has(i) && i ? " sb" : ""}"></i>`).join("");
+    const lbl = b.block_id.includes("_") ? b.block_id.slice(b.block_id.indexOf("_") + 1) : b.block_id;
+    return `<span class="pl-lbl mono" title="${esc(b.block_id)}">z${b.z_start}–${b.z_end - 1} ${esc(lbl === b.block_id ? "" : lbl)}</span><span class="grade grade-${b.grade || "none"}">${b.grade || "–"}</span>
+      <span class="pl-strip" title="${esc(b.block_id)} · 交付 ${b.n_keep}/${b.codes.length} 张 · ${b.shards.length} 个分片">${cells}</span><span class="mono pl-n">${b.n_keep}/${b.codes.length}</span>`;
+  }).join("");
+  const more = d.blocks.length > maxRows ? `<div class="muted" style="font-size:12px;margin-top:6px">还有 ${d.blocks.length - maxRows} 个 block 没画出来</div>` : "";
+  return `<div class="pl-head"><span class="pl-big"><b>${d.n_keep}</b> / ${d.n_sections} 张交付</span><span class="pl-big"><b>${d.retention == null ? "–" : Math.round(d.retention * 100) + "%"}</b> 交付率</span>
+      <span class="pl-big"><b>${d.n_shards}</b> 个分片</span><span class="pl-big"><b>${fmtBytes(d.est_bytes)}</b></span><span class="muted mono" style="font-size:11.5px">QC run #${d.run_id}</span></div>
+    <div class="pl-bar">${bar}</div><div class="pl-legend">${legend}<span class="pl-lg"><i class="pl-keep sb"></i>竖线 = 分片的起点</span></div>${tip}
+    ${opts.collapsed ? `<details class="pl-more" ${opts.open ? "open" : ""}><summary class="muted">按 block 展开（${d.blocks.length} 个）</summary><div class="pl-grid">${rows}</div>${more}</details>` : `<div class="pl-grid">${rows}</div>${more}`}`;
+}
+
+let _previewT = null, _previewSeq = 0;
+async function refreshExportPreview() {
+  const f = document.getElementById("export-form"), box = document.getElementById("export-preview");
+  if (!f || !box || !f.dataset_id.value) return;
+  const p = new URLSearchParams({ dataset_id: f.dataset_id.value, min_run: +f.min_run.value || 1, shard_z: +f.shard_z.value || 0 });
+  if (f.min_quality.value) p.set("min_quality", f.min_quality.value);
+  if (f.block_ids.value.trim()) p.set("block_ids", f.block_ids.value);
+  const seq = ++_previewSeq;
+  box.classList.add("pl-loading");
+  try {
+    const r = await fetch(`/api/v1/exports/preview?${p}`);
+    const d = await r.json();
+    if (seq !== _previewSeq) return;  // a newer request is on its way
+    box.innerHTML = r.ok ? renderPlan(d) : `<span class="muted">预览失败：${esc(d.detail || r.statusText)}</span>`;
+  } finally { if (seq === _previewSeq) box.classList.remove("pl-loading"); }
+}
+function initExportPreview() {
+  const f = document.getElementById("export-form"); if (!f) return;
+  const kick = () => { clearTimeout(_previewT); _previewT = setTimeout(refreshExportPreview, 250); };
+  f.addEventListener("input", kick); f.addEventListener("change", kick);
+  refreshExportPreview();
+}
+
+// a finished / running job shows the same strips, computed from its own QC run and parameters
+const _jobPlans = {};
+async function jobPlan(j) {
+  const key = `${j.job_id}:${j.status}`;
+  if (_jobPlans[key]) return _jobPlans[key];
+  const p = new URLSearchParams({ dataset_id: j.dataset_id, min_run: j.params.min_run || 1, shard_z: j.params.shard_z || 0 });
+  if (j.run_id) p.set("run_id", j.run_id);
+  if (j.params.min_quality != null) p.set("min_quality", j.params.min_quality);
+  if (j.params.block_ids && j.params.block_ids.length) p.set("block_ids", j.params.block_ids.join(","));
+  const r = await fetch(`/api/v1/exports/preview?${p}`);
+  return (_jobPlans[key] = r.ok ? await r.json() : null);
+}
+
 async function cancelExport(id, btn) { btn.disabled = true; try { await postJSON(`/api/v1/exports/${id}/cancel`); } catch (e) { flash("取消失败: " + e.message, true); btn.disabled = false; } }
 
 function renderExport(j) {
@@ -396,7 +456,8 @@ function renderExport(j) {
       ${running ? `<button onclick="cancelExport(${j.job_id}, this)" ${j.cancel_requested ? 'disabled' : ''}>取消</button>` : `<a class="btn" href="/api/v1/exports/${j.job_id}/manifest" target="_blank">清单</a>`}</div>
     ${j.out_dir ? `<div class="muted mono" style="font-size:11px;margin-top:6px">${esc(j.out_dir)}</div>` : ''}
     ${j.error ? `<pre class="json">${esc(j.error.split("\n")[0])}</pre>` : ''}
-    <pre class="log" id="export-log-${j.job_id}" style="max-height:140px;margin-top:8px"></pre></div>`;
+    <div class="pl-job" id="export-plan-${j.job_id}"></div>
+    <details class="pl-logs"><summary class="muted">日志</summary><pre class="log" id="export-log-${j.job_id}" style="max-height:140px;margin-top:8px"></pre></details></div>`;
 }
 
 async function refreshExports() {
@@ -404,8 +465,16 @@ async function refreshExports() {
   const box = document.getElementById("exports"); if (!box) return;
   document.getElementById("export-count").textContent = jobs.length;
   const logs = {}; box.querySelectorAll("pre.log").forEach(p => logs[p.id] = p.innerHTML);
+  const openLogs = new Set([...box.querySelectorAll("details.pl-logs[open] pre.log")].map(p => p.id));
+  const plans = {}; box.querySelectorAll(".pl-job").forEach(p => plans[p.id] = p.innerHTML);
   box.innerHTML = jobs.length ? jobs.map(renderExport).join("") : '<div class="empty">还没有导出任务</div>';
-  for (const [id, html] of Object.entries(logs)) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
+  for (const [id, html] of Object.entries(logs)) { const el = document.getElementById(id); if (el) { el.innerHTML = html; if (openLogs.has(id)) el.closest("details").open = true; } }
+  for (const [id, html] of Object.entries(plans)) { const el = document.getElementById(id); if (el && html) el.innerHTML = html; }
+  jobs.forEach(async j => {
+    if (j.status === "queued" || !j.run_id) return;
+    const d = await jobPlan(j); const el = document.getElementById(`export-plan-${j.job_id}`);
+    if (d && el) { const open = !!el.querySelector("details.pl-more[open]"); el.innerHTML = renderPlan(d, { maxRows: 48, collapsed: true, open }); }
+  });
   await Promise.all(jobs.map(async j => {
     const after = deliveryState.lastEvent[j.job_id] || 0;
     const ev = await (await fetch(`/api/v1/exports/${j.job_id}/events?after_id=${after}`)).json();
@@ -442,7 +511,7 @@ async function refreshStreams() {
   }).join("") : '<tr><td colspan="11" class="muted">还没有推理流会话</td></tr>';
 }
 
-function deliveryInit() { refreshExports(); refreshStreams(); setInterval(refreshExports, 2000); setInterval(refreshStreams, 2000); }
+function deliveryInit() { initExportPreview(); refreshExports(); refreshStreams(); setInterval(refreshExports, 2000); setInterval(refreshStreams, 2000); }
 
 
 // ---------------------------------------------------------------- patch factory page

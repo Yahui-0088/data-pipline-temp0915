@@ -71,6 +71,19 @@ def create_export(body: ExportIn, s: Session = Depends(get_session)):
     return export_job_to_dict(s.get(ExportJob, job_id))
 
 
+@exports.get("/preview")
+def preview_export(dataset_id: str, min_run: int = 1, shard_z: int = 16, min_quality: float | None = None, block_ids: str | None = None, run_id: int | None = None,
+                   s: Session = Depends(get_session)):
+    """Dry run: what an export with these settings would deliver (per section: delivered / why not), without writing anything."""
+    from emqc.qc.export import plan_export
+
+    ds = s.get(Dataset, dataset_id)
+    if ds is None:
+        raise HTTPException(404, f"unknown dataset {dataset_id}")
+    ids = [x.strip() for x in (block_ids or "").split(",") if x.strip()] or None
+    return plan_export(s, ds, {"min_run": max(1, min_run), "shard_z": max(0, shard_z), "min_quality": min_quality, "block_ids": ids}, run_id=run_id)
+
+
 @exports.get("")
 def list_exports(dataset_id: str | None = None, status: str | None = None, limit: int = 50, s: Session = Depends(get_session)):
     q = select(ExportJob).order_by(ExportJob.id.desc()).limit(limit)
