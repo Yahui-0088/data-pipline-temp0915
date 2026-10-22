@@ -232,6 +232,40 @@ def stream_plan(stream_id: int, s: Session = Depends(get_session)):
     return {"stream_id": sess.id, "items": _with_urls(sess, sess.plan_json)}
 
 
+@streams.get("/{stream_id}/map")
+def stream_map(stream_id: int, s: Session = Depends(get_session)):
+    """The session as a picture: per block, one cell per sub-chunk with its state
+    (pending / out = handed to the client / ok / fail / skipped = left out by skip_failed), plus progress and rate."""
+    sess = _sess(s, stream_id)
+    p = sess.params_json or {}
+    in_plan = {(it["block_id"], it["z0"]): it for it in sess.plan_json}
+    ds = s.get(Dataset, sess.dataset_id)
+    full = in_plan.values()
+    if ds is not None and p.get("skip_failed"):  # show what skip_failed left out, so the gaps are explained
+        full, _ = build_plan(s, ds, int(p.get("z_chunk") or 16), p.get("block_ids"), p.get("order") or "z", False)
+    blocks: dict[str, dict] = {}
+    for it in full:
+        mine = in_plan.get((it["block_id"], it["z0"]))
+        state = (mine.get("state") or "pending") if mine else "skipped"
+        b = blocks.setdefault(it["block_id"], {"block_id": it["block_id"], "grade": it.get("grade"), "z_start": it["z0"], "z_end": it["z1"], "cells": []})
+        b["z_start"], b["z_end"] = min(b["z_start"], it["z0"]), max(b["z_end"], it["z1"])
+        b["cells"].append({"i": mine["i"] if mine else None, "z0": it["z0"], "z1": it["z1"], "state": state, "n_failed": it.get("n_failed", 0)})
+    for b in blocks.values():
+        b["cells"].sort(key=lambda c: c["z0"])
+    acks = sorted(it["t_ack"] for it in sess.plan_json if it.get("t_ack"))
+    rate = None
+    if len(acks) >= 2:
+        span = (datetime.fromisoformat(acks[-1]) - datetime.fromisoformat(acks[0])).total_seconds()
+        rate = (len(acks) - 1) / span * 60 if span > 0 else None
+    counts: dict[str, int] = {}
+    for b in blocks.values():
+        for c in b["cells"]:
+            counts[c["state"]] = counts.get(c["state"], 0) + 1
+    current = next((it for it in sess.plan_json if it.get("state") == "out"), None)
+    return {**stream_to_dict(sess), "blocks": list(blocks.values()), "counts": counts, "chunks_per_min": rate,
+            "current": {"block_id": current["block_id"], "z0": current["z0"], "z1": current["z1"]} if current else None}
+
+
 @streams.post("/{stream_id}/next", dependencies=[Depends(require_reviewer)])
 def stream_next(stream_id: int, n: int = 1, s: Session = Depends(get_session)):
     """Hand out the next n cutouts of the plan (and warm the cache for the ones after them on remote sources)."""
@@ -239,6 +273,11 @@ def stream_next(stream_id: int, n: int = 1, s: Session = Depends(get_session)):
     if sess.status != "open":
         raise HTTPException(409, f"stream {stream_id} is {sess.status}")
     items = sess.plan_json[sess.cursor : sess.cursor + max(1, n)]
+    t = _now().isoformat(timespec="milliseconds")
+    plan = list(sess.plan_json)  # per-item state for the session map (JSON columns need a new object to register a change)
+    for it in items:
+        plan[it["i"]] = {**plan[it["i"]], "state": "out", "t_out": t}
+    sess.plan_json = plan
     sess.cursor = min(sess.n_items, sess.cursor + len(items))
     s.commit()
     if items:
@@ -268,6 +307,12 @@ def stream_ack(stream_id: int, body: AckIn, s: Session = Depends(get_session)):
         sess.n_acked += len(body.indices)
     else:
         sess.n_failed_items += len(body.indices)
+    t = _now().isoformat(timespec="milliseconds")
+    plan = list(sess.plan_json)
+    for i in body.indices:
+        if 0 <= i < len(plan):
+            plan[i] = {**plan[i], "state": "ok" if body.ok else "fail", "t_ack": t, **({"note": body.note} if body.note else {})}
+    sess.plan_json = plan
     s.commit()
     return stream_to_dict(sess)
 

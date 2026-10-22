@@ -73,3 +73,22 @@ def test_infer_demo_model_shape_and_range():
     pred = mod.model(arr)
     assert pred.shape == arr.shape and pred.dtype == np.uint8
     assert pred[:, 31, 10:54].mean() > 3 * pred[:, 10, 10:54].mean()
+
+
+def test_stream_map_tracks_each_chunk(registered, qc_run):
+    from emqc.api.app import app
+
+    c = TestClient(app)
+    sess = c.post("/api/v1/streams", json={"dataset_id": registered, "z_chunk": 5, "skip_failed": True, "client": "t"}).json()
+    sid, n = sess["stream_id"], sess["n_items"]
+    m = c.get(f"/api/v1/streams/{sid}/map").json()
+    cells = [x for b in m["blocks"] for x in b["cells"]]
+    assert len(cells) == 8 and m["counts"].get("skipped", 0) == 8 - n > 0       # 40 sections / 5 = 8 chunks, failed ones skipped
+    assert all(x["n_failed"] > 0 for x in cells if x["state"] == "skipped")
+    got = c.post(f"/api/v1/streams/{sid}/next?n=2").json()["items"]
+    c.post(f"/api/v1/streams/{sid}/ack", json={"indices": [got[0]["i"]], "ok": True})
+    c.post(f"/api/v1/streams/{sid}/ack", json={"indices": [got[1]["i"]], "ok": False, "note": "oom"})
+    m = c.get(f"/api/v1/streams/{sid}/map").json()
+    st = {x["i"]: x["state"] for b in m["blocks"] for x in b["cells"] if x["i"] is not None}
+    assert st[got[0]["i"]] == "ok" and st[got[1]["i"]] == "fail" and m["counts"]["pending"] == n - 2
+    assert m["n_acked"] == 1 and m["n_failed_items"] == 1

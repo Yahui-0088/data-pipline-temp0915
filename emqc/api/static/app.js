@@ -489,7 +489,7 @@ async function launchStream(ev) {
   const f = ev.target, msg = document.getElementById("stream-msg");
   const body = { dataset_id: f.dataset_id.value, z_chunk: +f.z_chunk.value || 16, order: f.order.value, skip_failed: f.skip_failed.checked, client: f.client.value || null };
   msg.textContent = "创建中…";
-  try { const sess = await postJSON("/api/v1/streams", body); msg.innerHTML = `会话 #${sess.stream_id}：${sess.n_items} 个子块，约 ${fmtBytes(sess.est_bytes)}。客户端用 <code>stream_id=${sess.stream_id}</code> 或直接用 StreamClient 新建。`; refreshStreams(); }
+  try { const sess = await postJSON("/api/v1/streams", body); msg.innerHTML = `会话 #${sess.stream_id}：${sess.n_items} 个子块，约 ${fmtBytes(sess.est_bytes)}，计划图在下方「推理流会话」。客户端用 <code>stream_id=${sess.stream_id}</code> 或直接用 StreamClient 新建。`; refreshStreams(); refreshStreamMaps(); }
   catch (e) { msg.textContent = "创建失败: " + e.message; }
   return false;
 }
@@ -511,7 +511,48 @@ async function refreshStreams() {
   }).join("") : '<tr><td colspan="11" class="muted">还没有推理流会话</td></tr>';
 }
 
-function deliveryInit() { initExportPreview(); refreshExports(); refreshStreams(); setInterval(refreshExports, 2000); setInterval(refreshStreams, 2000); }
+// ---------------------------------------------------------------- inference stream maps (one cell per sub-chunk)
+const ST_ZH = { pending: "待取", out: "处理中", ok: "已完成", fail: "失败", skipped: "跳过" };
+function renderStreamMap(d) {
+  const open = d.status === "open";
+  const c = d.counts || {};
+  const done = (c.ok || 0), total = d.n_items || 0, pct = total ? Math.round(100 * done / total) : 0;
+  const eta = open && d.chunks_per_min && total > done ? Math.ceil((total - done) / d.chunks_per_min) : null;
+  const cur = d.current ? `正在处理 <span class="mono">${esc(d.current.block_id.includes("_") ? d.current.block_id.slice(d.current.block_id.indexOf("_") + 1) : d.current.block_id)} z${d.current.z0}–${d.current.z1 - 1}</span>` : "";
+  const rows = d.blocks.map(b => {
+    const span = Math.max(1, b.z_end - b.z_start);
+    const cells = b.cells.map(x => `<i class="sm-${x.state}${x.n_failed ? " qcbad" : ""}" style="flex-grow:${x.z1 - x.z0}" title="z${x.z0}–${x.z1 - 1} · ${ST_ZH[x.state] || x.state}${x.n_failed ? " · " + x.n_failed + " 张未通过 QC" : ""}"></i>`).join("");
+    const lbl = b.block_id.includes("_") ? b.block_id.slice(b.block_id.indexOf("_") + 1) : b.block_id;
+    return `<span class="pl-lbl mono" title="${esc(b.block_id)}">z${b.z_start}–${b.z_end - 1} ${esc(lbl === b.block_id ? "" : lbl)}</span><span class="grade grade-${b.grade || "none"}">${b.grade || "–"}</span><span class="sm-strip">${cells}</span>`;
+  }).join("");
+  return `<div class="run-card sm-card" id="stream-${d.stream_id}">
+    <div class="head"><b>会话 #${d.stream_id} · <a href="/datasets/${encodeURIComponent(d.dataset_id)}">${esc(d.dataset_id)}</a></b><span class="muted">${esc(d.client || "")}</span>
+      <span class="pill ${d.status === "done" ? "ok" : open ? "on" : ""}">${esc(d.status)}</span>
+      ${open ? `<button class="danger" onclick="closeStream(${d.stream_id}, this)">终止</button>` : ""}</div>
+    <div class="pl-head" style="margin-top:8px"><span class="pl-big"><b>${done}</b> / ${total} 块完成</span><span class="pl-big"><b>${pct}%</b></span>
+      <span class="pl-big"><b>${fmtBytes(d.n_bytes)}</b> / ${fmtBytes(d.est_bytes)} 已取</span>
+      ${d.chunks_per_min ? `<span class="pl-big"><b>${d.chunks_per_min.toFixed(1)}</b> 块/分</span>` : ""}${eta != null ? `<span class="pl-big">约 <b>${eta}</b> 分钟后完成</span>` : ""}
+      ${c.fail ? `<span class="pl-big" style="color:var(--high)"><b>${c.fail}</b> 块失败</span>` : ""}${c.skipped ? `<span class="pl-big"><b>${c.skipped}</b> 块跳过</span>` : ""}<span class="muted" style="font-size:12.5px">${cur}</span></div>
+    <div class="pl-bar"><i class="sm-ok" style="width:${total ? 100 * done / total : 0}%"></i><i class="sm-out" style="width:${total ? 100 * (c.out || 0) / total : 0}%"></i></div>
+    <div class="sm-grid">${rows}</div></div>`;
+}
+let _mapCache = {};
+async function refreshStreamMaps() {
+  const box = document.getElementById("stream-maps"); if (!box) return;
+  const rows = await (await fetch("/api/v1/streams?limit=30")).json();
+  const show = [...rows.filter(x => x.status === "open"), ...rows.filter(x => x.status !== "open").slice(0, 3)];
+  if (!show.length) { box.innerHTML = '<div class="empty">还没有推理流会话。上面「新建会话」后，推理程序开始取数据，这里会实时显示每一块的进度。</div>'; return; }
+  const maps = await Promise.all(show.map(async x => {
+    const key = `${x.stream_id}:${x.updated_at}:${x.status}`;
+    if (_mapCache[x.stream_id] && _mapCache[x.stream_id].key === key) return _mapCache[x.stream_id].d;
+    const d = await (await fetch(`/api/v1/streams/${x.stream_id}/map`)).json();
+    _mapCache[x.stream_id] = { key, d };
+    return d;
+  }));
+  box.innerHTML = maps.map(renderStreamMap).join("");
+}
+
+function deliveryInit() { initExportPreview(); refreshExports(); refreshStreams(); refreshStreamMaps(); setInterval(refreshExports, 2000); setInterval(refreshStreams, 2000); setInterval(refreshStreamMaps, 1000); }
 
 
 // ---------------------------------------------------------------- patch factory page

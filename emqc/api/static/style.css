@@ -595,3 +595,15 @@ body.vw-open { overflow: hidden; }
 .scope-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 4px 0 10px; font-size: 14px; }
 .scope-bar .btn { margin-left: auto; font-size: 12.5px; padding: 4px 10px; }
 .ds-name { font-size: 16px !important; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- inference stream maps */
+.sm-grid { display: grid; grid-template-columns: max-content max-content 1fr; gap: 4px 10px; align-items: center; margin-top: 10px; }
+.sm-strip { display: flex; gap: 2px; height: 16px; min-width: 0; }
+.sm-strip i { position: relative; flex-basis: 0; border-radius: 3px; min-width: 4px; }
+.sm-pending { background: var(--surface-3); } .sm-ok { background: var(--good); } .sm-fail { background: var(--high); }
+.sm-out { background: var(--accent); animation: smpulse 1s ease-in-out infinite; }
+.sm-skipped { background: repeating-linear-gradient(135deg, var(--border-2) 0 2px, var(--surface-2) 2px 5px); }
+.sm-strip i.qcbad::after { content: ""; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: var(--high); box-shadow: 0 0 0 1px var(--surface); }
+.pl-bar .sm-ok, .pl-bar .sm-out { display: block; height: 100%; }
+@keyframes smpulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (max-width: 640px) { .sm-grid { grid-template-columns: max-content 1fr; } .sm-grid .grade { display: none; } }

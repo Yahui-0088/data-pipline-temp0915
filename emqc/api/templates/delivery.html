@@ -52,9 +52,11 @@ for item, arr in StreamClient("{{ api_base }}", "&lt;dataset&gt;", z_chunk=16, c
 <h2>导出任务 <span class="cnt" id="export-count">{{ jobs|length }}</span></h2>
 <div id="exports" class="active-list">{% if not jobs %}<div class="empty">还没有导出任务</div>{% endif %}</div>
 
-<h2>推理流会话 <span class="cnt" id="stream-count">{{ sessions|length }}</span></h2>
+<h2>推理流会话 <span class="cnt" id="stream-count">{{ sessions|length }}</span> <span class="cnt">每个格子是一个子块：灰 = 待取 · 蓝 = 推理程序正在处理 · 绿 = 已完成 · 红 = 失败 · 斜纹 = 因含未通过 QC 的切片被跳过；红点 = 子块里有未通过 QC 的切片</span></h2>
+<div id="stream-maps" class="active-list"></div>
+<details class="pl-logs" style="margin-top:10px"><summary class="muted">全部会话列表</summary>
 <div class="scroll"><table class="dense" id="streams"><thead><tr><th>会话</th><th>dataset</th><th>客户端</th><th>状态</th><th style="min-width:180px">进度</th><th class="num">子块</th><th class="num">已确认</th><th class="num">已取数据</th><th class="num">速率</th><th>创建</th><th></th></tr></thead><tbody id="streams-body">
 <tr><td colspan="11" class="muted">加载中…</td></tr>
-</tbody></table></div>
+</tbody></table></div></details>
 <script>document.addEventListener('DOMContentLoaded', () => deliveryInit());</script>
 {% endblock %}
