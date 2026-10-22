@@ -436,3 +436,91 @@ def pipeline_status(s: Session = Depends(get_session)):
         "active": active_runs(s),
         "last_scan": LAST_SCAN or None,
     }
+
+
+@pipeline_router.get("/dashboard")
+def pipeline_dashboard(days: int = 0, dataset_id: str | None = None, s: Session = Depends(get_session)):
+    """Everything the pipeline dashboard draws, per dimension, in one call.
+
+    days: only runs finished in the last N days (0 = all). dataset_id: only that dataset.
+    runs     every finished run (oldest first): retention, quality, grades, sections, wall time, throughput, per-stage seconds
+    datasets latest result per dataset: retention, grade, block grades, sections, problem sections
+    failures high / critical findings by problem type over the datasets' latest runs
+    checks   findings per check, split by severity, over the same runs
+    delivery training exports and inference streams"""
+    from datetime import datetime, timedelta, timezone
+
+    from emqc.api.routers.dashboard import FAILURE_ZH
+    from emqc.db.models import ExportJob, StreamSession
+
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days) if days > 0 else None
+    q = select(QCRun).where(QCRun.status == "done").order_by(QCRun.id)
+    if since:
+        q = q.where(QCRun.finished_at >= since)
+    if dataset_id:
+        q = q.where(QCRun.dataset_id == dataset_id)
+    runs_rows = list(s.scalars(q))
+    ids = [r.id for r in runs_rows]
+    dsm: dict[int, dict] = {}
+    for m in s.scalars(select(ETLMetric).where(ETLMetric.run_id.in_(ids or [-1]), ETLMetric.block_id.is_(None))):
+        dsm.setdefault(m.run_id, {})[m.metric_name] = m.metric_value
+    stage: dict[int, dict] = {}
+    for rid, sd in s.execute(select(QCBlock.run_id, QCBlock.stage_durations_json).where(QCBlock.run_id.in_(ids or [-1]))):
+        acc = stage.setdefault(rid, {})
+        for k, v in (sd or {}).items():
+            acc[k] = acc.get(k, 0.0) + float(v or 0)
+    runs = []
+    for r in runs_rows:
+        m = dsm.get(r.id, {})
+        wall = (r.finished_at - r.started_at).total_seconds() if r.started_at and r.finished_at else m.get("duration_s")
+        n = m.get("n_slices_input")
+        runs.append({"run_id": r.id, "dataset_id": r.dataset_id, "finished_at": r.finished_at.isoformat(timespec="minutes") if r.finished_at else None,
+                     "retention": r.retention_rate, "quality": r.quality_score, "grades": r.grade_counts_json or {}, "n_sections": n,
+                     "n_findings": m.get("n_findings"), "wall_s": wall, "sections_per_s": (n / wall) if n and wall else None,
+                     "bytes_read": m.get("bytes_read"), "stages": {k: round(v, 3) for k, v in stage.get(r.id, {}).items()}})
+
+    dq = select(Dataset).where(Dataset.latest_run_id.is_not(None)).order_by(Dataset.dataset_id)
+    if dataset_id:
+        dq = dq.where(Dataset.dataset_id == dataset_id)
+    in_window = set(ids)
+    dsets = [d for d in s.scalars(dq) if d.latest_run_id in in_window]
+    latest = [d.latest_run_id for d in dsets]
+    bad = dict(s.execute(select(QCSlice.run_id, func.count()).where(QCSlice.run_id.in_(latest or [-1]), QCSlice.passed.is_(False)).group_by(QCSlice.run_id)).all())
+    datasets = []
+    for d in dsets:
+        grades: dict[str, int] = {}
+        for b in d.blocks:
+            if b.latest_grade:
+                grades[b.latest_grade] = grades.get(b.latest_grade, 0) + 1
+        m = dsm.get(d.latest_run_id, {})
+        datasets.append({"dataset_id": d.dataset_id, "run_id": d.latest_run_id, "retention": d.latest_retention_rate, "grade": d.latest_grade,
+                         "block_grades": grades, "n_sections": m.get("n_slices_input"), "n_bad": bad.get(d.latest_run_id, 0)})
+    fq = select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest or [-1]), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.failure_type)
+    failures = sorted(({"type": t, "zh": FAILURE_ZH.get(t, t), "n": n} for t, n in s.execute(fq).all()), key=lambda x: -x["n"])
+    checks: dict[str, dict] = {}
+    for chk, sev, n in s.execute(select(QCFinding.check_name, QCFinding.severity, func.count()).where(QCFinding.run_id.in_(latest or [-1])).group_by(QCFinding.check_name, QCFinding.severity)):
+        checks.setdefault(chk, {"check": chk, "by_severity": {}, "n": 0})
+        checks[chk]["by_severity"][sev] = n
+        checks[chk]["n"] += n
+
+    eq = select(ExportJob).where(ExportJob.status == "done")
+    sq = select(StreamSession)
+    if dataset_id:
+        eq, sq = eq.where(ExportJob.dataset_id == dataset_id), sq.where(StreamSession.dataset_id == dataset_id)
+    if since:
+        eq, sq = eq.where(ExportJob.finished_at >= since), sq.where(StreamSession.created_at >= since)
+    exports, streams = list(s.scalars(eq)), list(s.scalars(sq))
+    delivery = {"n_exports": len(exports), "export_sections": sum(j.n_sections or 0 for j in exports), "export_bytes": sum(j.n_bytes or 0 for j in exports),
+                "n_streams": len(streams), "stream_chunks": sum(x.n_acked or 0 for x in streams), "stream_bytes": sum(x.n_bytes or 0 for x in streams),
+                "n_streams_open": sum(1 for x in streams if x.status == "open")}
+
+    tot = sum(d["n_sections"] or 0 for d in datasets)
+    kept = sum((d["n_sections"] or 0) * (d["retention"] or 0) for d in datasets)
+    sps = sorted(r["sections_per_s"] for r in runs if r["sections_per_s"])
+    n_err = s.scalar(select(func.count()).select_from(QCRun).where(QCRun.status == "error", *( [QCRun.finished_at >= since] if since else []), *( [QCRun.dataset_id == dataset_id] if dataset_id else []))) or 0
+    kpi = {"n_datasets": len(datasets), "n_runs": len(runs), "n_runs_error": n_err, "n_sections": tot, "retention": (kept / tot) if tot else None,
+           "n_bad": sum(d["n_bad"] for d in datasets), "n_problems": sum(f["n"] for f in failures), "sections_per_s": sps[len(sps) // 2] if sps else None,
+           "export_sections": delivery["export_sections"], "stream_chunks": delivery["stream_chunks"]}
+    all_ds = [x for (x,) in s.execute(select(Dataset.dataset_id).order_by(Dataset.dataset_id)).all()]
+    return {"filters": {"days": days, "dataset_id": dataset_id, "datasets": all_ds}, "kpi": kpi, "runs": runs, "datasets": datasets,
+            "failures": failures, "checks": sorted(checks.values(), key=lambda c: -c["n"]), "delivery": delivery}

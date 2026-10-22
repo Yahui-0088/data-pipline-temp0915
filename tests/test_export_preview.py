@@ -133,3 +133,21 @@ def test_npy_label_respects_declared_axes(tmp_path):
     np.save(tmp_path / "seg.npy", seg)
     r = open_label_volume(LocalFS(), str(tmp_path), "seg.npy", "npy", {"axes": "yxz"})
     assert r.shape == (5, 32, 48) and r.read_slice(3).max() == 7 and r.read_slice(2).max() == 0
+
+
+def test_pipeline_dashboard(registered, qc_run):
+    from fastapi.testclient import TestClient
+
+    from emqc.api.app import app
+
+    c = TestClient(app)
+    d = c.get("/api/v1/pipeline/dashboard").json()
+    assert d["kpi"]["n_runs"] >= 1 and d["kpi"]["n_sections"] > 0
+    assert 0 <= d["kpi"]["retention"] <= 1
+    assert d["runs"] and set(d["runs"][0]["stages"]) <= {"ingest", "slice_qc", "serial_qc", "aggregate", "persist"}
+    assert d["datasets"] and d["filters"]["datasets"]
+    ds = d["datasets"][0]["dataset_id"]
+    one = c.get("/api/v1/pipeline/dashboard", params={"dataset_id": ds, "days": 7}).json()
+    assert all(r["dataset_id"] == ds for r in one["runs"]) and one["kpi"]["n_datasets"] == 1
+    page = c.get("/pipeline").text
+    assert 'id="dashboard"' in page and "dashboard.js" in page

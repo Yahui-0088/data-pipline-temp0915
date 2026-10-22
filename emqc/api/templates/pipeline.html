@@ -6,6 +6,17 @@
 <p class="sub">扫描数据 → 选数据集与检查项 → 启动 → 按节点跟踪进度与日志。</p></div>
 <div class="actions"><button class="primary" onclick="scanDatasets(this)">扫描</button></div></div>
 
+<section id="dashboard" class="dash">
+  <div class="dash-filters">
+    <h2>指标总览</h2>
+    <label>时间 <select id="dash-days" class="text"><option value="0">全部</option><option value="1">最近 24 小时</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
+    <label>数据集 <select id="dash-ds" class="text"><option value="">全部数据集</option></select></label>
+    <span class="muted dash-note">每 10 秒自动刷新 · 悬停看数值 · 每张卡片可展开数据表</span>
+  </div>
+  <div id="dash-body"><div class="muted dash-empty">加载中…</div></div>
+</section>
+
+<h2>控制台</h2>
 <div class="grid side">
 <section class="card">
   <h2 style="margin-top:0">概览</h2>
@@ -52,5 +63,6 @@
 <div class="scroll"><table class="dense"><thead><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th class="num">quality</th><th>留存率</th><th>开始</th><th>结束</th><th></th></tr></thead><tbody>
 {% for r in recent %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td style="min-width:120px"><div style="display:flex;gap:8px;align-items:center">{{ m.meter(r.retention_rate) }}<span class="mono">{{ r.retention_rate|pct }}</span></div></td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td><td class="muted mono" style="font-size:11px">{{ (r.finished_at or '')|replace('T',' ') }}</td><td><button data-ds="{{ r.dataset_id }}" onclick="rerun(this.dataset.ds, this)">再跑一次</button></td></tr>{% else %}<tr><td colspan="9" class="muted">还没有完成的运行</td></tr>{% endfor %}
 </tbody></table></div>
-<script>document.addEventListener('DOMContentLoaded', () => pipelineInit({{ status.active|map(attribute='run_id')|list|tojson }}));</script>
+<script src="/static/dashboard.js?v={{ static_v('dashboard.js') }}" defer></script>
+<script>document.addEventListener('DOMContentLoaded', () => { dashboardInit(); pipelineInit({{ status.active|map(attribute='run_id')|list|tojson }}); });</script>
 {% endblock %}
