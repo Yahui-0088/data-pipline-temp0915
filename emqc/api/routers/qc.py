@@ -12,6 +12,7 @@ from emqc.db.models import Block, Dataset, ETLMetric, QCBlock, QCFinding, QCRun,
 from emqc.qc import catalog
 from emqc.qc.base import QCConfig, Severity
 from emqc.qc.runner import request_cancel, run_sync, start_run_async
+from emqc.qc.workflow import WORKFLOW_STAGE, topology as workflow_topology
 
 from ..serializers import event_to_dict, finding_to_dict, metric_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict
 
@@ -149,6 +150,8 @@ def run_events(run_id: int, after_id: int = 0, limit: int = 500, stage: str | No
     qy = select(QCRunEvent).where(QCRunEvent.run_id == run_id, QCRunEvent.id > after_id)
     if stage:
         qy = qy.where(QCRunEvent.stage == stage)
+    else:  # LangGraph node enter / exit records feed the workflow view, not the log (ask for stage=workflow to see them)
+        qy = qy.where((QCRunEvent.stage.is_(None)) | (QCRunEvent.stage != WORKFLOW_STAGE))
     if block_id:
         qy = qy.where(QCRunEvent.block_id == block_id)
     if level:
@@ -173,7 +176,7 @@ def run_graph(s: Session, run: QCRun) -> dict:
     blocks = list(s.scalars(select(Block).where(Block.dataset_id == run.dataset_id).order_by(Block.z_start, Block.y_start, Block.x_start)))
     wanted = set((run.config_json or {}).get("block_ids") or []) or None
     blocks = [b for b in blocks if wanted is None or b.block_id in wanted]
-    events = list(s.scalars(select(QCRunEvent).where(QCRunEvent.run_id == run.id).order_by(QCRunEvent.id)))
+    events = [e for e in s.scalars(select(QCRunEvent).where(QCRunEvent.run_id == run.id).order_by(QCRunEvent.id)) if e.stage != WORKFLOW_STAGE]
     done_blocks = {b.block_id: b for b in s.scalars(select(QCBlock).where(QCBlock.run_id == run.id))}
     finished = run.status in ("done", "error", "cancelled")
 
@@ -226,6 +229,56 @@ def run_graph(s: Session, run: QCRun) -> dict:
 @router.get("/runs/{run_id}/graph")
 def get_run_graph(run_id: int, s: Session = Depends(get_session)):
     return run_graph(s, _run(s, run_id))
+
+
+@router.get("/workflow")
+def get_workflow_topology():
+    """The LangGraph state graph every QC run executes: nodes, edges (conditional / back edges), a layered layout, mermaid source."""
+    return workflow_topology()
+
+
+@router.get("/runs/{run_id}/workflow")
+def get_run_workflow(run_id: int, after_id: int = 0, limit: int = 2000, s: Session = Depends(get_session)):
+    """Live state of a run's LangGraph execution.
+
+    trace: node enter / exit / error records with id > after_id (poll with `last_id`), in execution order;
+    nodes: per node visits, total / last duration, last phase (over the whole run, so a late joiner sees the full picture);
+    active: the node currently executing (entered, not yet exited) while the run is live."""
+    run = _run(s, run_id)
+    engine = (run.config_json or {}).get("engine")
+    if not engine:  # runs from before this field existed ran the loop; a run that has not started yet will use today's setting
+        from emqc.qc.runner import QCRunner
+
+        engine = QCRunner.engine() if run.status in ("queued", "running") else "loop"
+    base = select(QCRunEvent).where(QCRunEvent.run_id == run_id, QCRunEvent.stage == WORKFLOW_STAGE)
+    nodes: dict[str, dict] = {}
+    active = None
+    last_enter = None
+    n_steps = 0
+    for e in s.scalars(base.order_by(QCRunEvent.id)):
+        d = e.data_json or {}
+        n = d.get("node")
+        st = nodes.setdefault(n, {"visits": 0, "total_s": 0.0, "last_s": None, "phase": None, "errors": 0})
+        st["phase"] = d.get("phase")
+        if d.get("phase") == "enter":
+            st["visits"] += 1
+            n_steps += 1
+            active, last_enter = n, d
+        else:
+            if d.get("duration_s") is not None:
+                st["total_s"] = round(st["total_s"] + d["duration_s"], 4)
+                st["last_s"] = d["duration_s"]
+            if d.get("phase") == "error":
+                st["errors"] += 1
+            if active == n:
+                active = None
+    trace = [{"id": e.id, "ts": e.ts.isoformat(timespec="milliseconds") if e.ts else None, **(e.data_json or {})}
+             for e in s.scalars(base.where(QCRunEvent.id > after_id).order_by(QCRunEvent.id).limit(limit))]
+    live = run.status in ("queued", "running")
+    return {"run_id": run.id, "status": run.status, "engine": engine, "n_steps": n_steps, "nodes": nodes,
+            "active": active if live else None, "position": last_enter if live else None,
+            "n_blocks": run.n_blocks, "n_blocks_done": run.n_blocks_done,
+            "trace": trace, "last_id": trace[-1]["id"] if trace else after_id}
 
 
 @router.get("/runs/{run_id}/blocks")

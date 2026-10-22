@@ -249,7 +249,7 @@ async function sysTick() {
 }
 
 // ---------------------------------------------------------------- pipeline console
-let pipelineState = { runs: {}, graphs: {}, finished: new Set() };
+let pipelineState = { runs: {}, graphs: {}, finished: new Set(), wf: {}, openDag: {} };
 function toggleChecks(ev, on) { ev.preventDefault(); document.querySelectorAll('input[name=check]').forEach(c => c.checked = on); }
 
 async function launchRuns(ev) {
@@ -286,7 +286,8 @@ function runCard(r, g) {
       <progress max="100" value="${p}"></progress><span class="mono">${nDone}/${r.n_blocks} blocks · ${r.n_findings} findings</span>
       <span class="mono">${ret} ${grades}</span><span class="muted mono" style="font-size:11px">${esc(r.stage || "")}</span>
       <button class="danger" onclick="cancelRun(${r.run_id}, this)" ${r.cancel_requested ? "disabled" : ""}>取消</button></div>
-    <div class="graph-wrap">${g ? renderGraph(g) : '<span class="muted">加载节点图…</span>'}</div></div>`;
+    <div class="wf-slot" data-run="${r.run_id}"></div>
+    <details class="graph-wrap" ${pipelineState.openDag[r.run_id] ? "open" : ""} ontoggle="pipelineState.openDag[${r.run_id}] = this.open"><summary class="muted">按 z 段 / tile 展开的节点图</summary>${g ? renderGraph(g) : '<span class="muted">加载节点图…</span>'}</details></div>`;
 }
 
 async function refreshActive() {
@@ -297,6 +298,14 @@ async function refreshActive() {
   const prev = Object.keys(pipelineState.runs).map(Number);
   box.innerHTML = runs.length ? runs.map((r, i) => runCard(r, graphs[i])).join("") : '<div class="empty" id="active-empty">没有正在运行的任务</div>';
   const now = new Set(runs.map(x => x.run_id));
+  if (typeof WorkflowView === "function") {
+    for (const slot of box.querySelectorAll(".wf-slot")) {  // re-attach the live view instead of rebuilding it (keeps the animation)
+      const id = Number(slot.dataset.run);
+      let w = pipelineState.wf[id];
+      if (!w) { const el = document.createElement("div"); w = pipelineState.wf[id] = new WorkflowView(el, id, { live: true, compact: true }); }
+      slot.appendChild(w.el);
+    }
+  }
   const finished = prev.filter(id => !now.has(id) && !pipelineState.finished.has(id));
   pipelineState.runs = Object.fromEntries(runs.map(x => [x.run_id, x]));
   const panel = document.getElementById("logpanel");
@@ -305,6 +314,8 @@ async function refreshActive() {
     if (list.length) panel._log.setRuns(list);
     panel._log.tick();
   }
+  pipelineState.wfDone = pipelineState.wfDone || {};
+  for (const id of Object.keys(pipelineState.wf).map(Number)) if (!now.has(id)) { pipelineState.wfDone[id] = pipelineState.wf[id]; delete pipelineState.wf[id]; }  // keeps polling until it has played the last steps
   for (const id of finished) { pipelineState.finished.add(id); await showFinished(id); }
 }
 
@@ -326,6 +337,8 @@ async function showFinished(runId) {
       <span class="mono">留存率 <b style="font-size:16px">${pct(run.retention_rate)}</b> · quality ${run.quality_score == null ? "–" : run.quality_score.toFixed(3)} · ${grades}</span>
       <span class="muted mono" style="font-size:11px">${run.metrics && run.metrics.n_slices_passed != null ? run.metrics.n_slices_passed + "/" + run.metrics.n_slices_input + " tile-sections 通过" : ""}${run.metrics && run.metrics.duration_s ? " · " + run.metrics.duration_s.toFixed(1) + " s" : ""}</span></div>
     <table class="dense" style="margin-top:8px"><thead><tr><th>block</th><th>等级</th><th class="num">留存率</th><th class="num">通过</th><th class="num">clean run</th><th>主要问题</th><th class="num">耗时 s</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const w = (pipelineState.wfDone || {})[runId];
+  if (w) { const slot = document.createElement("div"); slot.className = "wf-slot"; slot.appendChild(w.el); card.querySelector(".head").after(slot); delete pipelineState.wfDone[runId]; }
   box.prepend(card);
 }
 
@@ -341,12 +354,14 @@ async function runPageInit(runId, live) {
   const panel = document.getElementById("logpanel");
   const L = panel ? LogPanel(panel, { runId }) : null;
   if (L) { L.setRuns([{ run_id: runId, dataset_id: "", status: live ? "running" : "done" }]); L.reset(); }
+  const wfEl = document.getElementById("workflow");
+  if (wfEl && typeof WorkflowView === "function") new WorkflowView(wfEl, runId, { live });
   const draw = async () => {
     const g = await (await fetch(`/api/v1/qc/runs/${runId}/graph`)).json();
     document.getElementById("graph").innerHTML = renderGraph(g);
   };
   await draw();
-  if (live) { const t = setInterval(async () => { await draw(); if (L) L.tick(); const r = await (await fetch(`/api/v1/qc/runs/${runId}`)).json(); if (!["queued", "running"].includes(r.status)) { clearInterval(t); location.reload(); } }, 1500); }
+  if (live) { const t = setInterval(async () => { await draw(); if (L) L.tick(); const r = await (await fetch(`/api/v1/qc/runs/${runId}`)).json(); if (!["queued", "running"].includes(r.status)) { clearInterval(t); setTimeout(() => location.reload(), 2500); } }, 1500); }
 }
 
 
