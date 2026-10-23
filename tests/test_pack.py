@@ -79,3 +79,23 @@ def test_pack_api_and_page(registered, qc_run):
     assert c.post("/api/v1/packs", json={"dataset_id": registered, "cells": [["raw", "slice"]], "patch_size": [1, 2]}).status_code == 422
     page = c.get(f"/training?dataset={registered}").text
     assert "训练数据包" in page and "training.js" in page and 'href="/training"' in page
+
+
+def test_lan_share_guard(monkeypatch):
+    import pytest
+
+    from emqc import share
+    from emqc.config import settings
+
+    assert share.check_before_listen("127.0.0.1") == []
+    monkeypatch.setattr(settings, "auth_disabled", True)
+    with pytest.raises(SystemExit):
+        share.check_before_listen("0.0.0.0")
+    monkeypatch.setattr(settings, "auth_disabled", False)
+    monkeypatch.setattr(settings, "auth_open", True)
+    assert share.check_before_listen("0.0.0.0")            # 试用模式：放行但有警告
+    monkeypatch.setattr(settings, "auth_open", False)
+    assert share.check_before_listen("0.0.0.0") == []
+    monkeypatch.setattr(settings, "api_host", "0.0.0.0")
+    i = share.info(8793)
+    assert i["lan"] and i["auth"] == "password" and all(u.endswith(":8793") for u in i["urls"])

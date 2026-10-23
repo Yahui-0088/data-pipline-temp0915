@@ -424,7 +424,10 @@ def pipeline_status(s: Session = Depends(get_session)):
 
     ds_status = dict(s.execute(select(Dataset.status, func.count()).group_by(Dataset.status)).all())
     run_status = dict(s.execute(select(QCRun.status, func.count()).group_by(QCRun.status)).all())
+    from emqc import share
+
     return {
+        "share": share.info(),
         "source": {"data_root": str(settings.data_root), "dataset_glob": settings.dataset_glob, "preview_dir": str(settings.preview_dir), "roots": settings.all_roots, "n_remote": len(settings.all_roots) - 1},
         "pipeline": {
             "version": settings.pipeline_version, "block_size_z": settings.block_size_z, "block_size_xy": settings.block_size_xy,

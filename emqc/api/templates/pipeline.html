@@ -14,6 +14,7 @@
     <dt>数据来源</dt><dd>本地{% if status.source.n_remote %} + {{ status.source.n_remote }} 个远程服务器{% endif %}</dd>
     <dt>block</dt><dd>{{ status.pipeline.block_size_z }} 张切片 × {% if status.pipeline.block_size_xy %}{{ status.pipeline.block_size_xy }}² tile{% else %}整张平面{% endif %}</dd>
     <dt>检查项</dt><dd>{{ status.pipeline.checks.implemented }} / {{ status.pipeline.checks.total }} 已实现 · <a href="/checks">查看</a></dd>
+    <dt>访问</dt><dd>{% if status.share.lan %}内网共享中：{% for u in status.share.urls %}<code>{{ u }}</code> {% else %}<code>http://&lt;服务器 IP&gt;:{{ status.share.port }}</code>{% endfor %}<br><span class="muted">{{ status.share.auth_zh }}</span>{% else %}只在服务器本机（经 SSH 隧道访问） · <span class="muted">启动时加 <code>--lan</code> 对内网开放</span>{% endif %}</dd>
     <dt>上次扫描</dt><dd id="last-scan" class="muted">{% if status.last_scan %}{{ status.last_scan.at|replace('T',' ') }}：新增 {{ status.last_scan.registered|length }}，更新 {{ status.last_scan.updated|length }}，错误 {{ status.last_scan.errors|length }}{% else %}尚未扫描{% endif %}</dd>
   </dl>
   <h2>资源 <span class="cnt" id="sys-meta"></span></h2>

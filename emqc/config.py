@@ -93,7 +93,8 @@ class Settings(BaseSettings):
     # file:// 和其他主机一律拒绝，免得有人借服务器去探内网或读本机文件
     crawl_allowed_sources: str = "gs://h01-release/"
 
-    api_host: str = "127.0.0.1"
+    api_host: str = "127.0.0.1"         # 0.0.0.0 = 对内网开放（scripts/serve.py --lan 同义），见 emqc/share.py
+    allow_lan_without_login: bool = False  # 对内网开放又关了登录时默认拒绝启动；确实要这样才置 1
     api_port: int = 8765
 
     @property
