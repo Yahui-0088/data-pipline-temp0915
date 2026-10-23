@@ -469,9 +469,6 @@ def pipeline_dashboard(days: int = 0, dataset_id: str | None = None, s: Session 
         acc = stage.setdefault(rid, {})
         for k, v in (sd or {}).items():
             acc[k] = acc.get(k, 0.0) + float(v or 0)
-    per_check: dict[int, dict] = {}
-    for rid, chk, n in s.execute(select(QCFinding.run_id, QCFinding.check_name, func.count()).where(QCFinding.run_id.in_(ids or [-1]), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.run_id, QCFinding.check_name)):
-        per_check.setdefault(rid, {})[chk] = n
     runs = []
     for r in runs_rows:
         m = dsm.get(r.id, {})
@@ -480,7 +477,7 @@ def pipeline_dashboard(days: int = 0, dataset_id: str | None = None, s: Session 
         runs.append({"run_id": r.id, "dataset_id": r.dataset_id, "finished_at": r.finished_at.isoformat(timespec="minutes") if r.finished_at else None,
                      "retention": r.retention_rate, "quality": r.quality_score, "grades": r.grade_counts_json or {}, "n_sections": n,
                      "n_findings": m.get("n_findings"), "wall_s": wall, "sections_per_s": (n / wall) if n and wall else None,
-                     "bytes_read": m.get("bytes_read"), "checks": per_check.get(r.id, {}), "stages": {k: round(v, 3) for k, v in stage.get(r.id, {}).items()}})
+                     "bytes_read": m.get("bytes_read"), "stages": {k: round(v, 3) for k, v in stage.get(r.id, {}).items()}})
 
     dq = select(Dataset).where(Dataset.latest_run_id.is_not(None)).order_by(Dataset.dataset_id)
     if dataset_id:
