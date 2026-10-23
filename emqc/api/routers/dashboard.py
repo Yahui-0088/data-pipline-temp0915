@@ -368,6 +368,12 @@ def delivery_page(request: Request, dataset: str | None = None, s: Session = Dep
     return _render("delivery.html", request, datasets=datasets, jobs=jobs, sessions=sessions, preselect=dataset, export_dir=str(settings.export_dir), api_base=base, active="delivery")
 
 
+@router.get("/training", response_class=HTMLResponse)
+def training_page(request: Request, dataset: str | None = None, s: Session = Depends(get_session)):
+    datasets = [dataset_to_dict(d) for d in s.scalars(select(Dataset).order_by(Dataset.dataset_id))]
+    return _render("training.html", request, datasets=datasets, selected=dataset, active="training")
+
+
 @router.get("/patches", response_class=HTMLResponse)
 def patches_page(request: Request, dataset: str | None = None, s: Session = Depends(get_session)):
     from emqc.db.models import PATCH_TYPES

@@ -147,6 +147,11 @@ class ExportRunner:
         s.commit()
 
     def run(self) -> dict:
+        with session_scope() as s:
+            if (s.get(ExportJob, self.job_id).params_json or {}).get("kind") == "pack":   # 训练数据包借用导出任务表，由它自己的 runner 跑
+                from emqc.patches.pack import PackRunner
+
+                return PackRunner(self.job_id).run()
         t_start = time.perf_counter()
         with session_scope() as s:
             job = s.get(ExportJob, self.job_id)

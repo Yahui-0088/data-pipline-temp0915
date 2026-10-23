@@ -86,12 +86,13 @@ def preview_export(dataset_id: str, min_run: int = 1, shard_z: int = 16, min_qua
 
 @exports.get("")
 def list_exports(dataset_id: str | None = None, status: str | None = None, limit: int = 50, s: Session = Depends(get_session)):
-    q = select(ExportJob).order_by(ExportJob.id.desc()).limit(limit)
+    q = select(ExportJob).order_by(ExportJob.id.desc()).limit(limit * 3)
     if dataset_id:
         q = q.where(ExportJob.dataset_id == dataset_id)
     if status:
         q = q.where(ExportJob.status.in_(status.split(",")))
-    return [export_job_to_dict(j) for j in s.scalars(q)]
+    # 训练数据包也记在导出任务表里，但有自己的页面（/training），这里不混进来
+    return [export_job_to_dict(j) for j in s.scalars(q) if (j.params_json or {}).get("kind") != "pack"][:limit]
 
 
 def _job(s: Session, job_id: int) -> ExportJob:
@@ -342,3 +343,161 @@ def stream_close(stream_id: int, body: CloseIn, s: Session = Depends(get_session
     sess.finished_at = _now()
     s.commit()
     return stream_to_dict(sess)
+
+
+# ============================================================================= training packs (task x granularity)
+
+packs = APIRouter(prefix="/api/v1/packs", tags=["delivery"])
+
+
+class PackIn(BaseModel):
+    dataset_id: str
+    cells: list[list[str]] | None = None      # [[task, level], ...]
+    max_slices: int | None = Field(None, ge=1, le=100000)
+    min_run: int | None = Field(None, ge=1, le=10000)
+    shard_z: int | None = Field(None, ge=0, le=10000)
+    max_segments: int | None = Field(None, ge=1, le=100000)
+    patch_size: list[int] | None = None
+    n_patches: int | None = Field(None, ge=1, le=20000)
+    seed: int | None = None
+    qc_clean_ratio: float | None = Field(None, ge=0, le=20)
+    min_quality: float | None = None
+
+    @field_validator("patch_size")
+    @classmethod
+    def _size(cls, v):
+        if v is not None and (len(v) != 3 or any(int(x) < 1 for x in v)):
+            raise ValueError("patch_size 要三个正整数：dz, dy, dx")
+        return v
+
+    def params(self) -> dict:
+        return {k: v for k, v in self.model_dump().items() if k != "dataset_id" and v is not None}
+
+
+def _pack_ds(s: Session, dataset_id: str) -> Dataset:
+    ds = s.get(Dataset, dataset_id)
+    if ds is None:
+        raise HTTPException(404, f"unknown dataset {dataset_id}")
+    return ds
+
+
+@packs.post("/plan")
+def pack_plan(body: PackIn, s: Session = Depends(get_session)):
+    """The task x granularity matrix for one dataset: which cells can be made, why not, and how many samples. Writes nothing."""
+    from emqc.patches.pack import plan_pack
+
+    return plan_pack(s, _pack_ds(s, body.dataset_id), body.params())
+
+
+@packs.post("", status_code=202, dependencies=[Depends(require_reviewer)])
+def create_pack(body: PackIn, s: Session = Depends(get_session)):
+    from emqc.patches.pack import LEVELS_OF, start_pack_async
+
+    _pack_ds(s, body.dataset_id)
+    cells = [c for c in (body.cells or []) if len(c) == 2 and c[0] in LEVELS_OF and c[1] in LEVELS_OF[c[0]]]
+    if not cells:
+        raise HTTPException(422, "至少选一格（功能 × 粒度）")
+    job_id = start_pack_async(body.dataset_id, **{**body.params(), "cells": cells})
+    s.rollback()
+    return export_job_to_dict(s.get(ExportJob, job_id))
+
+
+@packs.get("")
+def list_packs(dataset_id: str | None = None, limit: int = 30, s: Session = Depends(get_session)):
+    q = select(ExportJob).order_by(ExportJob.id.desc()).limit(500)
+    if dataset_id:
+        q = q.where(ExportJob.dataset_id == dataset_id)
+    out = []
+    for j in s.scalars(q):
+        if (j.params_json or {}).get("kind") == "pack":
+            d = export_job_to_dict(j)
+            m = Path(j.out_dir) / j.dataset_id / "pack_manifest.json"
+            if m.is_file():
+                try:
+                    d["cells"] = json.loads(m.read_text()).get("cells", [])
+                except ValueError:
+                    d["cells"] = []
+            out.append(d)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _pack_job(s: Session, job_id: int) -> tuple[ExportJob, Path]:
+    j = _job(s, job_id)
+    if (j.params_json or {}).get("kind") != "pack":
+        raise HTTPException(404, f"export job {job_id} is not a training pack")
+    return j, (Path(j.out_dir) / j.dataset_id).resolve()
+
+
+@packs.get("/{job_id}/manifest")
+def pack_manifest(job_id: int, s: Session = Depends(get_session)):
+    j, root = _pack_job(s, job_id)
+    p = root / "pack_manifest.json"
+    if not p.is_file():
+        raise HTTPException(404, "manifest not written yet")
+    return json.loads(p.read_text())
+
+
+def _pack_rows(root: Path, task: str, level: str) -> list[dict]:
+    import csv
+
+    if not task.isidentifier() or not level.isidentifier():
+        raise HTTPException(422, "bad task / level")
+    f = root / task / level / "index.csv"
+    if not f.is_file():
+        raise HTTPException(404, f"{task}/{level} 不在这个数据包里")
+    return list(csv.DictReader(f.open(encoding="utf-8")))
+
+
+@packs.get("/{job_id}/samples")
+def pack_samples(job_id: int, task: str, level: str, n: int = 12, partition: str | None = None, s: Session = Depends(get_session)):
+    """A spread of n samples of one cell (for the thumbnails on the page), with their index rows."""
+    j, root = _pack_job(s, job_id)
+    rows = _pack_rows(root, task, level)
+    idx = [i for i, r in enumerate(rows) if not partition or r["partition"] == partition]
+    if len(idx) > n:
+        idx = [idx[int(k)] for k in np.linspace(0, len(idx) - 1, n).round()]
+    return {"n_total": len(rows), "samples": [{"i": i, **{k: rows[i][k] for k in ("file", "label_file", "label", "partition", "block_id", "z0", "z1", "grade", "quality")},
+                                                "thumb": f"/api/v1/packs/{job_id}/thumb?task={task}&level={level}&i={i}"} for i in idx]}
+
+
+@packs.get("/{job_id}/thumb")
+def pack_thumb(job_id: int, task: str, level: str, i: int, size: int = 160, s: Session = Depends(get_session)):
+    """PNG of one sample: its middle section, with the label (ids / boundary / mask) drawn on top in colour."""
+    from fastapi.responses import Response
+    from PIL import Image
+
+    j, root = _pack_job(s, job_id)
+    rows = _pack_rows(root, task, level)
+    if not 0 <= i < len(rows):
+        raise HTTPException(404, "no such sample")
+    r = rows[i]
+
+    def load(rel):
+        f = (root / rel).resolve()
+        if root not in f.parents or not f.is_file():
+            raise HTTPException(404, "sample file missing")
+        a = np.load(f, mmap_mode="r") if f.suffix == ".npy" else np.asarray(Image.open(f))
+        return np.asarray(a[a.shape[0] // 2] if a.ndim == 3 else a)
+
+    em = load(r["file"])
+    if em.dtype != np.uint8:
+        lo, hi = np.percentile(em, 0.5), np.percentile(em, 99.5)
+        em = (np.clip((em.astype(np.float32) - lo) / ((hi - lo) or 1), 0, 1) * 255).astype(np.uint8)
+    rgb = np.stack([em] * 3, -1).astype(np.float32)
+    if r.get("label_file"):
+        L = load(r["label_file"])
+        if task == "segmentation" or L.max() > 1:
+            ids = L.astype(np.uint64)
+            col = np.stack([(ids * 2654435761) % 255, (ids * 40503) % 255, (ids * 2246822519) % 255], -1).astype(np.float32)
+            m = (ids != 0)[..., None]
+            rgb = np.where(m, rgb * 0.55 + col * 0.45, rgb)
+        else:
+            m = (L != 0)[..., None]
+            rgb = np.where(m, rgb * 0.35 + np.array([255, 70, 60], np.float32) * 0.65, rgb)
+    im = Image.fromarray(rgb.clip(0, 255).astype(np.uint8))
+    im.thumbnail((max(32, min(size, 512)),) * 2)
+    buf = __import__("io").BytesIO()
+    im.save(buf, "PNG")
+    return Response(buf.getvalue(), media_type="image/png", headers={"Cache-Control": "max-age=3600"})
