@@ -54,6 +54,9 @@
 </div>
 {% endif %}
 
+<h2>数据分布图 <span class="cnt">每个点是一张切片，位置由亮度、对比度、清晰度等统计量和各检查分数决定 · 坏切片聚成的团就是同一种问题</span></h2>
+<div class="card" id="slicemap"><span class="muted">加载中…</span></div>
+
 <h2>工作流 <span class="cnt">{% if run.config.get('engine') == 'langgraph' %}LangGraph 状态图 · 运行时节点逐个点亮，点检查类节点只看它的日志{% else %}LangGraph 状态图{% endif %}</span></h2>
 <div class="card" id="workflow"></div>
 
@@ -83,5 +86,7 @@
 </tbody></table></div>
 
 <details style="margin-top:22px"><summary>本次运行的配置</summary><div class="card" style="margin-top:8px"><pre class="json" style="max-width:none">{{ run.config|tojson(indent=1) }}</pre></div></details>
+<script src="/static/slicemap.js?v={{ static_v('slicemap.js') }}" defer></script>
+<script>document.addEventListener('DOMContentLoaded', () => sliceMapInit({{ run.run_id }}));</script>
 <script>document.addEventListener('DOMContentLoaded', () => runPageInit({{ run.run_id }}, {{ 'true' if run.status in ['queued','running'] else 'false' }}));</script>
 {% endblock %}

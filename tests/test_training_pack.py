@@ -1,4 +1,4 @@
-"""训练数据包：矩阵规划、按格产出、index.csv 与文件对得上、标签与 EM 同形状、页面和缩略图接口。"""
+"""训练数据包（文件名排在 test_patches 之后：它要先验证 GT，test_patches 需要看到「还没验证」的初始状态）：矩阵规划、按格产出、index.csv 与文件对得上、标签与 EM 同形状、页面和缩略图接口。"""
 import csv
 from pathlib import Path
 

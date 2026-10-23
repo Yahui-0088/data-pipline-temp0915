@@ -22,6 +22,14 @@ STAT_FEATURES: list[tuple[str, str]] = [
     ("lapvar", "log"), ("sharpness", "log"),
     ("frac_fill", "lin"), ("n_fill_components", "lin"), ("fill_largest_frac", "lin"), ("fill_elongation", "log"), ("fill_span", "lin"),
 ]
+# 给人看的名字（数据分布图的坐标轴说明用）
+STAT_ZH = {"mean": "平均亮度", "std": "对比度", "p1": "暗部亮度", "p50": "中位亮度", "p99": "亮部亮度", "frac_low_sat": "过暗像素比例", "frac_high_sat": "过亮像素比例",
+           "frac_mode": "单一灰度占比", "entropy_bits": "信息量（熵）", "lapvar": "细节量", "sharpness": "清晰度", "frac_fill": "无数据区比例",
+           "n_fill_components": "无数据区块数", "fill_largest_frac": "最大无数据区", "fill_elongation": "无数据区细长度", "fill_span": "无数据区跨度"}
+CHECK_ZH = {"blank_slice": "空白切片", "missing_slice": "缺失切片", "corrupt_slice": "损坏切片", "severe_blur": "严重模糊", "saturation": "过曝 / 饱和",
+            "crack": "裂缝 / 褶皱", "brightness_jump": "亮度突变", "contrast_drift": "对比度漂移", "charging_artifact": "荷电伪影", "contamination": "表面污染",
+            "slice_jump": "切片跳变", "local_misalignment": "局部错位", "global_misalignment": "整体错位", "z_order_error": "顺序错误",
+            "local_deformation": "局部形变", "section_deformation": "切片形变"}
 # 没有填充区的切片这些字段不存在：等价于 0（没有黑块）
 STAT_ABSENT_IS_ZERO = {"frac_fill", "n_fill_components", "fill_largest_frac", "fill_elongation", "fill_span"}
 

@@ -336,6 +336,53 @@ def similar_slices(run_id: int, block_id: str, z: int, k: int = 12, s: Session =
             "n_pool": len(space.keys), "n_same_problem": same, "features": {"stats": space.stat_names, "scores": space.score_names}, "hits": hits}
 
 
+@router.get("/runs/{run_id}/map")
+def run_slice_map(run_id: int, max_points: int = 4000, s: Session = Depends(get_session)):
+    """Every slice of a run as a point on a 2-D map (PCA of the same features "find similar" uses: statistics + check scores).
+
+    Close points look alike by the numbers; a cluster of failed slices away from the clean cloud is one kind of problem.
+    Each axis says which features drive it, so the map is readable without knowing PCA."""
+    from emqc.api.routers.dashboard import FAILURE_ZH
+    import numpy as np
+
+    from emqc.qc.similar import CHECK_ZH, STAT_ZH, build_space
+
+    from ..serializers import preview_url
+
+    _run(s, run_id)
+    rows = s.execute(select(QCSlice.block_id, QCSlice.z, QCSlice.stats_json, QCSlice.scores_json, QCSlice.failure_types, QCSlice.max_severity,
+                            QCSlice.passed, QCSlice.preview_path, QCSlice.quality_score, QCSlice.dataset_id)
+                     .where(QCSlice.run_id == run_id, QCSlice.status == "ok").order_by(QCSlice.z, QCSlice.block_id)).all()
+    if len(rows) < 3:
+        return {"run_id": run_id, "points": [], "axes": [], "n": len(rows)}
+    if len(rows) > max_points:   # keep every failed slice, thin the clean ones evenly
+        bad = [r for r in rows if not r.passed]
+        good = [r for r in rows if r.passed]
+        step = max(1, len(good) // max(1, max_points - len(bad)))
+        rows = bad + good[::step]
+    space = build_space([(r.stats_json or {}, r.scores_json or {}) for r in rows], keys=list(range(len(rows))))
+    X = space.X - space.X.mean(axis=0)
+    if X.shape[1] < 2:
+        return {"run_id": run_id, "points": [], "axes": [], "n": len(rows)}
+    U, S, Vt = np.linalg.svd(X, full_matrices=False)
+    P = X @ Vt[:2].T
+    var = (S ** 2) / max(float((S ** 2).sum()), 1e-12)
+    names = [STAT_ZH.get(n, n) for n in space.stat_names] + [CHECK_ZH.get(n, FAILURE_ZH.get(n, n)) + "分数" for n in space.score_names]
+    axes = []
+    for k in range(2):
+        order = np.argsort(-np.abs(Vt[k]))[:3]
+        axes.append({"explained": round(float(var[k]), 3), "drivers": [{"feature": names[i], "sign": 1 if Vt[k][i] > 0 else -1} for i in order]})
+    pts = []
+    for r, (x, y) in zip(rows, P.tolist()):
+        types = list(r.failure_types or [])
+        pts.append({"x": round(x, 4), "y": round(y, 4), "block_id": r.block_id, "z": r.z, "passed": bool(r.passed), "type": types[0] if types else None,
+                    "types": types, "zh": [FAILURE_ZH.get(t, t) for t in types], "severity": r.max_severity,
+                    "quality": None if r.quality_score is None else round(float(r.quality_score), 3),
+                    "url": preview_url(r.preview_path) or f"/api/v1/data/{r.dataset_id}/preview/z/{r.z}.png",
+                    "href": f"/datasets/{r.dataset_id}/blocks/{r.block_id}?run_id={run_id}#z{r.z}"})
+    return {"run_id": run_id, "n": len(pts), "axes": axes, "points": pts, "type_zh": {t: FAILURE_ZH.get(t, t) for p in pts for t in p["types"]}}
+
+
 @router.get("/runs/{run_id}/blocks")
 def get_run_blocks(run_id: int, s: Session = Depends(get_session)):
     _run(s, run_id)

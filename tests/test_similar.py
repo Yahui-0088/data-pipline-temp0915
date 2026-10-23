@@ -84,3 +84,19 @@ def test_calib_eval_script_runs(tmp_path, data_root):
     assert r.returncode == 0, r.stderr[-2000:]
     rep = (out / "report.md").read_text()
     assert "只用统计量" in rep and "裂缝" in rep and (out / "results.json").is_file()
+
+
+def test_run_slice_map(registered, qc_run):
+    from emqc.api.app import app
+
+    c = TestClient(app)
+    d = c.get(f"/api/v1/qc/runs/{qc_run}/map").json()
+    assert d["n"] > 10 and len(d["points"]) == d["n"] and len(d["axes"]) == 2
+    assert all(a["drivers"] and 0 <= a["explained"] <= 1 for a in d["axes"])
+    assert d["axes"][0]["explained"] >= d["axes"][1]["explained"]
+    p = d["points"][0]
+    assert {"x", "y", "z", "passed", "url", "href"} <= set(p)
+    assert any(not q["passed"] for q in d["points"])
+    small = c.get(f"/api/v1/qc/runs/{qc_run}/map", params={"max_points": 10}).json()
+    assert sum(not q["passed"] for q in small["points"]) == sum(not q["passed"] for q in d["points"])   # 抽稀时坏切片一张不丢
+    assert f"sliceMapInit({qc_run})" in c.get(f"/runs/{qc_run}").text
