@@ -7,11 +7,11 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
-    this.home = { az: CONFIG.camera.initialAzimuth, el: CONFIG.camera.shapeElevation.wave };
+    this.home = { az: CONFIG.camera.initialAzimuth, el: CONFIG.camera.initialElevation };
     this.reset(true);
   }
 
-  /** 初始 / 重置视角：每种图案有自己的电影感仰角。 */
+  /** 初始 / 重置视角。 */
   setHome(az, el, immediate = true) {
     this.home = { az, el: clamp(el, -CONFIG.camera.maxElevation, CONFIG.camera.maxElevation) };
     this.reset(immediate);

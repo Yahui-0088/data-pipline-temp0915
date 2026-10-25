@@ -117,7 +117,7 @@ export class ParticleSculpture {
     this.P = makeParticles(count, mulberry32(20261025));
     this.shapes = {};                                     // 预先算好每种图案的目标位置
     for (const s of SHAPES) this.shapes[s] = buildShape(s, this.P);
-    this.shape = SHAPES.includes(shape) ? shape : CONFIG.sculpture.defaultShape;
+    this.shape = SHAPES.includes(shape) ? shape : SHAPES[0];
     this.from = this.shape;
     this.morph = { t: 1, dur: CONFIG.sculpture.morphSeconds };
 

@@ -21,30 +21,29 @@ async function main() {
 
   const prefs = loadPrefs();
   const rig = new CameraRig(gscene.camera);
-  rig.setHome(CONFIG.camera.initialAzimuth, CONFIG.camera.shapeElevation[prefs.shape]);
 
   const data = new DatasetManager();
   await data.load();
   const sculpture = new ParticleSculpture(data, {
     count: lowPowerDevice() ? CONFIG.sculpture.particlesLow : CONFIG.sculpture.particlesHigh,
-    pixelRatio: gscene.pixelRatio, shape: prefs.shape,
+    pixelRatio: gscene.pixelRatio,
   });
   gscene.add(sculpture.points);
   const fitView = () => sculpture.setViewHeight(container.clientHeight);
   addEventListener("resize", fitView);
   fitView();
 
-  let speed = 1, autoRotate = true, lastInput = performance.now();
+  // 外观固定：紫色，大小 / 亮度 / 辉光 / 速度取中间值
+  const L = CONFIG.look, T = CONFIG.themes[CONFIG.defaults.theme];
+  sculpture.setColors(T.a, T.b);
+  sculpture.setSize(L.size);
+  sculpture.setBrightness(L.brightness);
+  gscene.setGlow(L.glow);
+  const speed = L.speed;
+
+  let autoRotate = true, lastInput = performance.now();
   const touch = () => { lastInput = performance.now(); };
   const ui = new UI(prefs, {
-    shape: (s) => { sculpture.setShape(s); rig.setHome(rig.target.az, CONFIG.camera.shapeElevation[s], false); touch(); },
-    color: ({ a, b }) => sculpture.setColors(a, b),
-    tune: (key, v) => {
-      if (key === "size") sculpture.setSize(v);
-      else if (key === "brightness") sculpture.setBrightness(v);
-      else if (key === "glow") gscene.setGlow(v);
-      else if (key === "speed") speed = v;
-    },
     auto: (on) => { autoRotate = on; },
     reset: () => { rig.reset(); touch(); },
   });
@@ -79,7 +78,7 @@ async function main() {
     const wallDt = Math.max(0.001, (now - last) / 1000);
     const dt = Math.min(0.1, wallDt);
     last = now;
-    clock += dt * speed;                                    // 速度滑杆：只影响流动，不影响镜头和变形
+    clock += dt * speed;                                    // 只影响流动，不影响镜头
     const idle = autoRotate && !drag && (now - lastInput) / 1000 > CONFIG.camera.idleBeforeAutoRotate;
     rig.update(dt, idle);
     const h = sculpture.pick(pointer ? pointer.x : null, pointer ? pointer.y : null, gscene.camera, innerWidth, innerHeight);

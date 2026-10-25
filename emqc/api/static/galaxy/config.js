@@ -18,19 +18,21 @@ export const CONFIG = {
     white: { label: "白", a: "#ffffff", b: "#b8a6ff" },
     ice: { label: "冰蓝", a: "#eef9ff", b: "#78c6ff" },
     electric: { label: "电光蓝", a: "#d6e6ff", b: "#2c63ff" },
-    violet: { label: "紫", a: "#f2e8ff", b: "#8d5bff" },
+    violet: { label: "紫", a: "#e6d4ff", b: "#7b3dff" },
     magenta: { label: "品红", a: "#ffe4f6", b: "#ff3fb2" },
     emerald: { label: "翡翠绿", a: "#e8fff4", b: "#1fd58a" },
   },
-  defaults: { shape: "wave", theme: "white", size: 1, brightness: 1, glow: 0.7, speed: 1 },
+  defaults: { theme: "violet" },
+  // 粒子大小、亮度、辉光、速度固定为原来滑杆范围的中间值（不再给调节按钮）
+  look: { size: 1.25, brightness: 1.15, glow: 0.75, speed: 1.5 },
   hoverColors: { processed: "#2cf08a", unprocessed: "#c7ccd6" },   // 鼠标滑过：已处理 = 绿，未处理 = 灰白
   camera: {
     fov: 45,
-    initialDistance: 4.3,
+    initialDistance: 5.4,
     minDistance: 1.9,                         // 硬下限：不会钻进雕塑里
     maxDistance: 9,                           // 硬上限：雕塑不会小到看不见
     initialAzimuth: 0.6,
-    shapeElevation: { wave: 0.55, saturn: 0.22, cube: 0.3, heart: 0.08, mobius: 0.3 },   // 每种图案的电影感视角
+    initialElevation: 0.16,                   // 略微俯视
     maxElevation: 1.25,                       // 约 72°，防止越过极点翻转
     followRate: 7,                            // 位置跟随目标的速度（越大越紧）
     autoRotateSpeed: 0.07,                    // 空闲时缓慢自转（弧度/秒）

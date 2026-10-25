@@ -1,4 +1,4 @@
-// 粒子雕塑的纯函数测试（不需要浏览器）：五种图案同样的粒子数、位置有限且有形状、变形公式、数据集区域。
+// 粒子雕塑的纯函数测试（不需要浏览器）：DNA 图案的粒子数、位置有限且有形状、变形公式、数据集区域。
 // 运行：node tests/js/sculpture.test.mjs
 import assert from "node:assert/strict";
 import { SHAPES, makeParticles, buildShape, morphK } from "../../emqc/api/static/galaxy/shapes.js";
@@ -24,15 +24,14 @@ for (const s of SHAPES) {
   assert.ok(Math.max(...ext) > 1.2 && Math.max(...ext) < 4.5, `${s}: sensible size ${ext.map((e) => e.toFixed(2))}`);
   for (let i = 0; i < N; i += 997) assert.ok(Math.abs(Math.hypot(S.nor[i * 3], S.nor[i * 3 + 1], S.nor[i * 3 + 2]) - 1) < 1e-3, `${s}: unit normals`);
 }
-// 地形：横向铺开、比高度宽得多
-const w = box(built.wave.pos);
-assert.ok(w[0] > 3 && w[2] > 2 && w[1] < 1.4, "wave is a broad horizontal surface");
-// 土星：球体半径 ~0.78 的粒子 + 半径 > 1.05 的光环粒子都有
-let body = 0, ring = 0;
-for (let i = 0; i < N; i++) { const r = Math.hypot(built.saturn.pos[i * 3], built.saturn.pos[i * 3 + 1], built.saturn.pos[i * 3 + 2]); if (r < 0.82) body++; else if (r > 1.05) ring++; }
-assert.ok(body > N * 0.5 && ring > N * 0.3, `saturn has a body (${body}) and rings (${ring})`);
-// 立方体：棱上的粒子被强调
-assert.ok(built.cube.acc.some((x) => x > 0.9) && built.cube.acc.some((x) => x === 0), "cube edges are emphasised");
+// DNA：只有一个图案；细长（高远大于宽）、两条链 + 横档都在
+assert.deepEqual(SHAPES, ["dna"]);
+const d = built.dna;
+const ext = box(d.pos);
+assert.ok(Math.max(...ext) > 2.8, `DNA is tall ${ext.map((e) => e.toFixed(2))}`);
+let strands = 0, rungs = 0;
+for (let i = 0; i < N; i++) (P.uv[i * 2 + 1] < 0.62 ? strands++ : rungs++);
+assert.ok(strands > N * 0.55 && rungs > N * 0.3, `strands ${strands}, rungs ${rungs}`);
 // 变形：起点 0、终点 1，单调，种子只让粒子稍微错开
 for (const seed of [0, 0.5, 1]) {
   assert.equal(morphK(0, seed), 0); assert.equal(morphK(1, seed), 1);

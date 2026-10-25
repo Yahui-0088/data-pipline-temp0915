@@ -20,8 +20,8 @@ const MOCK = [
 
 function toDataset(d, maxSections) {
   const processed = !!d.last_run;
-  // 区域中心放在粒子的参数平面 (u, v) 上：u 首尾相接（绕一圈），v 留出上下边缘
-  const u = unit(hash32(d.dataset_id));
+  // 区域中心放在粒子的参数平面 (u, v) 上；DNA 上 u = 沿螺旋的位置（上下留出一点边）
+  const u = 0.08 + 0.84 * unit(hash32(d.dataset_id));
   const v = 0.12 + 0.76 * unit(hash32(d.dataset_id, 0x9e3779b9));
   const n = d.n_sections || 0;
   const { regionMinRadius: r0, regionMaxRadius: r1 } = CONFIG.sculpture;
@@ -66,15 +66,15 @@ export class DatasetManager {
   }
 
   /** 参数平面上的一点 (u, v) 属于哪个数据集：返回 [index, 距离/区域半径]；不在任何区域里 → [-1, Infinity]。
-   *  u 方向首尾相接；区域重叠时归（按半径归一化后）最近的那个。 */
+   *  DNA 上一个数据集 = 螺旋上的一整段（两条链 + 横档一起），所以只看 u；重叠时归离中心（按半径归一化）最近的那个。 */
   regionAt(u, v) {
     let best = -1, bestRatio = Infinity;
     for (let i = 0; i < this.datasets.length; i++) {
       const r = this.datasets[i].particleRegion;
-      let du = Math.abs(u - r.u); if (du > 0.5) du = 1 - du;
-      const ratio = Math.hypot(du * 1.6, v - r.v) / r.radius;    // u 方向的一圈比 v 方向长，按 1.6 拉一点，区域更接近圆形
+      const ratio = Math.abs(u - r.u) / r.radius;
       if (ratio < bestRatio) { bestRatio = ratio; best = i; }
     }
     return bestRatio <= 1 ? [best, bestRatio] : [-1, Infinity];
   }
+
 }
