@@ -18,6 +18,10 @@
 <header class="gx-tl">
   <div class="gx-title">DATA GALAXY</div>
   <div class="gx-sub">Interactive Dataset Explorer · 数据星球</div>
+  <ul class="gx-hints" aria-label="操作说明">
+    <li><span aria-hidden="true">⟳</span>拖动旋转 · 滚轮缩放</li>
+    <li><i class="gx-sw ok"></i>鼠标滑过光点：绿 = 已处理，灰 = 未处理</li>
+  </ul>
   <div class="gx-badge todo" id="gx-mock" hidden title="没连上平台的汇报接口，显示的是示例数据">示例数据</div>
 </header>
 
@@ -33,33 +37,35 @@
   <div class="gx-note" id="gx-overflow"></div>
 </section>
 
-<section class="gx-bl gx-glass" aria-label="手势与摄像头状态">
-  <div class="gx-row"><span class="gx-dot off" id="gx-track"></span><span id="gx-track-text">手势未开启</span></div>
-  <div class="gx-row gx-gesture" id="gx-gesture" data-state="mouse">鼠标：拖动旋转 · 滚轮缩放</div>
-  <div class="gx-note" id="gx-track-detail" role="status"></div>
-  <div class="gx-btns"><button type="button" id="gx-toggle">开启手势控制</button><button type="button" id="gx-reset">重置视角</button></div>
-  <details id="gx-debug-wrap" hidden><summary>摄像头调试画面</summary><canvas id="gx-debug" width="200" height="150"></canvas></details>
+<section class="gx-dock gx-glass" aria-label="控制面板">
+  <div class="gx-dock-row">
+    <div class="gx-seg" role="radiogroup" aria-label="图案" id="gx-shapes"></div>
+    <div class="gx-themes" role="radiogroup" aria-label="颜色" id="gx-themes">
+      <label class="gx-picker" title="自定义颜色"><input type="color" id="gx-color" value="#b8a6ff" aria-label="自定义颜色"></label>
+    </div>
+  </div>
+  <div class="gx-dock-row">
+    <details class="gx-tune" id="gx-tune" open>
+      <summary>调节</summary>
+      <div class="gx-sliders">
+        <label>粒子大小<input type="range" id="gx-size" min="0.5" max="2" step="0.05"></label>
+        <label>亮度<input type="range" id="gx-bright" min="0.3" max="2" step="0.05"></label>
+        <label>辉光<input type="range" id="gx-glow" min="0" max="1.5" step="0.05"></label>
+        <label>速度<input type="range" id="gx-speed" min="0" max="3" step="0.05"></label>
+      </div>
+    </details>
+    <div class="gx-btns">
+      <button type="button" id="gx-auto" aria-pressed="true" title="空闲时缓慢自转">自转</button>
+      <button type="button" id="gx-reset" title="重置视角（R）">重置</button>
+      <button type="button" id="gx-fs" title="全屏（F）">全屏</button>
+    </div>
+  </div>
 </section>
 
-<section class="gx-br gx-glass" aria-label="手势说明">
-  <div class="gx-guide"><span class="gx-ico" aria-hidden="true">⟳</span><span>转动手腕</span><b>绕着星球转</b></div>
-  <div class="gx-guide"><span class="gx-ico" aria-hidden="true">✊</span><span>握拳 + 往后拉</span><b>拉远</b></div>
-  <div class="gx-guide"><span class="gx-ico" aria-hidden="true">✋</span><span>张开五指 + 往前推</span><b>拉近</b></div>
-  <div class="gx-legend"><span><i class="gx-sw ok"></i>绿 = 已完成质量检查</span><span><i class="gx-sw todo"></i>灰 = 还没检查</span></div>
-</section>
-
-<div id="gx-cursor" hidden aria-hidden="true"></div>
 <div id="gx-info" class="gx-glass" role="status" hidden></div>
 <div id="gx-empty" class="gx-center gx-glass" hidden><b>还没有可展示的数据集</b><p>这个账号能看的项目里还没有登记数据集。</p></div>
-
-<div id="gx-start" class="gx-overlay">
-  <div class="gx-card gx-glass">
-    <div class="gx-title">DATA GALAXY</div>
-    <p>每一片光点区域是一个数据集：<b class="ok">绿色</b>已经完成质量检查，<b class="todo">灰色</b>还没检查。<br>打开摄像头后，可以用手势旋转、拉远、拉近星球；画面只在你的浏览器里识别，不会上传。</p>
-    <div class="gx-btns"><button type="button" class="primary" id="gx-enter">Enter the Data Galaxy · 开启手势</button><button type="button" id="gx-mouse">先用鼠标看看</button></div>
-  </div>
-</div>
 <div id="gx-fatal" class="gx-overlay" hidden><div class="gx-card gx-glass"><div class="gx-title">DATA GALAXY</div><p></p><a href="/report/summary">打开汇报详情 →</a></div></div>
+<noscript><div class="gx-overlay"><div class="gx-card gx-glass"><p>需要开启 JavaScript。</p><a href="/report/summary">打开汇报详情 →</a></div></div></noscript>
 
 {% if user %}<script>document.getElementById("gx-logout").addEventListener("click", async () => { try { await fetch("/api/v1/auth/logout", {method: "POST"}); } catch (_) {} location.href = "/login"; });</script>{% endif %}
 <script type="module" src="/static/galaxy/app.js?v={{ static_v('galaxy/app.js') }}"></script>

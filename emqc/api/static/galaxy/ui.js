@@ -1,26 +1,123 @@
-// 界面上的小面板：统计、跟踪状态、手势状态、数据集信息卡、光标。只改 DOM，不碰 three。
-import { TRACK_STATUS } from "./handTracking.js";
-import { STATE } from "./gestureController.js";
+// 界面：统计、控制面板（图案 / 颜色 / 滑杆 / 按钮）、数据集信息卡。只改 DOM，不碰 three。
+import { CONFIG } from "./config.js";
+import { SHAPES, SHAPE_LABEL } from "./shapes.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
 
-const TRACK_TEXT = {
-  [TRACK_STATUS.OFF]: ["off", "手势未开启 · 鼠标模式"], [TRACK_STATUS.STARTING]: ["wait", "请求摄像头…"], [TRACK_STATUS.LOADING]: ["wait", "加载手部模型…"],
-  [TRACK_STATUS.RUNNING]: ["on", "摄像头已开启"], [TRACK_STATUS.DENIED]: ["err", "摄像头权限被拒绝"], [TRACK_STATUS.NO_CAMERA]: ["err", "没有摄像头"],
-  [TRACK_STATUS.INSECURE]: ["err", "需要 localhost / https"], [TRACK_STATUS.FAILED]: ["err", "手部识别不可用"], [TRACK_STATUS.DISCONNECTED]: ["err", "摄像头断开"],
-};
-const GESTURE_TEXT = {
-  [STATE.IDLE]: "手在画面里 · 待命", [STATE.ROTATING]: "旋转中 · 镜头绕行", [STATE.ZOOMING_OUT]: "握拳远离 · 拉远",
-  [STATE.ZOOMING_IN]: "张开靠近 · 拉近", [STATE.TRACKING_LOST]: "没看到手",
-};
+// 只记住这台浏览器上的偏好（图案、颜色、滑杆）；读写失败就用默认值
+const STORE = "emqc.galaxy.prefs";
+export function loadPrefs() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(STORE) || "{}") || {}; } catch (_) { p = {}; }
+  const d = CONFIG.defaults;
+  return {
+    shape: SHAPES.includes(p.shape) ? p.shape : d.shape,
+    theme: p.theme === "custom" || CONFIG.themes[p.theme] ? p.theme : d.theme,
+    custom: /^#[0-9a-f]{6}$/i.test(p.custom || "") ? p.custom : "#b8a6ff",
+    size: Number.isFinite(p.size) ? p.size : d.size,
+    brightness: Number.isFinite(p.brightness) ? p.brightness : d.brightness,
+    glow: Number.isFinite(p.glow) ? p.glow : d.glow,
+    speed: Number.isFinite(p.speed) ? p.speed : d.speed,
+    auto: p.auto !== false,
+  };
+}
+export function savePrefs(p) { try { localStorage.setItem(STORE, JSON.stringify(p)); } catch (_) { /* 隐私模式等：不记 */ } }
+
+// 自定义颜色 → 亮部（往白色提）+ 暗部（原色）
+export function themeColors(p) {
+  if (p.theme !== "custom") return CONFIG.themes[p.theme];
+  const n = parseInt(p.custom.slice(1), 16), mix = (c) => Math.round(c + (255 - c) * 0.8);
+  const a = "#" + [n >> 16, (n >> 8) & 255, n & 255].map((c) => mix(c).toString(16).padStart(2, "0")).join("");
+  return { a, b: p.custom };
+}
 
 export class UI {
-  constructor() {
+  constructor(prefs, handlers) {
+    this.prefs = prefs;
+    this.h = handlers;
     this.info = $("gx-info");
-    this.cursor = $("gx-cursor");
     this._infoId = null;
+    this._buildShapes();
+    this._buildThemes();
+    this._bindSliders();
+    this._bindButtons();
+  }
+
+  _radio(group, value) {
+    group.querySelectorAll("[role=radio]").forEach((b) => {
+      const on = b.dataset.value === value;
+      b.setAttribute("aria-checked", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+    });
+  }
+
+  _arrowKeys(group, pick) {
+    group.addEventListener("keydown", (e) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+      const items = [...group.querySelectorAll("[role=radio]")], i = items.indexOf(document.activeElement);
+      if (i < 0) return;
+      e.preventDefault();
+      const next = items[(i + (e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1) + items.length) % items.length];
+      next.focus(); pick(next.dataset.value);
+    });
+  }
+
+  _buildShapes() {
+    const g = $("gx-shapes");
+    g.innerHTML = SHAPES.map((s) => `<button type="button" role="radio" data-value="${s}">${SHAPE_LABEL[s]}</button>`).join("");
+    const pick = (s) => { this.prefs.shape = s; this._radio(g, s); savePrefs(this.prefs); this.h.shape(s); };
+    g.addEventListener("click", (e) => { const b = e.target.closest("[role=radio]"); if (b) pick(b.dataset.value); });
+    this._arrowKeys(g, pick);
+    this._radio(g, this.prefs.shape);
+  }
+
+  _buildThemes() {
+    const g = $("gx-themes"), picker = g.querySelector(".gx-picker"), input = $("gx-color");
+    for (const [k, t] of Object.entries(CONFIG.themes)) {
+      const b = document.createElement("button");
+      b.type = "button"; b.setAttribute("role", "radio"); b.dataset.value = k;
+      b.title = t.label; b.setAttribute("aria-label", t.label);
+      b.style.setProperty("--a", t.a); b.style.setProperty("--b", t.b);
+      g.insertBefore(b, picker);
+    }
+    picker.dataset.value = "custom";
+    input.value = this.prefs.custom;
+    const apply = () => { this._radio(g, this.prefs.theme); picker.classList.toggle("on", this.prefs.theme === "custom"); savePrefs(this.prefs); this.h.color(themeColors(this.prefs)); };
+    const pick = (k) => { this.prefs.theme = k; apply(); };
+    g.addEventListener("click", (e) => { const b = e.target.closest("button[role=radio]"); if (b) pick(b.dataset.value); });
+    input.addEventListener("input", () => { this.prefs.custom = input.value; this.prefs.theme = "custom"; apply(); });
+    this._arrowKeys(g, pick);
+    apply();
+  }
+
+  _bindSliders() {
+    for (const [id, key] of [["gx-size", "size"], ["gx-bright", "brightness"], ["gx-glow", "glow"], ["gx-speed", "speed"]]) {
+      const el = $(id);
+      el.value = this.prefs[key];
+      el.addEventListener("input", () => { this.prefs[key] = +el.value; savePrefs(this.prefs); this.h.tune(key, +el.value); });
+      this.h.tune(key, +el.value);
+    }
+    if (matchMedia("(max-width: 760px)").matches) $("gx-tune").open = false;     // 手机上默认收起
+  }
+
+  _bindButtons() {
+    const auto = $("gx-auto");
+    const setAuto = (on) => { this.prefs.auto = on; auto.setAttribute("aria-pressed", on ? "true" : "false"); savePrefs(this.prefs); this.h.auto(on); };
+    auto.addEventListener("click", () => setAuto(!this.prefs.auto));
+    setAuto(this.prefs.auto);
+    $("gx-reset").addEventListener("click", () => this.h.reset());
+    const fs = $("gx-fs");
+    if (!document.fullscreenEnabled) fs.hidden = true;
+    fs.addEventListener("click", () => this.toggleFullscreen());
+    document.addEventListener("fullscreenchange", () => { fs.textContent = document.fullscreenElement ? "退出全屏" : "全屏"; });
+  }
+
+  toggleFullscreen() {
+    if (!document.fullscreenEnabled) return;
+    const p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    if (p && p.catch) p.catch(() => {});
   }
 
   setSummary(sum, isMock, overflow) {
@@ -29,32 +126,7 @@ export class UI {
     $("gx-completion").textContent = pct(sum.completion);
     $("gx-mock").hidden = !isMock;
     $("gx-empty").hidden = sum.total > 0;
-    if (overflow) $("gx-overflow").textContent = `另有 ${overflow} 个数据集未画在星球上`;
-  }
-
-  setTracking(status, detail) {
-    const [cls, text] = TRACK_TEXT[status] || ["off", status];
-    const el = $("gx-track");
-    el.className = "gx-dot " + cls;
-    $("gx-track-text").textContent = text;
-    $("gx-track-detail").textContent = detail || "";
-    $("gx-toggle").textContent = status === TRACK_STATUS.RUNNING || status === TRACK_STATUS.LOADING || status === TRACK_STATUS.STARTING ? "关闭手势 · 自动模式" : "开启手势控制";
-    $("gx-debug-wrap").hidden = status !== TRACK_STATUS.RUNNING;
-  }
-
-  setGesture(mode, out) {
-    const el = $("gx-gesture");
-    if (mode !== "hand") { el.textContent = "鼠标：拖动旋转 · 滚轮缩放"; el.dataset.state = "mouse"; return; }
-    el.textContent = GESTURE_TEXT[out.state] || out.state;
-    el.dataset.state = out.state;
-  }
-
-  setCursor(x, y, visible, state) {
-    const c = this.cursor;
-    c.hidden = !visible;
-    if (!visible) return;
-    c.style.transform = `translate(${x}px, ${y}px)`;
-    c.dataset.state = state || "";
+    if (overflow) $("gx-overflow").textContent = `另有 ${overflow} 个数据集未画在雕塑上`;
   }
 
   showInfo(ds, x, y) {
@@ -78,10 +150,7 @@ export class UI {
     box.style.transform = `translate(${Math.max(12, left)}px, ${top}px)`;
   }
 
-  hideStart() { $("gx-start").hidden = true; }
-
   fatal(msg) {
-    $("gx-start").hidden = true;
     const f = $("gx-fatal");
     f.hidden = false;
     f.querySelector("p").textContent = msg;

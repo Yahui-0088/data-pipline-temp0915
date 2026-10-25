@@ -1,8 +1,7 @@
-// 数据集 → 星球表面上一块固定的区域。
+// 数据集 → 粒子雕塑上一块固定的区域（定义在粒子的参数平面上，换图案时跟着走）。
 // 数据来自汇报接口（已按账号的项目范围过滤）；接口不可用时用示例数据，并在界面上标明。
 import { CONFIG } from "./config.js";
 
-const DEG = Math.PI / 180;
 
 // FNV-1a：同一个 dataset_id 永远得到同一个数 → 区域位置稳定，不随加载顺序或数据集增减变化
 function hash32(str, seed = 2166136261) {
@@ -11,12 +10,6 @@ function hash32(str, seed = 2166136261) {
   return h >>> 0;
 }
 const unit = (h) => (h % 1000003) / 1000003;
-
-export function latLonToVec(latDeg, lonDeg, out = [0, 0, 0]) {
-  const la = latDeg * DEG, lo = lonDeg * DEG;
-  out[0] = Math.cos(la) * Math.cos(lo); out[1] = Math.sin(la); out[2] = Math.cos(la) * Math.sin(lo);
-  return out;
-}
 
 const MOCK = [
   ["h01-demo-v1", "h01", 100, 0.79, "B", true], ["h01-demo-v1-y0000_x0000", "h01", 100, 0.79, "C", true],
@@ -27,23 +20,20 @@ const MOCK = [
 
 function toDataset(d, maxSections) {
   const processed = !!d.last_run;
-  const h = hash32(d.dataset_id);
-  const h2 = hash32(d.dataset_id, 0x9e3779b9);
-  // 球面均匀分布：纬度用 asin，避免都挤到两极
-  const lat = Math.asin(2 * unit(h) - 1) / DEG * 0.88;
-  const lon = unit(h2) * 360 - 180;
+  // 区域中心放在粒子的参数平面 (u, v) 上：u 首尾相接（绕一圈），v 留出上下边缘
+  const u = unit(hash32(d.dataset_id));
+  const v = 0.12 + 0.76 * unit(hash32(d.dataset_id, 0x9e3779b9));
   const n = d.n_sections || 0;
-  const { regionBaseRadiusDeg: r0, regionMaxRadiusDeg: r1 } = CONFIG.planet;
-  const angularRadius = r0 + (r1 - r0) * Math.sqrt(maxSections ? Math.min(1, n / maxSections) : 0);
-  const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
+  const { regionMinRadius: r0, regionMaxRadius: r1 } = CONFIG.sculpture;
+  const radius = r0 + (r1 - r0) * Math.sqrt(maxSections ? Math.min(1, n / maxSections) : 0);
+  const pct = (x) => (x == null ? "–" : Math.round(x * 100) + "%");
   const description = processed
     ? `已完成质量检查：等级 ${d.grade || "–"}，${pct(d.retention)} 的切片可用于训练。`
     : "已登记，尚未做质量检查。";
   return {
     id: d.dataset_id, name: d.dataset_id, project: d.project || "", status: processed ? "processed" : "unprocessed",
     grade: d.grade || null, retention: d.retention, nSections: d.n_sections, nBlocks: d.n_blocks, lastRun: d.last_run,
-    description, particleRegion: { latitude: lat, longitude: lon, angularRadius },
-    center: latLonToVec(lat, lon), cosRadius: Math.cos(angularRadius * DEG), radiusRad: angularRadius * DEG,
+    description, particleRegion: { u, v, radius },
   };
 }
 
@@ -75,20 +65,16 @@ export class DatasetManager {
     return { processed, unprocessed: total - processed, total, completion: total ? processed / total : null };
   }
 
-  /** 单位向量 p 落在哪个区域里：返回 [index, 角距离/区域半径]；不在任何区域里返回 [-1, Infinity]。 */
-  regionAt(px, py, pz) {
+  /** 参数平面上的一点 (u, v) 属于哪个数据集：返回 [index, 距离/区域半径]；不在任何区域里 → [-1, Infinity]。
+   *  u 方向首尾相接；区域重叠时归（按半径归一化后）最近的那个。 */
+  regionAt(u, v) {
     let best = -1, bestRatio = Infinity;
     for (let i = 0; i < this.datasets.length; i++) {
-      const c = this.datasets[i].center;
-      const dot = Math.max(-1, Math.min(1, c[0] * px + c[1] * py + c[2] * pz));
-      const ratio = Math.acos(dot) / this.datasets[i].radiusRad;
+      const r = this.datasets[i].particleRegion;
+      let du = Math.abs(u - r.u); if (du > 0.5) du = 1 - du;
+      const ratio = Math.hypot(du * 1.6, v - r.v) / r.radius;    // u 方向的一圈比 v 方向长，按 1.6 拉一点，区域更接近圆形
       if (ratio < bestRatio) { bestRatio = ratio; best = i; }
     }
-    return [best, bestRatio];
-  }
-
-  ratioTo(i, px, py, pz) {
-    const c = this.datasets[i].center;
-    return Math.acos(Math.max(-1, Math.min(1, c[0] * px + c[1] * py + c[2] * pz))) / this.datasets[i].radiusRad;
+    return bestRatio <= 1 ? [best, bestRatio] : [-1, Infinity];
   }
 }

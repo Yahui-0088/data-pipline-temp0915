@@ -1,58 +1,42 @@
 // 数据星球的全部可调参数。改这里就行，其他模块只读它。
 export const CONFIG = {
-  cdn: {
-    // 版本固定，与 templates/galaxy.html 里 importmap 的 three@0.160.0 对应
-    visionBundle: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs",
-    visionWasm: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm",
-    handModel: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-  },
   data: {
     endpoint: "/api/v1/report/data?weeks=2",   // 汇报接口：已按登录账号的项目范围过滤
-    maxRegions: 64,                           // 着色器里区域数组的长度；更多数据集会并入最后一个区域之外（不着色）
+    maxRegions: 64,                           // 着色器里区域数组的长度；更多数据集不画在雕塑上（界面会说明）
   },
-  planet: {
-    radius: 1,
-    particlesHigh: 70000,
-    particlesLow: 32000,
-    sizeScale: 10,                            // 粒子像素大小的总体倍数（再乘以距离衰减）
-    // 各层占比：表面壳、内部体、白色核心、大气、漂浮尘埃
-    layers: { surface: 0.66, inner: 0.13, core: 0.05, atmosphere: 0.11, dust: 0.05 },
-    regionBaseRadiusDeg: 11,                  // 数据集区域的最小角半径
-    regionMaxRadiusDeg: 22,                   // 切片最多的数据集的角半径
+  sculpture: {
+    particlesHigh: 90000,
+    particlesLow: 50000,                      // 低配设备 / 手机
+    morphSeconds: 1.8,                        // 换图案的过渡时长
+    regionMinRadius: 0.06,                    // 数据集区域在参数平面上的半径（最小 / 切片最多时）
+    regionMaxRadius: 0.11,
+    hoverRadiusPx: 16,                        // 光标离最近粒子多少像素以内算命中
+    pickSamples: 7000,                        // 命中检测抽样的粒子数（CPU 上）
   },
+  // 配色：a = 亮部，b = 暗部 / 辅色。默认白 + 淡薰衣草
+  themes: {
+    white: { label: "白", a: "#ffffff", b: "#b8a6ff" },
+    ice: { label: "冰蓝", a: "#eef9ff", b: "#78c6ff" },
+    electric: { label: "电光蓝", a: "#d6e6ff", b: "#2c63ff" },
+    violet: { label: "紫", a: "#f2e8ff", b: "#8d5bff" },
+    magenta: { label: "品红", a: "#ffe4f6", b: "#ff3fb2" },
+    emerald: { label: "翡翠绿", a: "#e8fff4", b: "#1fd58a" },
+  },
+  defaults: { shape: "wave", theme: "white", size: 1, brightness: 1, glow: 0.7, speed: 1 },
+  hoverColors: { processed: "#2cf08a", unprocessed: "#c7ccd6" },   // 鼠标滑过：已处理 = 绿，未处理 = 灰白
   camera: {
     fov: 45,
-    initialDistance: 3.6,
-    minDistance: 1.6,                         // 硬下限：永远在星球表面之外
-    maxDistance: 9,                           // 硬上限：星球不会小到看不见
+    initialDistance: 4.3,
+    minDistance: 1.9,                         // 硬下限：不会钻进雕塑里
+    maxDistance: 9,                           // 硬上限：雕塑不会小到看不见
     initialAzimuth: 0.6,
-    initialElevation: 0.28,
+    shapeElevation: { wave: 0.55, saturn: 0.22, cube: 0.3, heart: 0.08, mobius: 0.3 },   // 每种图案的电影感视角
     maxElevation: 1.25,                       // 约 72°，防止越过极点翻转
     followRate: 7,                            // 位置跟随目标的速度（越大越紧）
     autoRotateSpeed: 0.07,                    // 空闲时缓慢自转（弧度/秒）
-    idleBeforeAutoRotate: 4,                  // 多少秒没有输入开始自转
+    idleBeforeAutoRotate: 4,                  // 多少秒没有操作开始自转
   },
-  gestures: {
-    minHandScore: 0.55,                       // 低于这个置信度的手不用
-    smoothing: 0.35,                          // 关键点指数平滑（0–1，越小越平滑）
-    confirmMs: 140,                           // 手势要稳定这么久才算数（防误触）
-    lostMs: 450,                              // 这么久看不到手 = 跟踪丢失
-    rotationGain: 1.4,                        // 手转 1 弧度 → 镜头绕行多少弧度/秒（按速度）
-    rotationDirection: -1,                    // 1 或 -1：手顺时针时镜头的绕行方向
-    rotationThreshold: 0.5,                   // 手转得比这个慢（弧度/秒）不算旋转
-    maxAngularVelocity: 2.2,                  // 镜头最大绕行角速度（弧度/秒）
-    rotationDamping: 2.6,                     // 手停下后绕行速度衰减的快慢
-    motionThreshold: 0.22,                    // 手靠近 / 远离摄像头的速度门槛（ln 掌宽 / 秒）
-    zoomRange: 0.55,                          // 手掌视宽变化 e^0.55≈1.7 倍 = 走完整段缩放
-    fingerExtended: 1.55,                     // 指尖到手腕 / 指根到手腕 > 这个 = 伸直
-    fingerCurled: 1.18,                       // < 这个 = 握紧
-    thumbExtended: 0.62,                      // 拇指尖到食指根 / 掌宽 > 这个 = 张开
-  },
-  hover: {
-    enterRatio: 0.95,                         // 光标进入区域：角距离 / 区域半径 < 这个
-    leaveRatio: 1.18,                         // 已选中的区域要离开到这个比例才放开（防闪烁）
-    glowRate: 5,                              // 高亮渐亮 / 渐暗的速度
-  },
+  hover: { glowRate: 5 },                     // 高亮渐亮 / 渐暗的速度
 };
 
 export const lowPowerDevice = () =>
