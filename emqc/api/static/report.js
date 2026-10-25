@@ -91,7 +91,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     const proj = document.getElementById("rp-project"), wk = document.getElementById("rp-weeks");
-    if (proj && proj.tagName === "SELECT") proj.onchange = () => { history.replaceState(null, "", proj.value ? `/report?project=${encodeURIComponent(proj.value)}` : "/report"); load(); };
+    if (proj && proj.tagName === "SELECT") proj.onchange = () => { history.replaceState(null, "", proj.value ? `/report/summary?project=${encodeURIComponent(proj.value)}` : "/report/summary"); load(); };
     wk.onchange = load;
     tip = document.createElement("div"); tip.className = "rp-tip"; tip.hidden = true; document.body.appendChild(tip);
     const root = document.getElementById("report");

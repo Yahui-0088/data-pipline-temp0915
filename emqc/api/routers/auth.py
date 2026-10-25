@@ -147,7 +147,7 @@ def gate(request: Request) -> Response | None:
 
 
 REPORTER_PATHS = frozenset({"/report", "/account"})
-REPORTER_PREFIXES = ("/api/v1/report/", "/api/v1/auth/")
+REPORTER_PREFIXES = ("/report/", "/api/v1/report/", "/api/v1/auth/")
 
 
 def _reporter_may(path: str) -> bool:

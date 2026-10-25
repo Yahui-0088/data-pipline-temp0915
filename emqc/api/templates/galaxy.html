@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Galaxy · 数据星球</title>
+<link rel="stylesheet" href="/static/galaxy/galaxy.css?v={{ static_v('galaxy/galaxy.css') }}">
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="gx-canvas" aria-hidden="true"></div>
+
+<header class="gx-tl">
+  <div class="gx-title">DATA GALAXY</div>
+  <div class="gx-sub">Interactive Dataset Explorer · 数据星球</div>
+  <div class="gx-badge todo" id="gx-mock" hidden title="没连上平台的汇报接口，显示的是示例数据">示例数据</div>
+</header>
+
+<section class="gx-tr gx-glass" aria-label="数据集统计">
+  <div><span class="gx-k"><i class="gx-sw ok"></i>已处理</span><b id="gx-processed">–</b></div>
+  <div><span class="gx-k"><i class="gx-sw todo"></i>未处理</span><b id="gx-unprocessed">–</b></div>
+  <div><span class="gx-k">完成率</span><b id="gx-completion">–</b></div>
+  <div class="gx-links">
+    <a href="/report/summary">汇报详情 →</a>
+    {% if user and user.role != 'reporter' %}<a href="/overview">回到平台</a>{% endif %}
+    {% if user %}<button type="button" id="gx-logout">退出</button>{% endif %}
+  </div>
+  <div class="gx-note" id="gx-overflow"></div>
+</section>
+
+<section class="gx-bl gx-glass" aria-label="手势与摄像头状态">
+  <div class="gx-row"><span class="gx-dot off" id="gx-track"></span><span id="gx-track-text">手势未开启</span></div>
+  <div class="gx-row gx-gesture" id="gx-gesture" data-state="mouse">鼠标：拖动旋转 · 滚轮缩放</div>
+  <div class="gx-note" id="gx-track-detail" role="status"></div>
+  <div class="gx-btns"><button type="button" id="gx-toggle">开启手势控制</button><button type="button" id="gx-reset">重置视角</button></div>
+  <details id="gx-debug-wrap" hidden><summary>摄像头调试画面</summary><canvas id="gx-debug" width="200" height="150"></canvas></details>
+</section>
+
+<section class="gx-br gx-glass" aria-label="手势说明">
+  <div class="gx-guide"><span class="gx-ico" aria-hidden="true">⟳</span><span>转动手腕</span><b>绕着星球转</b></div>
+  <div class="gx-guide"><span class="gx-ico" aria-hidden="true">✊</span><span>握拳 + 往后拉</span><b>拉远</b></div>
+  <div class="gx-guide"><span class="gx-ico" aria-hidden="true">✋</span><span>张开五指 + 往前推</span><b>拉近</b></div>
+  <div class="gx-legend"><span><i class="gx-sw ok"></i>绿 = 已完成质量检查</span><span><i class="gx-sw todo"></i>灰 = 还没检查</span></div>
+</section>
+
+<div id="gx-cursor" hidden aria-hidden="true"></div>
+<div id="gx-info" class="gx-glass" role="status" hidden></div>
+<div id="gx-empty" class="gx-center gx-glass" hidden><b>还没有可展示的数据集</b><p>这个账号能看的项目里还没有登记数据集。</p></div>
+
+<div id="gx-start" class="gx-overlay">
+  <div class="gx-card gx-glass">
+    <div class="gx-title">DATA GALAXY</div>
+    <p>每一片光点区域是一个数据集：<b class="ok">绿色</b>已经完成质量检查，<b class="todo">灰色</b>还没检查。<br>打开摄像头后，可以用手势旋转、拉远、拉近星球；画面只在你的浏览器里识别，不会上传。</p>
+    <div class="gx-btns"><button type="button" class="primary" id="gx-enter">Enter the Data Galaxy · 开启手势</button><button type="button" id="gx-mouse">先用鼠标看看</button></div>
+  </div>
+</div>
+<div id="gx-fatal" class="gx-overlay" hidden><div class="gx-card gx-glass"><div class="gx-title">DATA GALAXY</div><p></p><a href="/report/summary">打开汇报详情 →</a></div></div>
+
+{% if user %}<script>document.getElementById("gx-logout").addEventListener("click", async () => { try { await fetch("/api/v1/auth/logout", {method: "POST"}); } catch (_) {} location.href = "/login"; });</script>{% endif %}
+<script type="module" src="/static/galaxy/app.js?v={{ static_v('galaxy/app.js') }}"></script>
+</body>
+</html>

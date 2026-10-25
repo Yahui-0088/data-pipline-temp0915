@@ -369,8 +369,15 @@ def delivery_page(request: Request, dataset: str | None = None, s: Session = Dep
 
 
 @router.get("/report", response_class=HTMLResponse)
+def galaxy_page(request: Request):
+    """汇报工作区的落地页：数据星球（3D 粒子星球，每片区域一个数据集，绿 = 已处理，灰 = 未处理；可用手势控制视角）。
+    数据走 /api/v1/report/data（同样按账号的项目范围过滤）。"""
+    return _render("galaxy.html", request, active="report")
+
+
+@router.get("/report/summary", response_class=HTMLResponse)
 def report_page(request: Request, project: str | None = None, s: Session = Depends(get_session)):
-    """给老板看的汇报页。汇报账号登录后只能进这一页，只看分配给它的项目。"""
+    """给老板看的汇报详情页。汇报账号登录后只能进汇报工作区（/report、/report/…），只看分配给它的项目。"""
     from .report import allowed_projects
 
     projects, limited = allowed_projects(request, s)

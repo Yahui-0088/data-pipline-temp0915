@@ -53,8 +53,10 @@ def test_reporter_only_sees_report_of_its_projects(app, registered):
         for api in (f"/api/v1/datasets/{registered}", "/api/v1/pipeline/dashboard", "/api/v1/qc/runs", "/api/v1/exports"):
             assert c.get(api).status_code == 403, api
         assert c.post("/api/v1/qc/runs", json={"dataset_id": registered}).status_code == 403
-        page = c.get("/report")
+        page = c.get("/report/summary")
         assert page.status_code == 200 and "导出 PDF" in page.text and "/pipeline" not in page.text   # 没有通往平台其他页面的链接
+        galaxy = c.get("/report")
+        assert galaxy.status_code == 200 and "DATA GALAXY" in galaxy.text and "/report/summary" in galaxy.text and "/overview" not in galaxy.text
         d = c.get("/api/v1/report/data").json()
         assert d["limited"] and d["projects"] == [proj]
         assert [x["dataset_id"] for x in d["datasets"]] == [registered]

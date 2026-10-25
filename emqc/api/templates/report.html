@@ -15,6 +15,7 @@
     <label>项目 <select id="rp-project" class="text">{% if not limited or projects|length > 1 %}<option value="">{{ '全部项目' if not limited else '全部（我能看的）' }}</option>{% endif %}{% for p in projects %}<option value="{{ p }}" {{ 'selected' if p == selected }}>{{ p or '（未分组）' }}</option>{% endfor %}</select></label>
     {% else %}<input type="hidden" id="rp-project" value="{{ projects[0] if projects else '' }}">{% endif %}
     <label>周期 <select id="rp-weeks" class="text"><option value="4">最近 4 周</option><option value="8" selected>最近 8 周</option><option value="12">最近 12 周</option></select></label>
+    <a class="btn" href="/report">数据星球</a>
     <button class="primary" type="button" onclick="window.print()">导出 PDF</button>
     {% if not limited %}<a class="btn" href="/overview">回到平台</a>{% endif %}
     {% if user %}<span class="pill" title="登录名 {{ user.username }}">{{ user.display_name or user.username }} · {{ role_names.get(user.role, user.role) }}</span>
