@@ -4,7 +4,7 @@ import { GalaxyScene, webglAvailable } from "./scene.js";
 import { ParticleSculpture } from "./particleSculpture.js";
 import { DatasetManager } from "./datasetManager.js";
 import { CameraRig } from "./cameraRig.js";
-import { UI, loadPrefs } from "./ui.js";
+import { UI } from "./ui.js";
 
 const showFatal = (msg) => {
   const f = document.getElementById("gx-fatal");
@@ -19,7 +19,6 @@ async function main() {
   try { gscene = new GalaxyScene(container); }
   catch (e) { showFatal("WebGL 初始化失败：" + (e && e.message ? e.message : e)); return; }
 
-  const prefs = loadPrefs();
   const rig = new CameraRig(gscene.camera);
 
   const data = new DatasetManager();
@@ -41,12 +40,9 @@ async function main() {
   gscene.setGlow(L.glow);
   const speed = L.speed;
 
-  let autoRotate = true, lastInput = performance.now();
+  let lastInput = performance.now();
   const touch = () => { lastInput = performance.now(); };
-  const ui = new UI(prefs, {
-    auto: (on) => { autoRotate = on; },
-    reset: () => { rig.reset(); touch(); },
-  });
+  const ui = new UI();
   ui.setSummary(data.summary(), data.isMock, data.overflow);
 
   // ---------------------------------------------------------------- 鼠标 / 触摸
@@ -79,7 +75,7 @@ async function main() {
     const dt = Math.min(0.1, wallDt);
     last = now;
     clock += dt * speed;                                    // 只影响流动，不影响镜头
-    const idle = autoRotate && !drag && (now - lastInput) / 1000 > CONFIG.camera.idleBeforeAutoRotate;
+    const idle = !drag && (now - lastInput) / 1000 > CONFIG.camera.idleBeforeAutoRotate;   // 鼠标不动 = 自转
     rig.update(dt, idle);
     const h = sculpture.pick(pointer ? pointer.x : null, pointer ? pointer.y : null, gscene.camera, innerWidth, innerHeight);
     sculpture.update(clock, dt, h, rig.cur.dist, wallDt);
@@ -92,7 +88,7 @@ async function main() {
 
   addEventListener("pagehide", (e) => { if (!e.persisted) { running = false; sculpture.dispose(); gscene.dispose(); } });
   // 给自动化测试 / 调试用：只读的状态快照
-  window.__galaxy = { rig, data, sculpture, get hovered() { return sculpture.hovered; }, prefs };
+  window.__galaxy = { rig, data, sculpture, get hovered() { return sculpture.hovered; } };
 }
 
 main().catch((e) => { console.error(e); showFatal("加载失败：" + (e && e.message ? e.message : e)); });

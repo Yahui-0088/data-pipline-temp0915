@@ -24,7 +24,7 @@ for (const s of SHAPES) {
   assert.ok(Math.max(...ext) > 1.2 && Math.max(...ext) < 4.5, `${s}: sensible size ${ext.map((e) => e.toFixed(2))}`);
   for (let i = 0; i < N; i += 997) assert.ok(Math.abs(Math.hypot(S.nor[i * 3], S.nor[i * 3 + 1], S.nor[i * 3 + 2]) - 1) < 1e-3, `${s}: unit normals`);
 }
-// 细胞：只有一个图案；五种粒子都有，各占合理比例
+// 细胞：只有一个图案；四种粒子都有，各占合理比例（没有轨道环）
 assert.deepEqual(SHAPES, ["cell"]);
 const c = built.cell, cnt = {};
 for (const k of c.kind) cnt[k] = (cnt[k] || 0) + 1;

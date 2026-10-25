@@ -24,7 +24,7 @@ export const CONFIG = {
   },
   defaults: { theme: "violet" },
   // 粒子大小、亮度、辉光、速度固定为原来滑杆范围的中间值（不再给调节按钮）
-  look: { size: 1.25, brightness: 1.15, glow: 0.75, speed: 1.5 },
+  look: { size: 1.25, brightness: 1.15, glow: 0.64, speed: 1.5 },   // 辉光比中间值 0.75 低 15%
   hoverColors: { processed: "#2cf08a", unprocessed: "#c7ccd6" },   // 已处理 = 平时淡绿、滑过更亮的绿；未处理 = 滑过变灰白
   restGlow: 0.65,                             // 已处理区域平时的绿光强度（0–1）
   camera: {
@@ -36,8 +36,8 @@ export const CONFIG = {
     initialElevation: 0.12,                   // 略微俯视
     maxElevation: 1.25,                       // 约 72°，防止越过极点翻转
     followRate: 7,                            // 位置跟随目标的速度（越大越紧）
-    autoRotateSpeed: 0.07,                    // 空闲时缓慢自转（弧度/秒）
-    idleBeforeAutoRotate: 4,                  // 多少秒没有操作开始自转
+    autoRotateSpeed: 0.12,                    // 空闲时缓慢自转（弧度/秒）
+    idleBeforeAutoRotate: 1,                  // 鼠标停下这么多秒后自动自转（拖动时不转）
   },
   hover: { glowRate: 5 },                     // 高亮渐亮 / 渐暗的速度
 };

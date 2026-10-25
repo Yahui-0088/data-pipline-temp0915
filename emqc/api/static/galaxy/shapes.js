@@ -7,9 +7,9 @@ export const SHAPES = ["cell"];
 export const SHAPE_LABEL = { cell: "细胞" };
 
 // 粒子的种类（着色器按种类上色 / 画圆点或方块）
-export const KIND = { MEMBRANE: 0, INNER: 1, NUCLEUS: 2, PIXEL: 3, RING: 4 };
-// 参数平面 v 的分段：细胞膜 / 内膜褶皱 / 细胞核 / 轨道环 / 散开的像素
-export const SEG = { membrane: 0.6, inner: 0.77, nucleus: 0.9, ring: 0.96 };
+export const KIND = { MEMBRANE: 0, INNER: 1, NUCLEUS: 2, PIXEL: 3 };
+// 参数平面 v 的分段：细胞膜 / 内膜褶皱 / 细胞核 / 其余 = 散开的像素
+export const SEG = { membrane: 0.62, inner: 0.8, nucleus: 0.93 };
 // 细胞向这一侧「数字化溶解」成方块像素
 export const DISSOLVE = (() => { const d = [1, 0.18, 0.3], l = Math.hypot(...d); return d.map((x) => x / l); })();
 
@@ -17,8 +17,6 @@ const TAU = Math.PI * 2;
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const hash = (u, v, k) => { const x = Math.sin(u * 127.1 + v * 311.7 + k * 74.7) * 43758.5453; return x - Math.floor(x); };
 
-function rotX(o, a) { const c = Math.cos(a), s = Math.sin(a), y = o[1], z = o[2]; o[1] = y * c - z * s; o[2] = y * s + z * c; }
-function rotZ(o, a) { const c = Math.cos(a), s = Math.sin(a), x = o[0], y = o[1]; o[0] = x * c - y * s; o[1] = x * s + y * c; }
 
 /** 膜上 (u, t) → 单位方向（经度 u、t 从北极到南极，面积均匀） */
 export function membraneDir(u, t, out = [0, 0, 0]) {
@@ -58,14 +56,6 @@ const FN = {
       const r = 0.3 * (1 + 0.025 * Math.sin(6 * d[0] + 4 * d[2]));
       o[0] = d[0] * r - 0.05; o[1] = d[1] * r + 0.05; o[2] = d[2] * r + 0.1; o[3] = KIND.NUCLEUS;
       return 0.4;
-    }
-    if (v < SEG.ring) {                                      // 轨道环：一条很细、倾斜的椭圆
-      const a = TAU * u, w = (v - SEG.nucleus) / (SEG.ring - SEG.nucleus);
-      const R = 1.7 + (w - 0.5) * 0.018;
-      o[0] = Math.cos(a) * R; o[1] = (w - 0.5) * 0.012; o[2] = Math.sin(a) * R * 0.92;
-      rotX(o, 0.32); rotZ(o, -0.26);
-      o[3] = KIND.RING;
-      return 0;
     }
     // 散在溶解一侧外面的像素方块
     const h1 = hash(u, v, 6), h2 = hash(u, v, 7), h3 = hash(u, v, 8);

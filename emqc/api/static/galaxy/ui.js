@@ -1,32 +1,12 @@
-// 界面：统计、三个视角按钮（自转 / 重置 / 全屏）、数据集信息卡。只改 DOM，不碰 three。
+// 界面：统计、数据集信息卡。只改 DOM，不碰 three。
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
 
-// 只记住这台浏览器上「自转开 / 关」；读写失败就用默认值
-const STORE = "emqc.galaxy.prefs.v2";
-export function loadPrefs() {
-  let p = {};
-  try { p = JSON.parse(localStorage.getItem(STORE) || "{}") || {}; } catch (_) { p = {}; }
-  return { auto: p.auto !== false };
-}
-export function savePrefs(p) { try { localStorage.setItem(STORE, JSON.stringify(p)); } catch (_) { /* 隐私模式等：不记 */ } }
-
 export class UI {
-  constructor(prefs, handlers) {
-    this.prefs = prefs;
-    this.h = handlers;
+  constructor() {
     this.info = $("gx-info");
     this._infoId = null;
-    const auto = $("gx-auto");
-    const setAuto = (on) => { this.prefs.auto = on; auto.setAttribute("aria-pressed", on ? "true" : "false"); savePrefs(this.prefs); this.h.auto(on); };
-    auto.addEventListener("click", () => setAuto(!this.prefs.auto));
-    setAuto(this.prefs.auto);
-    $("gx-reset").addEventListener("click", () => this.h.reset());
-    const fs = $("gx-fs");
-    if (!document.fullscreenEnabled) fs.hidden = true;
-    fs.addEventListener("click", () => this.toggleFullscreen());
-    document.addEventListener("fullscreenchange", () => { fs.textContent = document.fullscreenElement ? "退出全屏" : "全屏"; });
   }
 
   toggleFullscreen() {
@@ -41,7 +21,7 @@ export class UI {
     $("gx-completion").textContent = pct(sum.completion);
     $("gx-mock").hidden = !isMock;
     $("gx-empty").hidden = sum.total > 0;
-    if (overflow) $("gx-overflow").textContent = `另有 ${overflow} 个数据集未画在螺旋上`;
+    if (overflow) $("gx-overflow").textContent = `另有 ${overflow} 个数据集未画在细胞上`;
   }
 
   showInfo(ds, x, y) {

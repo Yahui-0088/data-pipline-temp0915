@@ -72,7 +72,7 @@ void main() {
   float alpha = (0.26 + 0.22 * aSeed) * df * uBright;
   float size = aSize * (0.85 + 0.3 * lit);
 
-  // 按粒子种类：0 细胞膜 / 1 内膜 / 2 细胞核 / 3 像素方块 / 4 轨道环
+  // 按粒子种类：0 细胞膜 / 1 内膜 / 2 细胞核 / 3 像素方块
   float kind = aKind;
   vSquare = 0.0;
   if (kind < 0.5) {                                     // 细胞膜：边缘亮、正面通透，边缘带一点虹彩
@@ -84,7 +84,7 @@ void main() {
   } else if (kind < 2.5) {                              // 细胞核：深紫、更实，边缘有一圈亮光
     col = mix(uColB * 0.7, uColA, clamp(rim * 1.1 + lam * 0.25, 0.0, 1.0));
     alpha *= 1.15 + rim * 0.8;
-  } else if (kind < 3.5) {                              // 像素方块：慢慢往外飘、越飘越淡，循环
+  } else {                              // 像素方块：慢慢往外飘、越飘越淡，循环
     float f = fract(t * 0.035 + aSeed);
     p = p + vec3(0.92, 0.17, 0.28) * f * 0.35;
     mv = modelViewMatrix * vec4(p, 1.0);
@@ -93,10 +93,6 @@ void main() {
     alpha = (0.24 + 0.24 * aSeed) * uBright * (1.0 - f) * smoothstep(0.0, 0.08, f);
     size = aSize * 1.25;
     vSquare = 1.0;
-  } else {                                              // 轨道环：细、淡
-    col = mix(uColA, vec3(1.0), 0.3);
-    alpha *= 0.55;
-    size *= 0.65;
   }
 
   if (aRegion >= 0.0) {                                 // 数据集区域：已处理平时泛淡绿，滑过更亮；未处理只在滑过时变灰白
