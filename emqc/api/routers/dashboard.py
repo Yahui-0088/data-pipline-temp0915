@@ -368,6 +368,17 @@ def delivery_page(request: Request, dataset: str | None = None, s: Session = Dep
     return _render("delivery.html", request, datasets=datasets, jobs=jobs, sessions=sessions, preselect=dataset, export_dir=str(settings.export_dir), api_base=base, active="delivery")
 
 
+@router.get("/report", response_class=HTMLResponse)
+def report_page(request: Request, project: str | None = None, s: Session = Depends(get_session)):
+    """给老板看的汇报页。汇报账号登录后只能进这一页，只看分配给它的项目。"""
+    from .report import allowed_projects
+
+    projects, limited = allowed_projects(request, s)
+    if project and project not in projects:
+        project = None
+    return _render("report.html", request, projects=projects, limited=limited, selected=project, active="report")
+
+
 @router.get("/training", response_class=HTMLResponse)
 def training_page(request: Request, dataset: str | None = None, s: Session = Depends(get_session)):
     datasets = [dataset_to_dict(d) for d in s.scalars(select(Dataset).order_by(Dataset.dataset_id))]

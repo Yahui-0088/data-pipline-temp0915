@@ -17,7 +17,8 @@
     <form id="new-user" class="users-form">
       <div class="field"><label>登录名 <span class="muted">英文小写 / 数字 / _ . -，或直接填中文名</span></label><input class="text mono" name="username" required maxlength="64" autocomplete="off"></div>
       <div class="field"><label>显示名 <span class="muted">记录里写的名字</span></label><input class="text" name="display_name" maxlength="64" autocomplete="off"></div>
-      <div class="field"><label>角色</label><select class="text" name="role"><option value="annotator">标注员</option><option value="reviewer">审核员</option><option value="admin">管理员</option></select></div>
+      <div class="field"><label>角色</label><select class="text" name="role" id="nu-role"><option value="annotator">标注员</option><option value="reviewer">审核员</option><option value="admin">管理员</option><option value="reporter">汇报（只能看汇报页）</option></select></div>
+      <div class="field" id="nu-projects" hidden><label>能看的项目 <span class="muted">逗号分隔，对应数据集的「项目」，如 du1, h01</span></label><input class="text mono" name="projects" maxlength="300" autocomplete="off"></div>
       <div class="field"><label>初始密码 <span class="muted">留空则自动生成</span></label><input class="text" name="password" type="text" minlength="8" maxlength="72" autocomplete="off"></div>
       <div class="actions"><button type="submit" class="primary">创建</button></div>
     </form>
@@ -38,7 +39,7 @@
   <h2 style="margin:0">账号 <span class="cnt" id="um-count"></span></h2>
   <span class="spacer"></span>
   <input id="um-q" class="text" placeholder="搜名字 / 登录名" style="width:180px">
-  <select id="um-role" class="text" style="width:auto"><option value="">全部角色</option><option value="admin">管理员</option><option value="reviewer">审核员</option><option value="annotator">标注员</option></select>
+  <select id="um-role" class="text" style="width:auto"><option value="">全部角色</option><option value="admin">管理员</option><option value="reviewer">审核员</option><option value="annotator">标注员</option><option value="reporter">汇报</option></select>
   <select id="um-state" class="text" style="width:auto"><option value="">全部状态</option><option value="on">可用</option><option value="off">停用</option><option value="online">在线</option><option value="nopw">没有密码（试用）</option><option value="must">待改密码</option></select>
 </div>
 <div class="card pad-0 scroll">
@@ -58,7 +59,8 @@
 (() => {
   const $ = id => document.getElementById(id), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const ME = {{ {'id': user.id, 'username': user.username}|tojson }};
-  const ROLE = {admin: "管理员", reviewer: "审核员", annotator: "标注员"};
+  const ROLE = {admin: "管理员", reviewer: "审核员", annotator: "标注员", reporter: "汇报"};
+  const splitProjects = v => (v || "").split(/[,，\s]+/).map(x => x.trim()).filter(Boolean);
   const when = iso => { if (!iso) return "—"; const d = new Date(iso); if (isNaN(d)) return iso; const p = n => String(n).padStart(2, "0"); return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
   const ago = iso => { if (!iso) return ""; const s = (Date.now() - new Date(iso)) / 1000; return s < 90 ? "刚刚" : s < 3600 ? `${Math.round(s / 60)} 分钟前` : s < 86400 ? `${Math.round(s / 3600)} 小时前` : `${Math.round(s / 86400)} 天前`; };
   const px = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
@@ -146,13 +148,13 @@
     $("users-rows").innerHTML = rows.map(u => {
       const a = ACT[u.id] || ACT["u:" + u.username];
       return `<tr class="${u.is_active ? "" : "user-off"}" data-id="${u.id}">
-        <td><b>${esc(u.display_name)}</b>${u.id === ME.id ? ' <span class="muted">（你）</span>' : ""}<div class="mono muted" style="font-size:11px">${esc(u.username)} · #${u.id}</div></td>
+        <td><b>${esc(u.display_name)}</b>${u.id === ME.id ? ' <span class="muted">（你）</span>' : ""}<div class="mono muted" style="font-size:11px">${esc(u.username)} · #${u.id}</div>${u.role === "reporter" ? `<div style="font-size:11px">只看项目：<b>${(u.projects || []).map(esc).join("、") || "（未分配）"}</b></div>` : ""}</td>
         <td><select class="text role" data-id="${u.id}" ${u.id === ME.id ? "disabled" : ""} style="width:auto">${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${v}</option>`).join("")}</select></td>
         <td>${state(u)}</td>
         <td class="num mono">${a ? `${a.n} 笔<div class="muted" style="font-size:11px">${px(a.n_px)} 像素 · ${a.blocks.length} 块</div>` : '<span class="muted">—</span>'}</td>
         <td class="mono muted" style="font-size:12px">${a && a.last ? `${when(a.last)}<div style="font-size:11px">${ago(a.last)}</div>` : "—"}</td>
         <td class="mono muted" style="font-size:12px">${when(u.last_login_at)}</td>
-        <td><div class="actions um-acts"><button data-act="rename">改名</button><button data-act="reset">重置密码</button>${u.n_sessions && u.id !== ME.id ? '<button data-act="kick">强制下线</button>' : ""}${u.id === ME.id ? "" : `<button data-act="${u.is_active ? "off" : "on"}" class="${u.is_active ? "danger" : ""}">${u.is_active ? "停用" : "启用"}</button>`}<button data-act="log">记录</button></div></td></tr>`;
+        <td><div class="actions um-acts"><button data-act="rename">改名</button>${u.role === "reporter" ? '<button data-act="projects">改项目</button>' : ""}<button data-act="reset">重置密码</button>${u.n_sessions && u.id !== ME.id ? '<button data-act="kick">强制下线</button>' : ""}${u.id === ME.id ? "" : `<button data-act="${u.is_active ? "off" : "on"}" class="${u.is_active ? "danger" : ""}">${u.is_active ? "停用" : "启用"}</button>`}<button data-act="log">记录</button></div></td></tr>`;
     }).join("") || '<tr><td colspan="7" class="muted">没有符合条件的账号</td></tr>';
   }
   async function loadUsers() {
@@ -170,7 +172,8 @@
 
   $("new-user").addEventListener("submit", async ev => {
     ev.preventDefault();
-    const f = ev.target, body = {username: f.username.value.trim(), display_name: f.display_name.value.trim() || null, role: f.role.value, password: f.password.value || null};
+    const f = ev.target, body = {username: f.username.value.trim(), display_name: f.display_name.value.trim() || null, role: f.role.value, password: f.password.value || null,
+                                projects: f.role.value === "reporter" ? splitProjects(f.projects.value) : null};
     try {
       const r = await call("/api/v1/auth/users", {method: "POST", body: JSON.stringify(body)});
       say(`已创建 ${r.user.display_name}（登录名 ${r.user.username}）`);
@@ -178,6 +181,7 @@
       f.reset(); refresh();
     } catch (e) { say(e.message); }
   });
+  $("nu-role").addEventListener("change", e => { $("nu-projects").hidden = e.target.value !== "reporter"; });
   $("bulk-user").addEventListener("submit", async ev => {
     ev.preventDefault();
     const f = ev.target;
@@ -194,7 +198,13 @@
     const sel = ev.target.closest("select.role"); if (!sel) return;
     const u = USERS.find(x => x.id === +sel.dataset.id);
     if (sel.value === "admin" && !confirm(`把 ${u.display_name} 设成管理员？管理员能管所有账号。${u.has_password ? "" : "\n他现在没有密码，会自动发一个初始密码。"}`)) { sel.value = u.role; return; }
-    try { const r = await call(`/api/v1/auth/users/${sel.dataset.id}`, {method: "PATCH", body: JSON.stringify({role: sel.value})}); say(`${u.display_name} 现在是${ROLE[sel.value]}`); if (r.temp_password) showTemp([r], "管理员必须有密码：初始密码"); }
+    let extra = {};
+    if (sel.value === "reporter") {
+      const v = prompt(`把 ${u.display_name} 改成汇报账号：登录后只能看汇报页。\n能看哪些项目？（逗号分隔）`, (u.projects || []).join(", "));
+      if (v == null || !splitProjects(v).length) { sel.value = u.role; return; }
+      extra = {projects: splitProjects(v)};
+    }
+    try { const r = await call(`/api/v1/auth/users/${sel.dataset.id}`, {method: "PATCH", body: JSON.stringify({role: sel.value, ...extra})}); say(`${u.display_name} 现在是${ROLE[sel.value]}`); if (r.temp_password) showTemp([r], "管理员必须有密码：初始密码"); }
     catch (e) { say(e.message); } finally { refresh(); }
   });
   $("users-rows").addEventListener("click", async ev => {
@@ -205,6 +215,10 @@
         const v = prompt(`「${name}」的显示名（改动记录里写的名字；以后的记录用新名字，旧记录不变）`, name);
         if (v == null || !v.trim() || v.trim() === name) return;
         await call(`/api/v1/auth/users/${id}`, {method: "PATCH", body: JSON.stringify({display_name: v.trim()})}); say(`已改名为 ${v.trim()}`);
+      } else if (b.dataset.act === "projects") {
+        const v = prompt(`「${name}」能看哪些项目？（逗号分隔）`, (u.projects || []).join(", "));
+        if (v == null) return;
+        await call(`/api/v1/auth/users/${id}`, {method: "PATCH", body: JSON.stringify({projects: splitProjects(v)})}); say(`${name} 现在能看：${splitProjects(v).join("、")}`);
       } else if (b.dataset.act === "reset") {
         if (!confirm(`给 ${name} 发一个新的初始密码？他现有的登录会全部退出。`)) return;
         const r = await call(`/api/v1/auth/users/${id}/reset-password`, {method: "POST"}); showTemp([r], "新的初始密码");

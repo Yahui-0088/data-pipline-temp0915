@@ -98,7 +98,7 @@ def forget_sessions() -> None:
 PUBLIC_PATHS = frozenset({"/login", "/favicon.ico", "/api/v1/auth/login", "/api/v1/auth/status", "/api/v1/auth/logout",
                           "/api/v1/auth/me", "/api/v1/health", "/api/v1/logs/client"})
 PUBLIC_PREFIXES = ("/static/",)
-ROLE_RANK = {"annotator": 0, "reviewer": 1, "admin": 2}
+ROLE_RANK = {"reporter": -1, "annotator": 0, "reviewer": 1, "admin": 2}
 SERVICE_NAME = "service-token"
 
 
@@ -138,7 +138,20 @@ def gate(request: Request) -> Response | None:
             return JSONResponse({"detail": {"code": "password", "message": "请先修改初始密码（右上角「账号」）"}}, status_code=403)
         if not api and path != "/account":
             return RedirectResponse("/account?force=1", status_code=303)
+    if user.role == "reporter" and not _reporter_may(path):
+        # 汇报账号只能看汇报页：其他页面送回汇报页，其他接口一律 403（数据、预览图、下载都在这里挡住）
+        if api or request.method not in ("GET", "HEAD"):
+            return JSONResponse({"detail": {"code": "forbidden", "message": "汇报账号只能查看汇报页"}}, status_code=403)
+        return RedirectResponse("/report", status_code=303)
     return None
+
+
+REPORTER_PATHS = frozenset({"/report", "/account"})
+REPORTER_PREFIXES = ("/api/v1/report/", "/api/v1/auth/")
+
+
+def _reporter_may(path: str) -> bool:
+    return path in REPORTER_PATHS or path.startswith(REPORTER_PREFIXES)
 
 
 def require_role(role: str):
@@ -317,19 +330,21 @@ def change_password(body: PasswordIn, request: Request, s: Session = Depends(get
 class UserIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)            # 合规的登录名，或中文名（登录名由它生成，见 auth.username_for）
     display_name: str | None = Field(default=None, max_length=64)
-    role: str = Field(default="annotator", pattern="^(admin|reviewer|annotator)$")
+    role: str = Field(default="annotator", pattern="^(admin|reviewer|annotator|reporter)$")
     password: str | None = Field(default=None, max_length=256)     # 不给就生成初始密码，首次登录必须改
+    projects: list[str] | None = None                               # 汇报账号能看的项目（role=reporter 时必填）
 
 
 class BulkIn(BaseModel):
     text: str = Field(min_length=1, max_length=20000)              # 一行一个：登录名或名字[,显示名[,角色]]
-    role: str = Field(default="annotator", pattern="^(admin|reviewer|annotator)$")
+    role: str = Field(default="annotator", pattern="^(admin|reviewer|annotator|reporter)$")
 
 
 class UserPatch(BaseModel):
     display_name: str | None = Field(default=None, max_length=64)
-    role: str | None = Field(default=None, pattern="^(admin|reviewer|annotator)$")
+    role: str | None = Field(default=None, pattern="^(admin|reviewer|annotator|reporter)$")
     is_active: bool | None = None
+    projects: list[str] | None = None
 
 
 class ModeIn(BaseModel):
@@ -340,14 +355,14 @@ def _active_admins(s: Session) -> int:
     return len(list(s.scalars(select(User.id).where(User.role == "admin", User.is_active.is_(True)))))
 
 
-def _new_user(s: Session, admin: User | None, typed: str, display: str | None, role: str, password: str | None):
+def _new_user(s: Session, admin: User | None, typed: str, display: str | None, role: str, password: str | None, projects: list[str] | None = None):
     """填的是英文就必须是合规的登录名（打错了要报出来，不能悄悄换成别的）；填中文名则登录名由名字生成，本人填名字就能登录。"""
     typed = " ".join((typed or "").split())
     if typed.isascii():
         username, fallback = auth.normalize_username(typed), typed
     else:
         username, fallback = auth.username_for(typed)
-    return auth.create_user(s, username, password, display or fallback, role, created_by=admin.id if admin else None)
+    return auth.create_user(s, username, password, display or fallback, role, created_by=admin.id if admin else None, projects=projects)
 
 
 @router.get("/users")
@@ -369,10 +384,10 @@ def list_users(admin: User | None = Depends(require_admin), s: Session = Depends
 @router.post("/users")
 def create_user(body: UserIn, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
     try:
-        u, issued = _new_user(s, admin, body.username, body.display_name, body.role, body.password)
+        u, issued = _new_user(s, admin, body.username, body.display_name, body.role, body.password, body.projects)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    auth.record_event(s, "create", actor=admin, target=u, detail=f"角色 {auth.ROLE_NAMES[u.role]}", ip=client_ip(request))
+    auth.record_event(s, "create", actor=admin, target=u, detail=f"角色 {auth.ROLE_NAMES[u.role]}" + (f" · 项目 {', '.join(u.projects)}" if u.projects else ""), ip=client_ip(request))
     s.commit()
     return {"user": user_dict(u), "temp_password": issued}
 
@@ -393,7 +408,9 @@ def bulk_create(body: BulkIn, request: Request, admin: User | None = Depends(req
         role = names.get(role, role)
         try:
             if role not in ROLES:
-                raise ValueError(f"角色「{parts[2]}」不认识，只能是管理员 / 审核员 / 标注员")
+                raise ValueError(f"角色「{parts[2]}」不认识，只能是管理员 / 审核员 / 标注员 / 汇报")
+            if role == "reporter":
+                raise ValueError("汇报账号要指定项目，请在上面单个创建")
             u, issued = _new_user(s, admin, typed, display, role, None)
             auth.record_event(s, "create", actor=admin, target=u, detail=f"批量 · 角色 {auth.ROLE_NAMES[u.role]}", ip=client_ip(request))
             results.append({"line": n, "ok": True, "user": user_dict(u), "temp_password": issued})
@@ -423,6 +440,14 @@ def patch_user(uid: int, body: UserPatch, request: Request, admin: User | None =
         if name != u.display_name:
             changes.append(f"显示名 {u.display_name} → {name}")
             u.display_name = name
+    new_role = body.role if body.role is not None else u.role
+    if body.projects is not None or (body.role == "reporter" and u.role != "reporter"):
+        projects = auth.clean_projects(body.projects if body.projects is not None else u.projects)
+        if new_role == "reporter" and not projects:
+            raise HTTPException(422, "汇报账号要指定能看哪些项目")
+        if projects != list(u.projects or []):
+            changes.append(f"可看项目 {', '.join(u.projects or []) or '–'} → {', '.join(projects) or '–'}")
+            u.projects = projects
     if body.role is not None and body.role != u.role:
         changes.append(f"角色 {auth.ROLE_NAMES[u.role]} → {auth.ROLE_NAMES[body.role]}")
         u.role = body.role

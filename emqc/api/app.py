@@ -17,7 +17,7 @@ from emqc.db import init_db, recover_stale_runs
 
 from urllib.parse import urlsplit
 
-from .routers import admin, auth, crawl, dashboard, data, datasets, delivery, marks, patches, qc, review, traces, annotate
+from .routers import admin, auth, crawl, dashboard, data, datasets, delivery, marks, report, patches, qc, review, traces, annotate
 
 logs.setup_logging()
 log = logging.getLogger(__name__)
@@ -115,6 +115,7 @@ app.include_router(traces.router)
 app.include_router(delivery.exports)
 app.include_router(delivery.streams)
 app.include_router(delivery.packs)
+app.include_router(report.router)
 app.include_router(patches.router)
 app.include_router(crawl.router)
 app.include_router(auth.router)

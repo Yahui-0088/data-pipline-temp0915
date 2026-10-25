@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据清洗汇报 · EM Image QC</title>
+<link rel="stylesheet" href="/static/style.css?v={{ static_v('style.css') }}">
+<link rel="stylesheet" href="/static/report.css?v={{ static_v('report.css') }}">
+</head>
+<body class="rp-body">
+<header class="rp-top">
+  <div class="rp-brand"><span class="logo">EM</span><b>数据清洗 · 汇报</b></div>
+  <div class="rp-ctl">
+    {% if projects|length > 1 or not limited %}
+    <label>项目 <select id="rp-project" class="text">{% if not limited or projects|length > 1 %}<option value="">{{ '全部项目' if not limited else '全部（我能看的）' }}</option>{% endif %}{% for p in projects %}<option value="{{ p }}" {{ 'selected' if p == selected }}>{{ p or '（未分组）' }}</option>{% endfor %}</select></label>
+    {% else %}<input type="hidden" id="rp-project" value="{{ projects[0] if projects else '' }}">{% endif %}
+    <label>周期 <select id="rp-weeks" class="text"><option value="4">最近 4 周</option><option value="8" selected>最近 8 周</option><option value="12">最近 12 周</option></select></label>
+    <button class="primary" type="button" onclick="window.print()">导出 PDF</button>
+    {% if not limited %}<a class="btn" href="/overview">回到平台</a>{% endif %}
+    {% if user %}<span class="pill" title="登录名 {{ user.username }}">{{ user.display_name or user.username }} · {{ role_names.get(user.role, user.role) }}</span>
+      <a class="btn" href="/account">账号</a><button type="button" id="logout-btn">退出</button>{% endif %}
+  </div>
+</header>
+<main class="rp-main" id="report"><div class="muted rp-loading">加载中…</div></main>
+{% if user %}<script>document.getElementById("logout-btn").addEventListener("click", async () => { try { await fetch("/api/v1/auth/logout", {method: "POST"}); } catch (_) {} location.href = "/login"; });</script>{% endif %}
+<script src="/static/report.js?v={{ static_v('report.js') }}"></script>
+</body>
+</html>

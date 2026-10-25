@@ -24,8 +24,8 @@ from emqc.annotate.store import Actor
 from emqc.config import settings
 from emqc.db.models import AccountEvent, AppSetting, AuthSession, User
 
-ROLES = ("admin", "reviewer", "annotator")
-ROLE_NAMES = {"admin": "管理员", "reviewer": "审核员", "annotator": "标注员"}
+ROLES = ("admin", "reviewer", "annotator", "reporter")
+ROLE_NAMES = {"admin": "管理员", "reviewer": "审核员", "annotator": "标注员", "reporter": "汇报"}
 COOKIE = "emqc_session"
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,31}$")
 MIN_PASSWORD = 8
@@ -81,7 +81,7 @@ def clean_display_name(name: str | None, fallback: str) -> str:
 # ---------------------------------------------------------------- 用户
 def create_user(s: Session, username: str, password: str | None, display_name: str | None = None,
                 role: str = "annotator", created_by: int | None = None, must_change: bool | None = None,
-                password_set: bool = True) -> tuple[User, str | None]:
+                password_set: bool = True, projects: list[str] | None = None) -> tuple[User, str | None]:
     """建号。不给密码就生成一个初始密码（返回给调用方显示一次，库里只存哈希），并要求首次登录修改。
     `password_set=False` 只给试用模式自动建号用：密码是随机的、没人知道，这种账号填名字就能进。"""
     username = normalize_username(username)
@@ -89,13 +89,16 @@ def create_user(s: Session, username: str, password: str | None, display_name: s
         raise ValueError(f"角色只能是 {', '.join(ROLES)}")
     if s.scalar(select(User).where(User.username == username)) is not None:
         raise ValueError(f"登录名 {username} 已存在")
+    projects = clean_projects(projects)
+    if role == "reporter" and not projects:
+        raise ValueError("汇报账号要指定能看哪些项目")
     issued = None
     if password is None:
         issued = password = temp_password()
         must_change = True if must_change is None else must_change
     user = User(username=username, display_name=clean_display_name(display_name, username), password_hash=hash_password(password),
                 role=role, is_active=True, must_change_password=bool(must_change), created_by=created_by,
-                password_set=bool(password_set))
+                password_set=bool(password_set), projects=projects if role == "reporter" else None)
     s.add(user)
     s.flush()
     return user, issued
@@ -125,7 +128,27 @@ def user_dict(u: User) -> dict:
     return {"id": u.id, "username": u.username, "display_name": u.display_name or u.username, "role": u.role,
             "role_name": ROLE_NAMES.get(u.role, u.role), "is_active": bool(u.is_active),
             "must_change_password": bool(u.must_change_password), "has_password": has_password(u),
-            "created_at": iso(u.created_at), "last_login_at": iso(u.last_login_at), "created_by": u.created_by}
+            "created_at": iso(u.created_at), "last_login_at": iso(u.last_login_at), "created_by": u.created_by,
+            "projects": list(u.projects or []) if u.role == "reporter" else None}
+
+
+def clean_projects(projects) -> list[str]:
+    """项目名列表：去空白、去重、保持顺序；接受逗号分隔的字符串。"""
+    if isinstance(projects, str):
+        projects = projects.replace("，", ",").split(",")
+    out = []
+    for x in projects or []:
+        x = " ".join(str(x).split())[:128]
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def report_scope(u: User | None) -> list[str] | None:
+    """这个人在汇报页能看哪些项目：None = 全部（没开登录、或不是汇报账号）；汇报账号 = 它被分配的项目（可能为空 = 什么都看不到）。"""
+    if u is None or u.role != "reporter":
+        return None
+    return list(u.projects or [])
 
 
 def actor_for(u: User | None) -> Actor | None:

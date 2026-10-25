@@ -25,8 +25,8 @@ def cmd_create_user(args):
         pw = getpass.getpass("密码（至少 8 位；留空则生成一个初始密码）：") or None
     try:
         with session_scope() as s:
-            u, issued = auth.create_user(s, args.username, pw, args.display, args.role, must_change=args.must_change or None)
-            print(f"已创建 {u.username}（{auth.ROLE_NAMES[u.role]}，显示名 {u.display_name}）")
+            u, issued = auth.create_user(s, args.username, pw, args.display, args.role, must_change=args.must_change or None, projects=args.projects)
+            print(f"已创建 {u.username}（{auth.ROLE_NAMES[u.role]}，显示名 {u.display_name}）" + (f"，可看项目 {', '.join(u.projects)}" if u.projects else ""))
             if issued:
                 print(f"初始密码：{issued}   ← 首次登录必须修改")
     except ValueError as e:
@@ -284,10 +284,11 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="emqc", description="EM Image QC platform v0.1")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init-db", help="create tables").set_defaults(fn=cmd_init_db)
-    cu = sub.add_parser("create-user", help="登录系统：建账号（admin 管理员 / reviewer 审核员 / annotator 标注员）")
+    cu = sub.add_parser("create-user", help="登录系统：建账号（admin 管理员 / reviewer 审核员 / annotator 标注员 / reporter 汇报，只能看汇报页）")
     cu.add_argument("--username", required=True)
     cu.add_argument("--display", default=None, help="记录里显示的名字，默认同登录名")
-    cu.add_argument("--role", default="annotator", choices=["admin", "reviewer", "annotator"])
+    cu.add_argument("--role", default="annotator", choices=["admin", "reviewer", "annotator", "reporter"])
+    cu.add_argument("--projects", default=None, help="汇报账号（--role reporter）能看的项目，逗号分隔，对应数据集的 project")
     cu.add_argument("--password-stdin", action="store_true", help="从标准输入读一行密码（不进 argv）")
     cu.add_argument("--must-change", action="store_true", help="首次登录必须修改密码")
     cu.set_defaults(fn=cmd_create_user)

@@ -520,6 +520,9 @@ class User(Base):
     # 有没有一个真正的密码：管理员建号 / 重置 / 本人改过的是 True；试用模式填名字自动建出来的是 False（密码是随机的，没人知道）。
     # 试用模式下，有密码的账号和管理员账号仍然要输密码，不然谁填管理员的名字都能进
     password_set: Mapped[bool | None] = mapped_column(Boolean, default=True)
+    # 汇报账号（role=reporter）能看哪些项目（datasets.project）。只对汇报账号生效：它登录后只能打开汇报页，
+    # 汇报页和它的接口只给这几个项目的数据。其他角色为空 = 不限。
+    projects: Mapped[list | None] = mapped_column(JSON)
 
 
 class AuthSession(Base):

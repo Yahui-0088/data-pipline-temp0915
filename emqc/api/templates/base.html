@@ -15,6 +15,10 @@
 <aside class="nav">
   {# 两个工作区：数据清洗（QC 流水线、采集、交付、patch）和切片标注（VAST 风格的看图改标签）。
      它们共享服务、样式和 API，但导航、顶栏状态和主题色各自独立，避免混在一个菜单里。 #}
+  {% if user and user.role == 'reporter' %}
+  {# 汇报账号只能看汇报页：导航里只留它 #}
+  <a class="item active" href="/report"><svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13H6z"/><path d="M9 17v-3M12 17v-6M15 17v-4"/></svg>汇报</a>
+  {% else %}
   <nav class="ws-switch" aria-label="工作区">
     <a class="{{ 'on' if ws == 'qc' }}" href="/pipeline" title="EM 图像 QC、数据采集、交付、Patch"><i>QC</i>数据清洗</a>
     <a class="{{ 'on' if ws == 'annotate' }}" href="/annotate" title="EM / 分割叠加看图，拾取、填充、合并"><i>AN</i>切片标注</a>
@@ -22,6 +26,7 @@
   {% include "_nav_" ~ ws ~ ".html" %}
   <div class="sep"></div>
   <a class="item" href="/docs" target="_blank"><svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13H6z M14 3v6h6"/></svg>API 文档</a>
+  {% endif %}
 </aside>
 <div class="content">
   <div class="topbar">
