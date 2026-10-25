@@ -8,8 +8,8 @@ export const CONFIG = {
     particlesHigh: 90000,
     particlesLow: 50000,                      // 低配设备 / 手机
     morphSeconds: 1.8,                        // 换图案的过渡时长
-    regionMinRadius: 0.06,                    // 数据集区域在参数平面上的半径（最小 / 切片最多时）
-    regionMaxRadius: 0.11,
+    regionMinRadius: 0.34,                    // 数据集区域在细胞膜上的角半径（弧度；最小 / 切片最多时）
+    regionMaxRadius: 0.58,
     hoverRadiusPx: 16,                        // 光标离最近粒子多少像素以内算命中
     pickSamples: 7000,                        // 命中检测抽样的粒子数（CPU 上）
   },
@@ -25,14 +25,15 @@ export const CONFIG = {
   defaults: { theme: "violet" },
   // 粒子大小、亮度、辉光、速度固定为原来滑杆范围的中间值（不再给调节按钮）
   look: { size: 1.25, brightness: 1.15, glow: 0.75, speed: 1.5 },
-  hoverColors: { processed: "#2cf08a", unprocessed: "#c7ccd6" },   // 鼠标滑过：已处理 = 绿，未处理 = 灰白
+  hoverColors: { processed: "#2cf08a", unprocessed: "#c7ccd6" },   // 已处理 = 平时淡绿、滑过更亮的绿；未处理 = 滑过变灰白
+  restGlow: 0.65,                             // 已处理区域平时的绿光强度（0–1）
   camera: {
     fov: 45,
-    initialDistance: 5.4,
+    initialDistance: 4.9,
     minDistance: 1.9,                         // 硬下限：不会钻进雕塑里
     maxDistance: 9,                           // 硬上限：雕塑不会小到看不见
-    initialAzimuth: 0.6,
-    initialElevation: 0.16,                   // 略微俯视
+    initialAzimuth: -0.3,                     // 溶解成像素的一侧在画面右边
+    initialElevation: 0.12,                   // 略微俯视
     maxElevation: 1.25,                       // 约 72°，防止越过极点翻转
     followRate: 7,                            // 位置跟随目标的速度（越大越紧）
     autoRotateSpeed: 0.07,                    // 空闲时缓慢自转（弧度/秒）

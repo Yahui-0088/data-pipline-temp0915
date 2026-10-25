@@ -33,8 +33,11 @@ attribute vec3 aDir;
 attribute float aSeed;
 attribute float aSize;
 attribute float aRegion;
+attribute float aKind;
+uniform float uRestGlow;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vSquare;
 
 void main() {
   // 逐粒子错开的平滑进度（和 shapes.js 的 morphK 同一个公式）
@@ -69,18 +72,41 @@ void main() {
   float alpha = (0.26 + 0.22 * aSeed) * df * uBright;
   float size = aSize * (0.85 + 0.3 * lit);
 
-  // 地形边缘：越靠边越稀、越暗，像在黑暗里溶解
-  float e = min(min(aUV.x, 1.0 - aUV.x), min(aUV.y, 1.0 - aUV.y));
-  float edge = mix(1.0, smoothstep(0.0, 0.14, e), waveW);
-  alpha *= edge; size *= mix(0.6, 1.0, edge);
+  // 按粒子种类：0 细胞膜 / 1 内膜 / 2 细胞核 / 3 像素方块 / 4 轨道环
+  float kind = aKind;
+  vSquare = 0.0;
+  if (kind < 0.5) {                                     // 细胞膜：边缘亮、正面通透，边缘带一点虹彩
+    float iri = 0.5 + 0.5 * sin(dot(n, vec3(3.1, 2.3, 1.7)) * 2.4 + t * 0.25);
+    col = mix(col, mix(vec3(0.62, 0.86, 1.0), vec3(1.0, 0.72, 0.92), iri), rim * 0.35);
+    alpha *= 0.42 + 0.7 * rim;
+  } else if (kind < 1.5) {                              // 内膜褶皱：更淡
+    alpha *= 0.42 + 0.7 * rim;
+  } else if (kind < 2.5) {                              // 细胞核：深紫、更实，边缘有一圈亮光
+    col = mix(uColB * 0.7, uColA, clamp(rim * 1.1 + lam * 0.25, 0.0, 1.0));
+    alpha *= 1.15 + rim * 0.8;
+  } else if (kind < 3.5) {                              // 像素方块：慢慢往外飘、越飘越淡，循环
+    float f = fract(t * 0.035 + aSeed);
+    p = p + vec3(0.92, 0.17, 0.28) * f * 0.35;
+    mv = modelViewMatrix * vec4(p, 1.0);
+    depth = -mv.z;
+    col = mix(uColB, uColA, 0.35 + 0.5 * aSeed);
+    alpha = (0.24 + 0.24 * aSeed) * uBright * (1.0 - f) * smoothstep(0.0, 0.08, f);
+    size = aSize * 1.25;
+    vSquare = 1.0;
+  } else {                                              // 轨道环：细、淡
+    col = mix(uColA, vec3(1.0), 0.3);
+    alpha *= 0.55;
+    size *= 0.65;
+  }
 
-  if (aRegion >= 0.0) {                                 // 数据集区域：平时只略亮一点；滑过时 已处理 = 绿，未处理 = 灰白
+  if (aRegion >= 0.0) {                                 // 数据集区域：已处理平时泛淡绿，滑过更亮；未处理只在滑过时变灰白
     int i = int(aRegion + 0.5);
     float g = uRegionGlow[i];
-    vec3 hc = uRegionStatus[i] > 0.5 ? uHoverOk : uHoverTodo;
-    alpha *= 1.12;
-    col = mix(col, hc * (0.75 + 0.5 * lit), g * 0.9);
-    alpha = alpha * (1.0 + g * 0.9);
+    bool done = uRegionStatus[i] > 0.5;
+    float w = done ? uRestGlow + (1.0 - uRestGlow) * g : g;
+    vec3 hc = done ? uHoverOk : uHoverTodo;
+    col = mix(col, hc * (0.7 + 0.5 * lit), w * 0.9);
+    alpha *= 1.0 + (done ? 0.9 : 0.0) + g * 1.6;            // 膜正面很通透，区域要加一点实感才看得见
     size *= 1.0 + g * 0.45;
   }
 
@@ -95,8 +121,17 @@ void main() {
 const FRAG = /* glsl */ `
 varying vec3 vColor;
 varying float vAlpha;
+varying float vSquare;
 void main() {
   vec2 uv = gl_PointCoord - 0.5;
+  if (vSquare > 0.5) {                                  // 像素方块：实心小方块，边缘略亮
+    vec2 q = abs(uv) * 2.0;
+    float m = max(q.x, q.y);
+    if (m > 0.86) discard;
+    float a = vAlpha * (0.7 + 0.3 * smoothstep(0.55, 0.86, m));
+    gl_FragColor = vec4(vColor * a, a);
+    return;
+  }
   float d = length(uv) * 2.0;
   if (d > 1.0) discard;
   float core = exp(-d * d * 6.0);                       // 圆形软边，中心最亮
@@ -141,6 +176,7 @@ export class ParticleSculpture {
     g.setAttribute("aSeed", new THREE.BufferAttribute(this.P.seed, 1));
     g.setAttribute("aSize", new THREE.BufferAttribute(this.P.size, 1));
     g.setAttribute("aRegion", new THREE.BufferAttribute(this.region, 1));
+    g.setAttribute("aKind", new THREE.BufferAttribute(new Float32Array(S.kind), 1));
     this.geometry = g;
 
     const isWave = this.shape === "wave" ? 1 : 0;
@@ -150,7 +186,7 @@ export class ParticleSculpture {
       uBright: { value: 1 }, uCamDist: { value: CONFIG.camera.initialDistance },
       uColA: { value: new THREE.Color() }, uColB: { value: new THREE.Color() },
       uHoverOk: { value: new THREE.Color(CONFIG.hoverColors.processed) }, uHoverTodo: { value: new THREE.Color(CONFIG.hoverColors.unprocessed) },
-      uRegionStatus: { value: new Float32Array(NR) }, uRegionGlow: { value: new Float32Array(NR) },
+      uRegionStatus: { value: new Float32Array(NR) }, uRegionGlow: { value: new Float32Array(NR) }, uRestGlow: { value: CONFIG.restGlow },
     };
     data.datasets.forEach((d, i) => { this.uniforms.uRegionStatus.value[i] = d.status === "processed" ? 1 : 0; });
     this.material = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });

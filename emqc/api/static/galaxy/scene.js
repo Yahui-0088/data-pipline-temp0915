@@ -28,7 +28,7 @@ export class GalaxyScene {
     this._disposables = [];
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(container.clientWidth, container.clientHeight), 0.6, 0.3, 0.32);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(container.clientWidth, container.clientHeight), 0.6, 0.12, 0.42);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
     this._onResize = () => this.resize();

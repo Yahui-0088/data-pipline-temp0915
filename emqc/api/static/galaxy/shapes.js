@@ -1,49 +1,79 @@
-// 图案：DNA 双螺旋。每个粒子有一个固定的 (u, v) 参数，图案 = 把 (u, v) 映射到三维表面的连续函数。
-// 数据集区域也定义在 (u, v) 上，所以一个数据集永远是螺旋上同一段粒子。
+// 图案：细胞。每个粒子有一个固定的 (u, v) 参数，图案 = 把 (u, v) 映射到三维空间的连续函数。
+// 数据集区域定义在细胞膜的 (u, v) 上，所以一个数据集永远是膜上同一片粒子。
 // 保留「多图案 + 逐粒子变形」的结构（SHAPES 只有一个），以后要加图案只需在 FN 里加一个函数。
 // 纯函数，不依赖 three，可以在 Node 里测试。
 
-export const SHAPES = ["dna"];
-export const SHAPE_LABEL = { dna: "DNA" };
+export const SHAPES = ["cell"];
+export const SHAPE_LABEL = { cell: "细胞" };
+
+// 粒子的种类（着色器按种类上色 / 画圆点或方块）
+export const KIND = { MEMBRANE: 0, INNER: 1, NUCLEUS: 2, PIXEL: 3, RING: 4 };
+// 参数平面 v 的分段：细胞膜 / 内膜褶皱 / 细胞核 / 轨道环 / 散开的像素
+export const SEG = { membrane: 0.6, inner: 0.77, nucleus: 0.9, ring: 0.96 };
+// 细胞向这一侧「数字化溶解」成方块像素
+export const DISSOLVE = (() => { const d = [1, 0.18, 0.3], l = Math.hypot(...d); return d.map((x) => x / l); })();
 
 const TAU = Math.PI * 2;
+const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const hash = (u, v, k) => { const x = Math.sin(u * 127.1 + v * 311.7 + k * 74.7) * 43758.5453; return x - Math.floor(x); };
 
 function rotX(o, a) { const c = Math.cos(a), s = Math.sin(a), y = o[1], z = o[2]; o[1] = y * c - z * s; o[2] = y * s + z * c; }
 function rotZ(o, a) { const c = Math.cos(a), s = Math.sin(a), x = o[0], y = o[1]; o[0] = x * c - y * s; o[1] = x * s + y * c; }
 
-// 每个函数：f(u, v, out) → 写入位置，返回「强调」值 0–1（轮廓上更亮）
-const DNA = { height: 3.4, radius: 0.56, turns: 2.75, strand: 0.05, rung: 0.022, rungs: 34, tilt: 0.38 };
+/** 膜上 (u, t) → 单位方向（经度 u、t 从北极到南极，面积均匀） */
+export function membraneDir(u, t, out = [0, 0, 0]) {
+  const lon = TAU * u, cz = 1 - 2 * t, s = Math.sqrt(Math.max(0, 1 - cz * cz));
+  out[0] = s * Math.cos(lon); out[1] = cz; out[2] = s * Math.sin(lon);
+  return out;
+}
+// 细胞膜的起伏：几个低频正弦叠加，像有机的、软的气泡
+const lumpy = (x, y, z) => 1 + 0.085 * Math.sin(3.1 * x + 1.3) * Math.sin(2.3 * y + 0.4) + 0.06 * Math.sin(4.2 * z + 2.1 * x) + 0.045 * Math.sin(5.3 * y + 3.1 * z + 0.7) + 0.02 * Math.sin(9.1 * x - 7.3 * z);
+
+// 每个函数：f(u, v, out) → 写入位置 out[0..2]、种类 out[3]，返回「强调」值 0–1（轮廓上更亮）
 const FN = {
-  // DNA 双螺旋：v < 0.31 = 第一条链，0.31–0.62 = 第二条链（相位差约 140°，有大沟和小沟），其余 = 碱基对横档。
-  // 链是绕螺旋线的细管；横档是两条链之间的细杆，中间留一点缝（碱基配对处），整体斜放
-  dna(u, v, o) {
-    const { height: H, radius: R, turns: T, strand: rs, rung: rr, rungs: N } = DNA;
-    const ang = (t) => TAU * T * t;
-    const helix = (t, ph, out) => { const a = ang(t) + ph; out[0] = R * Math.cos(a); out[1] = (t - 0.5) * H; out[2] = R * Math.sin(a); return a; };
-    const PH = 2.45;                                      // 两条链的相位差（弧度）
-    let acc = 0;
-    if (v < 0.62) {
-      const second = v >= 0.31, w = (second ? v - 0.31 : v) / 0.31;
-      const a = helix(u, second ? PH : 0, o);
-      // 管截面：径向和「沿螺旋线垂直于切线」两个方向张成的平面里画圆
-      const phi = TAU * w, rx = Math.cos(a), rz = Math.sin(a);
-      const tl = Math.hypot(TAU * T * R, H), tx = -Math.sin(a) * TAU * T * R / tl, ty = H / tl, tz = Math.cos(a) * TAU * T * R / tl;
-      const bx = ty * rz, by = tz * rx - tx * rz, bz = -ty * rx;     // b = t × r
-      const c = Math.cos(phi) * rs, s = Math.sin(phi) * rs;
-      o[0] += rx * c + bx * s; o[1] += by * s; o[2] += rz * c + bz * s;
-      acc = 0.35;
-    } else {
-      const w = (v - 0.62) / 0.38;
-      const k = Math.min(N - 1, Math.floor(u * N)), t = (k + 0.5) / N, f = u * N - k;
-      const A = [0, 0, 0], B = [0, 0, 0];
-      helix(t, 0, A); helix(t, PH, B);
-      const g = f < 0.5 ? f * 0.94 : 0.06 + f * 0.94;      // 中间留一道小缝：两个碱基
-      const phi = TAU * w;
-      o[0] = A[0] + (B[0] - A[0]) * g; o[1] = A[1] + Math.cos(phi) * rr; o[2] = A[2] + (B[2] - A[2]) * g + Math.sin(phi) * rr;
-      acc = 0.2;
+  cell(u, v, o) {
+    const D = DISSOLVE, d = [0, 0, 0];
+    if (v < SEG.membrane) {                                  // 细胞膜：起伏的半透明外膜；朝 D 的一侧逐渐散成像素方块
+      membraneDir(u, v / SEG.membrane, d);
+      const r = 1.02 * lumpy(d[0], d[1], d[2]);
+      o[0] = d[0] * r; o[1] = d[1] * r * 0.93; o[2] = d[2] * r; o[3] = KIND.MEMBRANE;
+      const side = d[0] * D[0] + d[1] * D[1] + d[2] * D[2];
+      const prob = sstep(0.35, 0.98, side) * 0.6;
+      if (hash(u, v, 1) < prob) {
+        const out = 0.06 + 0.8 * Math.pow(hash(u, v, 2), 1.6) * (0.4 + prob);
+        o[0] += D[0] * out + (hash(u, v, 3) - 0.5) * 0.12; o[1] += D[1] * out + (hash(u, v, 4) - 0.5) * 0.12; o[2] += D[2] * out + (hash(u, v, 5) - 0.5) * 0.12;
+        o[3] = KIND.PIXEL;
+      }
+      return 0.25;
     }
-    rotZ(o, DNA.tilt); rotX(o, 0.12);
-    return acc;
+    if (v < SEG.inner) {                                     // 内膜褶皱：一层更小、起伏更大的膜，像花瓣一样折叠
+      membraneDir(u, (v - SEG.membrane) / (SEG.inner - SEG.membrane), d);
+      const lon = TAU * u;
+      const r = 0.68 * (1 + 0.2 * Math.sin(3 * lon + 2.2 * d[1]) * Math.cos(2.4 * d[1] + lon) + 0.06 * Math.sin(5 * lon));
+      o[0] = d[0] * r - 0.04; o[1] = d[1] * r * 0.9; o[2] = d[2] * r; o[3] = KIND.INNER;
+      return 0;
+    }
+    if (v < SEG.nucleus) {                                   // 细胞核：偏心的深紫色小球
+      membraneDir(u, (v - SEG.inner) / (SEG.nucleus - SEG.inner), d);
+      const r = 0.3 * (1 + 0.025 * Math.sin(6 * d[0] + 4 * d[2]));
+      o[0] = d[0] * r - 0.05; o[1] = d[1] * r + 0.05; o[2] = d[2] * r + 0.1; o[3] = KIND.NUCLEUS;
+      return 0.4;
+    }
+    if (v < SEG.ring) {                                      // 轨道环：一条很细、倾斜的椭圆
+      const a = TAU * u, w = (v - SEG.nucleus) / (SEG.ring - SEG.nucleus);
+      const R = 1.7 + (w - 0.5) * 0.018;
+      o[0] = Math.cos(a) * R; o[1] = (w - 0.5) * 0.012; o[2] = Math.sin(a) * R * 0.92;
+      rotX(o, 0.32); rotZ(o, -0.26);
+      o[3] = KIND.RING;
+      return 0;
+    }
+    // 散在溶解一侧外面的像素方块
+    const h1 = hash(u, v, 6), h2 = hash(u, v, 7), h3 = hash(u, v, 8);
+    const out = 1.0 + Math.pow(h1, 0.8) * 0.95;
+    const spread = 0.25 + 0.75 * h1;
+    o[0] = D[0] * out + (h2 - 0.5) * 0.25; o[1] = D[1] * out + (h3 - 0.5) * 1.5 * spread; o[2] = D[2] * out + (hash(u, v, 9) - 0.5) * 1.3 * spread;
+    o[3] = KIND.PIXEL;
+    return 0;
   },
 };
 
@@ -67,16 +97,17 @@ export function makeParticles(n, rand) {
   return { n, uv, seed, size, dir, jit };
 }
 
-/** 一个图案的目标位置、法线（光照用）、强调值。 */
+/** 一个图案的目标位置、法线（光照用）、强调值、粒子种类。 */
 export function buildShape(name, P) {
   const f = FN[name];
   if (!f) throw new Error("unknown shape " + name);
   const { n, uv, jit } = P;
-  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), acc = new Float32Array(n);
-  const p = [0, 0, 0], pu = [0, 0, 0], pv = [0, 0, 0], e = 1e-3;
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), acc = new Float32Array(n), kind = new Float32Array(n);
+  const p = [0, 0, 0, 0], pu = [0, 0, 0, 0], pv = [0, 0, 0, 0], e = 1e-3;
   for (let i = 0; i < n; i++) {
     const u = uv[i * 2], v = uv[i * 2 + 1];
     acc[i] = f(u, v, p);
+    kind[i] = p[3];
     // 数值法线：沿 u、v 各走一小步；靠近上界时往回走，避免跨过图案的分段边界
     const su = u + e < 1 ? e : -e, sv = v + e < 1 ? e : -e;
     f(u + su, v, pu); f(u, v + sv, pv);
@@ -89,7 +120,7 @@ export function buildShape(name, P) {
     pos[i * 3] = p[0] + nx * t; pos[i * 3 + 1] = p[1] + ny * t; pos[i * 3 + 2] = p[2] + nz * t;
     nor[i * 3] = nx; nor[i * 3 + 1] = ny; nor[i * 3 + 2] = nz;
   }
-  return { pos, nor, acc };
+  return { pos, nor, acc, kind };
 }
 
 /** 变形进度：每个粒子按自己的种子稍微错开，然后 smoothstep。着色器里是同一个公式。 */

@@ -1,6 +1,7 @@
-// 数据集 → 粒子雕塑上一块固定的区域（定义在粒子的参数平面上，换图案时跟着走）。
+// 数据集 → 细胞膜上一块固定的区域（定义在粒子的参数平面上）。
 // 数据来自汇报接口（已按账号的项目范围过滤）；接口不可用时用示例数据，并在界面上标明。
 import { CONFIG } from "./config.js";
+import { SEG, DISSOLVE, membraneDir } from "./shapes.js";
 
 
 // FNV-1a：同一个 dataset_id 永远得到同一个数 → 区域位置稳定，不随加载顺序或数据集增减变化
@@ -18,11 +19,23 @@ const MOCK = [
   ["mouse-v1-batch-02", "mouse", 480, 0.86, "A", true], ["calib-crops", "calib", 260, null, null, false],
 ].map(([id, project, n, ret, grade, done]) => ({ dataset_id: id, project, n_sections: n, retention: ret, grade, last_run: done ? "2026-10-23T14:24" : null, n_blocks: Math.ceil(n / 64) }));
 
-function toDataset(d, maxSections) {
+// 默认视角下朝向镜头的方向（和 config.camera.initialAzimuth 对应）
+const FRONT = (() => { const a = CONFIG.camera.initialAzimuth; return [Math.sin(a), 0.15, Math.cos(a)]; })();
+
+function toDataset(d, maxSections, few) {
   const processed = !!d.last_run;
-  // 区域中心放在粒子的参数平面 (u, v) 上；DNA 上 u = 沿螺旋的位置（上下留出一点边）
-  const u = 0.08 + 0.84 * unit(hash32(d.dataset_id));
-  const v = 0.12 + 0.76 * unit(hash32(d.dataset_id, 0x9e3779b9));
+  // 区域中心放在细胞膜上：经度 u、纬度 t（避开两极）；radius = 角半径（弧度）
+  // 数据集少时（≤ 12），只放在默认视角看得到、又没散成像素的那半边，打开就能看到；位置仍由 id 决定、稳定
+  let u = 0, t = 0;
+  for (let k = 0; k < 40; k++) {
+    u = unit(hash32(d.dataset_id, 2166136261 + k * 7919));
+    t = 0.2 + 0.6 * unit(hash32(d.dataset_id, 0x9e3779b9 + k * 104729));
+    if (!few) break;
+    const p = membraneDir(u, t);
+    const front = p[0] * FRONT[0] + p[1] * FRONT[1] + p[2] * FRONT[2], side = p[0] * DISSOLVE[0] + p[1] * DISSOLVE[1] + p[2] * DISSOLVE[2];
+    if (front > 0.45 && side < 0.3) break;
+  }
+  const v = t * SEG.membrane;
   const n = d.n_sections || 0;
   const { regionMinRadius: r0, regionMaxRadius: r1 } = CONFIG.sculpture;
   const radius = r0 + (r1 - r0) * Math.sqrt(maxSections ? Math.min(1, n / maxSections) : 0);
@@ -33,7 +46,7 @@ function toDataset(d, maxSections) {
   return {
     id: d.dataset_id, name: d.dataset_id, project: d.project || "", status: processed ? "processed" : "unprocessed",
     grade: d.grade || null, retention: d.retention, nSections: d.n_sections, nBlocks: d.n_blocks, lastRun: d.last_run,
-    description, particleRegion: { u, v, radius },
+    description, particleRegion: { u, v, radius, dir: membraneDir(u, t) },
   };
 }
 
@@ -54,7 +67,7 @@ export class DatasetManager {
     }
     rows = rows.slice().sort((a, b) => (a.dataset_id < b.dataset_id ? -1 : 1));
     const maxSections = Math.max(1, ...rows.map((d) => d.n_sections || 0));
-    this.datasets = rows.slice(0, CONFIG.data.maxRegions).map((d) => toDataset(d, maxSections));
+    this.datasets = rows.slice(0, CONFIG.data.maxRegions).map((d) => toDataset(d, maxSections, rows.length <= 12));
     this.overflow = Math.max(0, rows.length - CONFIG.data.maxRegions);
     return this.datasets;
   }
@@ -65,16 +78,20 @@ export class DatasetManager {
     return { processed, unprocessed: total - processed, total, completion: total ? processed / total : null };
   }
 
-  /** 参数平面上的一点 (u, v) 属于哪个数据集：返回 [index, 距离/区域半径]；不在任何区域里 → [-1, Infinity]。
-   *  DNA 上一个数据集 = 螺旋上的一整段（两条链 + 横档一起），所以只看 u；重叠时归离中心（按半径归一化）最近的那个。 */
+  /** 参数平面上的一点 (u, v) 属于哪个数据集：返回 [index, 角距离/区域角半径]；不在任何区域里 → [-1, Infinity]。
+   *  只有细胞膜（v < SEG.membrane）上的粒子属于数据集；重叠时归（按半径归一化后）最近的那个。 */
   regionAt(u, v) {
+    if (v >= SEG.membrane) return [-1, Infinity];
+    const p = membraneDir(u, v / SEG.membrane);
     let best = -1, bestRatio = Infinity;
     for (let i = 0; i < this.datasets.length; i++) {
-      const r = this.datasets[i].particleRegion;
-      const ratio = Math.abs(u - r.u) / r.radius;
+      const r = this.datasets[i].particleRegion, c = r.dir;
+      const ang = Math.acos(Math.max(-1, Math.min(1, p[0] * c[0] + p[1] * c[1] + p[2] * c[2])));
+      const ratio = ang / r.radius;
       if (ratio < bestRatio) { bestRatio = ratio; best = i; }
     }
     return bestRatio <= 1 ? [best, bestRatio] : [-1, Infinity];
   }
+
 
 }
