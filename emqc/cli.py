@@ -235,7 +235,7 @@ def cmd_datasets(_):
 
     with session_scope() as s:
         for d in list_datasets(s):
-            print(f"{d.dataset_id:28s} {d.size_class:5s} {d.size_z:5d}x{d.size_y}x{d.size_x} {d.dtype:6s} blocks={len(d.blocks):3d} status={d.status:10s} q={d.latest_quality_score} ret={d.latest_retention_rate}")
+            print(f"{d.dataset_id:28s} 项目={d.project or '-':10s} {d.size_class:5s} {d.size_z:5d}x{d.size_y}x{d.size_x} {d.dtype:6s} blocks={len(d.blocks):3d} status={d.status:10s} q={d.latest_quality_score} ret={d.latest_retention_rate}")
 
 
 def cmd_run(args):
