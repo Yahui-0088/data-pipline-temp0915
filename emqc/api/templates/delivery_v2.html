@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据交付 · EM Image QC</title>
+{# 新版交付页：深黑 + 淡紫磨砂玻璃。所有图都绑定真实数据（delivery-v2.js）：
+   /api/v1/exports/preview（每张切片交付与否、分片）、/api/v1/qc/runs/{id}/profile（每张切片的综合分）、
+   /api/v1/data/{ds}/assets/{type}/…（资产轨道）、/api/v1/exports、/api/v1/streams 及 /map（真实任务和会话状态） #}
+<link rel="stylesheet" href="/static/tw/overview.css?v={{ static_v('tw/overview.css') }}">
+</head>
+<body class="dl-page min-h-screen bg-ink-950 font-sans text-[14px] leading-5 text-neutral-200 antialiased">
+
+<header class="border-b border-line bg-ink-950">
+  <div class="mx-auto flex min-h-14 max-w-[1200px] flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2.5">
+    <a href="/overview" class="flex items-center gap-2 text-white">
+      <span class="grid h-6 w-6 place-items-center rounded-md bg-mint text-[10px] font-bold text-ink-950">EM</span>
+      <span class="text-[14px] font-semibold">EM Image QC</span>
+    </a>
+    <nav aria-label="主导航" class="flex flex-wrap gap-x-5 gap-y-1">
+      <a href="/overview" class="ov-link">总览</a>
+      <a href="/pipeline" class="ov-link">流水线</a>
+      <a href="/" class="ov-link">数据集</a>
+      <a href="/training" class="ov-link">训练数据</a>
+      <a href="/delivery" aria-current="page" class="text-white">交付</a>
+    </nav>
+    <div class="flex-1"></div>
+    <a href="/delivery/classic" class="ov-link">详细版</a>
+    {% if user %}<a href="/account" class="ov-link">{{ user.display_name or user.username }}</a>{% endif %}
+  </div>
+</header>
+
+<main class="dl mx-auto max-w-[1200px] px-6 pb-20 pt-10">
+  <div class="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+    <h1 class="dl-title">数据交付</h1>
+    <p class="text-[16px] text-neutral-400">训练落盘，推理按需读取</p>
+  </div>
+  <script type="application/json" id="dl-assets">{{ assets|tojson }}</script>
+
+  {# ================================================================ 01 训练分片 #}
+  <section class="dl-card mt-8" aria-labelledby="dl1-h" id="dl-export">
+    <div class="dl-head">
+      <h2 id="dl1-h"><span class="dl-no">01</span>训练分片<small>筛选 → 分组 → 写入</small></h2>
+    </div>
+    <form class="dl-ctrls mt-4" id="ex-form" novalidate onsubmit="return false">
+      <label>数据集<select name="dataset_id" class="dl-in">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == preselect }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks{% if d.latest_grade %} · {{ d.latest_grade }}{% endif %}</option>{% endfor %}</select></label>
+      <label title="好切片要连着至少这么多张才交付，太短的段训练时用不上">min_run<input name="min_run" type="number" min="1" step="1" value="8" class="dl-in dl-num" required></label>
+      <label title="一个分片文件最多装几张（0 = 每个连续段一个文件）">shard_z<input name="shard_z" type="number" min="0" step="1" value="16" class="dl-in dl-num" required></label>
+      <label title="通过 QC 之外，再要求综合分不低于它；留空 = 不额外筛">最低综合分<input name="min_quality" type="number" step="0.01" min="0" max="1" placeholder="留空" class="dl-in dl-num"></label>
+      <label title="只导出这些 block，逗号分隔；留空 = 全部">block<input name="block_ids" class="dl-in mono" placeholder="留空 = 全部" style="width:13rem"></label>
+      <span class="dl-assets" id="ex-assets" aria-label="一并拷贝的资产"></span>
+    </form>
+    <p class="dl-err" id="ex-err" role="alert" hidden></p>
+
+    <div class="dl-ex-grid">
+      <div class="dl-viz min-w-0" id="ex-viz">
+        <div class="dl-viz-bar">
+          <span class="dl-sub">综合分 · 切片序列（z）</span>
+          <label class="dl-mini">tile<select id="ex-tile" class="dl-in"></select></label>
+          <span class="dl-zoom" role="group" aria-label="缩放"><button type="button" data-zoom="out" aria-label="缩小">−</button><button type="button" data-zoom="in" aria-label="放大">+</button><button type="button" data-zoom="fit">全部</button></span>
+        </div>
+        <div class="dl-curve" id="ex-curve" aria-label="每张切片的综合分；虚线是最低综合分，可以上下拖动"></div>
+        <div class="dl-track-wrap" id="ex-tracks">
+          <div class="dl-row-lab">原图</div>
+          <div class="dl-track" id="ex-track" aria-hidden="true"></div>
+          <div id="ex-asset-tracks"></div>
+        </div>
+        <div class="dl-axis" id="ex-axis" aria-hidden="true"></div>
+        <div class="dl-brush" id="ex-brush" aria-label="全卷概览：拖动方框平移"><canvas id="ex-brush-c"></canvas><span class="dl-brush-win" id="ex-brush-win"></span></div>
+        <div class="dl-legend"><span><i class="lg-k"></i>交付</span><span><i class="lg-s"></i>连续段不足 min_run</span><span><i class="lg-x"></i>未通过 QC</span><span><i class="lg-low"></i>低于最低综合分</span><span><i class="lg-m"></i>无记录 / 缺失</span></div>
+        <p class="dl-reasons" id="ex-reasons"></p>
+        <p class="dl-empty" id="ex-empty" hidden></p>
+      </div>
+      <aside class="dl-shards" aria-labelledby="ex-files-h">
+        <div class="dl-shards-h"><span id="ex-files-h">本地分片</span><b id="ex-nshards">–</b></div>
+        <div class="dl-job" id="ex-job" hidden></div>
+        <div class="dl-files" id="ex-files" role="list"></div>
+        <div class="dl-shard-sum" id="ex-sum"></div>
+      </aside>
+    </div>
+
+    <details class="dl-read" id="ex-read">
+      <summary class="sr-only">训练侧怎么读</summary>
+      <p>导出写到服务器的导出目录，每个 block 一个文件夹，每个分片一个 .npy（形状 (n, H, W)）。训练时直接内存映射读取：</p>
+      <pre>from emqc.loader import ShardStore
+store = ShardStore("{{ export_dir }}/&lt;dataset&gt;")
+for meta, arr in store.shards():                 # arr: (n, H, W) 内存映射
+    ...
+patch, meta = store.random_patch(rng, (8, 256, 256))</pre>
+      <p>一并拷贝的资产（如 gt_segmentation）在同目录的 assets/ 下，按同一批 z 原样复制，不裁剪、不改编码。</p>
+    </details>
+    <div class="dl-foot">
+      <label class="dl-check"><input type="checkbox" name="resume" form="ex-form" checked><span aria-hidden="true">✓</span>续传：跳过已有分片</label>
+      <span class="dl-sep" aria-hidden="true"></span>
+      <button type="button" class="dl-link" data-toggle="ex-read" aria-expanded="false" aria-controls="ex-read">训练侧怎么读 ›</button>
+      <span class="dl-msg" id="ex-msg" aria-live="polite"></span>
+      <button type="button" class="dl-go" id="ex-go">开始导出 <span aria-hidden="true">→</span></button>
+    </div>
+  </section>
+
+  {# ================================================================ 02 推理流 #}
+  <section class="dl-card mt-8" aria-labelledby="dl2-h" id="dl-stream">
+    <div class="dl-head">
+      <h2 id="dl2-h"><span class="dl-no">02</span>推理流<small>逐块读取，不生成本地副本</small></h2>
+    </div>
+    <form class="dl-ctrls mt-4" id="st-form" novalidate onsubmit="return false">
+      <label>数据集<select name="dataset_id" class="dl-in">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == preselect }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks</option>{% endfor %}</select></label>
+      <label title="每个子块装几张切片">z_chunk<input name="z_chunk" type="number" min="1" step="1" value="16" class="dl-in dl-num" required></label>
+      <label>顺序<select name="order" class="dl-in"><option value="z">空间顺序</option><option value="grade">好 block 优先</option></select></label>
+      <label>客户端<input name="client" class="dl-in" placeholder="unet-infer" value="unet-infer" maxlength="64" style="width:9rem"></label>
+      <label class="dl-check dl-check-sm"><input type="checkbox" name="skip_failed"><span aria-hidden="true">✓</span>跳过含未通过切片的子块</label>
+    </form>
+    <p class="dl-err" id="st-err" role="alert" hidden></p>
+    <div class="dl-flow">
+      <div class="dl-vol" id="st-vol" aria-hidden="true"></div>
+      <div class="dl-client" id="st-client-node"><div class="dl-client-box"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="5" cy="7" r="1.6"/><circle cx="5" cy="17" r="1.6"/><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/><circle cx="19" cy="12" r="1.6"/><path d="M6.4 7.6 10.6 11.4M6.4 16.4 10.6 12.6M6.4 7 10.6 5.4M6.4 17 10.6 18.6M13.4 5.6 17.6 11.4M13.4 12h4.2M13.4 18.4 17.6 12.6"/></svg><span id="st-client">unet-infer</span></div></div>
+    </div>
+    <div class="dl-st-status" id="st-status" aria-live="polite"><span class="dl-st-ic" aria-hidden="true"></span><span id="st-status-t">等待客户端读取</span><span class="dl-st-meta" id="st-meta"></span></div>
+    <details class="dl-read" id="st-read">
+      <summary class="sr-only">推理侧怎么接</summary>
+      <p>推理程序按会话的计划一个子块一个子块地取：取一块（窗口前移）、算完确认（ack）、再取下一块。整卷只读一遍，不在本地落副本。</p>
+      <pre>from emqc.loader import StreamClient
+# 新建会话：StreamClient(api, "&lt;dataset&gt;", z_chunk=16, client="unet-infer")
+# 接上页面上建好的会话 #N：StreamClient(api, stream_id=N)
+for item, arr in StreamClient("{{ api_base }}", "&lt;dataset&gt;", z_chunk=16, client="unet-infer").items():
+    pred = model(arr)                            # arr: (z1-z0, H, W)，一个 tile 的一段
+    ...                                          # 每个子块用完自动 ack，结束自动关闭会话</pre>
+    </details>
+    <div class="dl-foot">
+      <button type="button" class="dl-link" data-toggle="st-read" aria-expanded="false" aria-controls="st-read">推理侧怎么接 ›</button>
+      <span class="dl-msg" id="st-msg" aria-live="polite"></span>
+      <button type="button" class="dl-go" id="st-go">创建会话 <span aria-hidden="true">→</span></button>
+    </div>
+  </section>
+
+  {# ================================================================ 最近的任务 #}
+  <div class="mt-12 grid gap-6 lg:grid-cols-2">
+    <section aria-labelledby="dl-jobs-h">
+      <div class="flex items-end justify-between"><h2 id="dl-jobs-h" class="text-[22px] font-bold text-white">导出任务</h2><a class="ov-link" href="/delivery/classic">全部 →</a></div>
+      <div class="dl-list mt-4" id="dl-jobs"><p class="dl-empty">加载中…</p></div>
+    </section>
+    <section aria-labelledby="dl-ses-h">
+      <div class="flex items-end justify-between"><h2 id="dl-ses-h" class="text-[22px] font-bold text-white">推理流会话</h2><a class="ov-link" href="/delivery/classic">全部 →</a></div>
+      <div class="dl-list mt-4" id="dl-sessions"><p class="dl-empty">加载中…</p></div>
+    </section>
+  </div>
+</main>
+
+<div class="dl-tip" id="dl-tip" role="tooltip" hidden></div>
+<script src="/static/delivery-v2.js?v={{ static_v('delivery-v2.js') }}" defer></script>
+</body>
+</html>

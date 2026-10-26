@@ -165,3 +165,20 @@ def test_pipeline_dashboard(registered, qc_run):
     assert 'id="pk"' in new and 'data-level="patch"' in new and c.get("/static/ov-pack.js").status_code == 200
     assert 'id="ov-wall"' in new and 'class="ov-wall-row"' in new and 'class="ov-wall-card"' in new and c.get("/static/ov-wall.js").status_code == 200
     assert 'id="dashboard"' not in c.get("/pipeline").text
+
+
+def test_delivery_page_and_asset_previews(registered, qc_run):
+    """新版交付页：页面只给骨架和可选资产，图都由前端按真实接口画；资产轨道的逐张预览和缺失位置。"""
+    from emqc.api.app import app
+
+    c = TestClient(app)
+    page = c.get(f"/delivery?dataset={registered}").text
+    assert 'id="ex-form"' in page and 'id="st-form"' in page and "delivery-v2.js" in page and "gt_segmentation" in page
+    assert 'id="export-form"' in c.get("/delivery/classic").text  # 旧版完整页面还在
+    assert c.get("/static/delivery-v2.js").status_code == 200
+    zs = c.get(f"/api/v1/data/{registered}/assets/gt_segmentation/zs").json()
+    assert zs["zs"] and zs["zs"] == sorted(zs["zs"])
+    r = c.get(f"/api/v1/data/{registered}/assets/gt_segmentation/preview/z/{zs['zs'][0]}.png")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
+    assert c.get(f"/api/v1/data/{registered}/assets/gt_segmentation/preview/z/999999.png").status_code == 404  # 没有文件 = 缺失，不生成
+    assert c.get(f"/api/v1/data/{registered}/assets/no_such_asset/zs").status_code == 404

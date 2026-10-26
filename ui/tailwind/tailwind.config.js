@@ -4,6 +4,9 @@ module.exports = {
     "../../emqc/api/templates/overview.html",
     "../../emqc/api/templates/_overview_graph.html",
     "../../emqc/api/static/overview.js",
+    "../../emqc/api/static/ov-*.js",
+    "../../emqc/api/templates/delivery_v2.html",
+    "../../emqc/api/static/delivery-v2.js",
   ],
   theme: {
     extend: {

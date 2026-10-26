@@ -467,10 +467,26 @@ def pipeline_page(request: Request, s: Session = Depends(get_session)):
 @router.get("/delivery", response_class=HTMLResponse)
 def delivery_page(request: Request, dataset: str | None = None, s: Session = Depends(get_session)):
     datasets = [dataset_to_dict(d) for d in s.scalars(select(Dataset).order_by(Dataset.dataset_id))]
+    base = str(request.base_url).rstrip("/")
+    if not dataset:  # default to a dataset that already has QC results
+        dataset = next((d["dataset_id"] for d in datasets if d["latest_run_id"]), datasets[0]["dataset_id"] if datasets else None)
+    # 每个数据集能「一并拷贝」的资产：除了原图本身以外的 image_stack（导出时按同一批 z 原样复制）
+    from emqc.db.models import DatasetAsset
+    assets: dict[str, list[str]] = {}
+    for a in s.scalars(select(DatasetAsset).order_by(DatasetAsset.asset_type)):
+        if (a.format or "").startswith("image_stack") and a.asset_type != "em_image":
+            assets.setdefault(a.dataset_id, []).append(a.asset_type)
+    return _render("delivery_v2.html", request, datasets=datasets, preselect=dataset, assets=assets, export_dir=str(settings.export_dir), api_base=base, active="delivery")
+
+
+@router.get("/delivery/classic", response_class=HTMLResponse)
+def delivery_classic_page(request: Request, dataset: str | None = None, s: Session = Depends(get_session)):
+    """旧版交付页（完整的导出预览表、任务列表和推理流子块地图），新版页面右上角「详细版」进来。"""
+    datasets = [dataset_to_dict(d) for d in s.scalars(select(Dataset).order_by(Dataset.dataset_id))]
     jobs = [export_job_to_dict(j) for j in s.scalars(select(ExportJob).order_by(ExportJob.id.desc()).limit(20))]
     sessions = [stream_to_dict(x) for x in s.scalars(select(StreamSession).order_by(StreamSession.id.desc()).limit(30))]
     base = str(request.base_url).rstrip("/")
-    if not dataset:  # default to a dataset that already has QC results
+    if not dataset:
         dataset = next((d["dataset_id"] for d in datasets if d["latest_run_id"]), datasets[0]["dataset_id"] if datasets else None)
     return _render("delivery.html", request, datasets=datasets, jobs=jobs, sessions=sessions, preselect=dataset, export_dir=str(settings.export_dir), api_base=base, active="delivery")
 

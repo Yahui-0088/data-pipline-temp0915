@@ -181,6 +181,81 @@ def preview_slice(dataset_id: str, z: int, s: Session = Depends(get_session)):
     return Response(body, media_type=media, headers={"Cache-Control": "private, max-age=3600"})
 
 
+# ---- 资产（标签等 image_stack）逐张预览：交付页上「一并拷贝的资产」那条轨道用。z 的对应关系和导出拷贝资产时完全一样：
+# 文件名里最后一个数字是编号，编号最小的那张对应 z=0（export._copy_assets 里的 zmin）。
+_asset_index: dict[tuple, tuple] = {}
+_asset_index_lock = threading.Lock()
+
+
+def _asset_files(s: Session, ds: Dataset, asset_type: str):
+    from emqc.db.models import DatasetAsset
+    from emqc.registry.fs import parse_root
+    from emqc.registry.readers import IMAGE_EXTS, _Z_RE
+
+    a = s.scalars(select(DatasetAsset).where(DatasetAsset.dataset_id == ds.dataset_id, DatasetAsset.asset_type == asset_type)).first()
+    if a is None or not (a.format or "").startswith("image_stack"):
+        raise HTTPException(404, f"{ds.dataset_id} has no image_stack asset {asset_type!r}")
+    key = (ds.dataset_id, ds.root_path, a.path)
+    with _asset_index_lock:
+        hit = _asset_index.get(key)
+    if hit and time.monotonic() - hit[0] < 300:
+        return hit[1:]
+    fs, base = parse_root(ds.root_path, cache_dir=settings.cache_dir, timeout=settings.ssh_timeout, key_file=settings.ssh_key_file)
+    adir = fs.join(base, a.path)
+    files: dict[int, str] = {}
+    if fs.is_dir(adir):
+        for e in fs.listdir(adir):
+            if e.is_dir or Path(e.name).suffix.lower() not in IMAGE_EXTS:
+                continue
+            m = _Z_RE.search(Path(e.name).stem)
+            if m:
+                files[int(m.group(1))] = e.name
+    zmin = min(files) if files else 0
+    by_z = {n - zmin: name for n, name in files.items()}
+    with _asset_index_lock:
+        _asset_index[key] = (time.monotonic(), fs, adir, by_z)
+    return fs, adir, by_z
+
+
+@router.get("/{dataset_id}/assets/{asset_type}/zs")
+def asset_zs(dataset_id: str, asset_type: str, s: Session = Depends(get_session)):
+    """Which z have a file for this asset (same z mapping as the export's asset copy). Missing z are simply absent."""
+    ds = _ds(s, dataset_id)
+    _, _, by_z = _asset_files(s, ds, asset_type)
+    return {"dataset_id": dataset_id, "asset_type": asset_type, "zs": sorted(z for z in by_z if 0 <= z < ds.size_z), "n_files": len(by_z)}
+
+
+@router.get("/{dataset_id}/assets/{asset_type}/preview/z/{z}.png")
+def asset_preview(dataset_id: str, asset_type: str, z: int, s: Session = Depends(get_session)):
+    """Thumbnail of one asset section. Label images (integer ids) are shown as random colours per id (0 = black);
+    other images are scaled to grey. Nothing is generated: a z without a file is a 404."""
+    from emqc.registry.readers import decode_image
+
+    ds = _ds(s, dataset_id)
+    fs, adir, by_z = _asset_files(s, ds, asset_type)
+    name = by_z.get(z)
+    if name is None:
+        raise HTTPException(404, f"{asset_type}: no file for z={z}")
+    arr = decode_image(fs.read_bytes(fs.join(adir, name)), name)
+    f = max(1, int(np.ceil(max(arr.shape) / (settings.preview_max_px * 2))))
+    small = arr[::f, ::f]
+    if small.dtype.kind in "ui" and (small.dtype.itemsize > 1 or int(small.max(initial=0)) < 64):
+        ids = small.astype(np.uint64)
+        h = (ids * np.uint64(2654435761)) & np.uint64(0xFFFFFF)
+        rgb = np.stack([(h >> np.uint64(16)) & np.uint64(255), (h >> np.uint64(8)) & np.uint64(255), h & np.uint64(255)], axis=-1).astype(np.uint8)
+        rgb = (rgb // 2 + 96).astype(np.uint8)
+        rgb[ids == 0] = 0
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.fromarray(rgb, "RGB").save(buf, format="PNG")
+        body = buf.getvalue()
+    else:
+        dmax = float(np.iinfo(small.dtype).max) if small.dtype.kind in "ui" else float(small.max() or 1.0)
+        body, _ = _encode(to_uint8(np.clip(small.astype(np.float32) / dmax, 0, 1)), "png")
+    return Response(body, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.get("/{dataset_id}/cutout")
 def cutout(dataset_id: str, request: Request, z0: int, z1: int, y0: int, y1: int, x0: int, x1: int, fmt: str = "npy", stream_id: int | None = None, s: Session = Depends(get_session)):
     t0 = time.perf_counter()
