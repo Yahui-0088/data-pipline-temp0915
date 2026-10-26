@@ -35,6 +35,8 @@ attribute float aSize;
 attribute float aRegion;
 attribute float aKind;
 uniform float uRestGlow;
+uniform float uBurst;   // 点击细胞后的转场：0 = 原样，1 = 粒子全部散开
+uniform float uFade;    // 转场最后整体淡出
 varying vec3 vColor;
 varying float vAlpha;
 varying float vSquare;
@@ -55,6 +57,15 @@ void main() {
   p += n * sin(t * 0.8 + dot(p, vec3(2.3, 1.7, 2.9))) * 0.014 * (1.0 - waveW);
   // 变形途中粒子走一小段弧线，而不是直线穿过去
   p += aDir * sin(k * 3.14159) * 0.16 * (0.4 + aSeed);
+
+  // 转场：每个粒子沿「从中心往外 + 自己的随机方向」瞬间炸开（快出慢停），之后慢慢漂浮
+  float burstE = 0.0;
+  if (uBurst > 0.0) {
+    burstE = 1.0 - pow(1.0 - clamp(uBurst, 0.0, 1.0), 4.0);
+    vec3 rd = normalize(p + aDir * 0.65 + vec3(1e-4));
+    p += rd * (0.7 + aSeed * 2.6) * burstE;
+    p += vec3(sin(t * 0.9 + aSeed * 21.0), cos(t * 0.7 + aSeed * 13.0), sin(t * 0.6 + aSeed * 7.0)) * 0.25 * burstE;
+  }
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   vec3 nV = normalize(normalMatrix * n);
@@ -103,11 +114,14 @@ void main() {
     bool done = uRegionStatus[i] > 0.5;
     float w = done ? uRestGlow + (1.0 - uRestGlow) * g : g;
     vec3 hc = done ? uHoverOk : uHoverTodo;
+    w *= 1.0 - burstE * 0.85;                          // 散开时数据集的绿光退掉，留下紫色的光点
     col = mix(col, hc * (0.7 + 0.5 * lit), w * 0.9);
-    alpha *= 1.0 + (done ? 0.9 : 0.0) + g * 1.6;            // 膜正面很通透，区域要加一点实感才看得见
+    alpha *= 1.0 + ((done ? 0.9 : 0.0) + g * 1.6) * (1.0 - burstE);            // 膜正面很通透，区域要加一点实感才看得见
     size *= 1.0 + g * 0.45;
   }
 
+  size *= 1.0 + burstE * 0.7;                          // 散开时粒子略微变大、变亮，像飘散的光点
+  alpha *= (1.0 + burstE * 0.15) * (1.0 - uFade);
   vColor = col;
   vAlpha = alpha;
   gl_Position = projectionMatrix * mv;
@@ -185,6 +199,7 @@ export class ParticleSculpture {
       uColA: { value: new THREE.Color() }, uColB: { value: new THREE.Color() },
       uHoverOk: { value: new THREE.Color(CONFIG.hoverColors.processed) }, uHoverTodo: { value: new THREE.Color(CONFIG.hoverColors.unprocessed) },
       uRegionStatus: { value: new Float32Array(NR) }, uRegionGlow: { value: new Float32Array(NR) }, uRestGlow: { value: CONFIG.restGlow },
+      uBurst: { value: 0 }, uFade: { value: 0 },
     };
     data.datasets.forEach((d, i) => { this.uniforms.uRegionStatus.value[i] = d.status === "processed" ? 1 : 0; });
     this.material = new THREE.ShaderMaterial({ uniforms: this.uniforms, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -203,6 +218,7 @@ export class ParticleSculpture {
   setBrightness(b) { this.uniforms.uBright.value = b; }
   setPixelRatio(pr) { this.uniforms.uPixelRatio.value = pr; }
   setViewHeight(h) { this.uniforms.uViewH.value = h; }
+  setBurst(b, fade = 0) { this.uniforms.uBurst.value = b; this.uniforms.uFade.value = fade; }
 
   /** 换图案：从「此刻看到的样子」平滑过渡到新图案；几何体不重建，只更新 A / B 两组目标。 */
   setShape(name) {

@@ -57,8 +57,14 @@ async function main() {
     }
   });
   canvas.addEventListener("pointerleave", () => { pointer = null; drag = null; });
-  canvas.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; pointer = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); touch(); });
-  canvas.addEventListener("pointerup", () => { drag = null; });
+  let press = null;
+  canvas.addEventListener("pointerdown", (e) => { if (leaving) return; drag = { x: e.clientX, y: e.clientY }; pointer = { x: e.clientX, y: e.clientY }; press = { x: e.clientX, y: e.clientY, t: performance.now() }; canvas.setPointerCapture(e.pointerId); touch(); });
+  canvas.addEventListener("pointerup", (e) => {
+    drag = null;
+    // 单击（没拖动）在发光的细胞上 → 粒子散开，转场进总览
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 6 && performance.now() - press.t < 500 && onCell(e.clientX, e.clientY)) leave();
+    press = null;
+  });
   canvas.addEventListener("pointercancel", () => { drag = null; pointer = null; });
   canvas.addEventListener("wheel", (e) => { e.preventDefault(); rig.zoomBy(Math.exp(e.deltaY * 0.0012)); touch(); }, { passive: false });
   addEventListener("keydown", (e) => {
@@ -66,6 +72,36 @@ async function main() {
     if (e.key === "r" || e.key === "R") { rig.reset(); touch(); }
     else if (e.key === "f" || e.key === "F") ui.toggleFullscreen();
   });
+
+  // ---------------------------------------------------------------- 点细胞 → 转场进总览
+  // 细胞在屏幕上的范围：把中心和「中心 + 半径 × 镜头右方向」投影到屏幕上量一下（半径和 shapes.js 里的细胞膜一致）
+  const CELL_R = 1.08;
+  const project = (v) => { const p = v.clone().project(gscene.camera); return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight }; };
+  function onCell(x, y) {
+    const cam = gscene.camera, c = project(cam.position.clone().multiplyScalar(0));
+    const right = cam.position.clone().cross(cam.up).normalize().multiplyScalar(CELL_R);
+    const e = project(right);
+    return Math.hypot(x - c.x, y - c.y) <= Math.hypot(e.x - c.x, e.y - c.y);
+  }
+  const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let leaving = null;
+  function leave() {
+    if (leaving) return;
+    const href = "/overview";
+    const pre = document.createElement("link"); pre.rel = "prefetch"; pre.href = href; document.head.append(pre);
+    document.body.classList.add("gx-leaving");
+    leaving = { t0: performance.now(), dur: REDUCE ? 350 : 2300, href };
+    if (!REDUCE) rig.setDistance(rig.target.dist * 0.82);            // 镜头轻轻往前推一点，散开更有纵深
+  }
+  function leaveStep(now) {
+    const s = (now - leaving.t0) / leaving.dur;
+    if (REDUCE) { sculpture.setBurst(0, Math.min(1, s)); }
+    else {
+      // 前 1.4 秒炸开（着色器里是快出慢停），之后继续漂浮；最后 0.7 秒整体淡出
+      sculpture.setBurst(Math.min(1, (now - leaving.t0) / 1400), Math.max(0, Math.min(1, (s - 0.7) / 0.3)));
+    }
+    if (s >= 1 && !leaving.gone) { leaving.gone = true; location.href = leaving.href; }
+  }
 
   // ---------------------------------------------------------------- 渲染循环（只有一个）
   let last = performance.now(), clock = 0, running = true;
@@ -77,18 +113,21 @@ async function main() {
     clock += dt * speed;                                    // 只影响流动，不影响镜头
     const idle = !drag && (now - lastInput) / 1000 > CONFIG.camera.idleBeforeAutoRotate;   // 鼠标不动 = 自转
     rig.update(dt, idle);
-    const h = sculpture.pick(pointer ? pointer.x : null, pointer ? pointer.y : null, gscene.camera, innerWidth, innerHeight);
+    if (leaving) leaveStep(now);
+    const h = leaving ? -1 : sculpture.pick(pointer ? pointer.x : null, pointer ? pointer.y : null, gscene.camera, innerWidth, innerHeight);
     sculpture.update(clock, dt, h, rig.cur.dist, wallDt);
     ui.showInfo(h >= 0 ? data.datasets[h] : null, pointer ? pointer.x : 0, pointer ? pointer.y : 0);
-    canvas.style.cursor = drag ? "grabbing" : h >= 0 ? "pointer" : "grab";
+    canvas.style.cursor = leaving ? "default" : drag ? "grabbing" : h >= 0 || (pointer && onCell(pointer.x, pointer.y)) ? "pointer" : "grab";
     gscene.render();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
+  // 从总览按「后退」回来时（页面从缓存里恢复），粒子要回到原样
+  addEventListener("pageshow", (e) => { if (e.persisted && leaving) { leaving = null; sculpture.setBurst(0, 0); document.body.classList.remove("gx-leaving"); rig.reset(); } });
   addEventListener("pagehide", (e) => { if (!e.persisted) { running = false; sculpture.dispose(); gscene.dispose(); } });
   // 给自动化测试 / 调试用：只读的状态快照
-  window.__galaxy = { rig, data, sculpture, get hovered() { return sculpture.hovered; } };
+  window.__galaxy = { rig, data, sculpture, leave, get hovered() { return sculpture.hovered; } };
 }
 
 main().catch((e) => { console.error(e); showFatal("加载失败：" + (e && e.message ? e.message : e)); });

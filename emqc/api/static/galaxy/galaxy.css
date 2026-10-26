@@ -90,3 +90,10 @@ button.primary:hover { background: rgba(44, 240, 138, 0.26); }
     #gx-info { width: 240px; }
 }
 @media (prefers-reduced-motion: reduce) { #gx-info, .gx-pull .gx-tr, .gx-tab, .gx-nav, .gx-sidetab { transition: none; } }
+
+/* 点细胞转场：界面上的文字和面板先淡出，留下散开的粒子；背景渐渐压成总览页的底色 */
+body.gx-leaving .gx-tl, body.gx-leaving .gx-side, body.gx-leaving .gx-pull, body.gx-leaving #gx-info { opacity: 0; transition: opacity 400ms ease; pointer-events: none; }
+body::after { content: ""; position: fixed; inset: 0; z-index: 20; background: #0A0A0A; opacity: 0; pointer-events: none; }
+body.gx-leaving::after { animation: gx-to-overview 2300ms linear forwards; }
+@keyframes gx-to-overview { 0%, 72% { opacity: 0; } 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { body.gx-leaving::after { animation-duration: 350ms; } }
