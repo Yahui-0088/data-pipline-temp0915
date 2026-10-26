@@ -35,7 +35,7 @@ def node(k, title, sub_tpl, diamond=False, left=A_L, width=A_W, t=None):
     shape = "ov-diamond" if diamond else "ov-box"
     return (f'<button type="button" data-node="{k}" aria-pressed="false" class="ov-node {shape}" style="left:{left}px;top:{t}px;width:{width}px;height:{h}px">'
             f'<span class="block text-[13.5px] font-semibold leading-tight">{title}</span>'
-            f'<span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{sub_tpl}</span></button>')
+            + (f'<span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{sub_tpl}</span>' if sub_tpl else "") + '</button>')
 pill = lambda left, t, txt: f'<div class="absolute flex items-center justify-center rounded-full border border-dashed border-neutral-700 bg-ink-900 font-mono text-[11px] text-neutral-400" style="left:{left}px;top:{t}px;width:96px;height:32px">{txt}</div>'
 lab = lambda left, t, w, txt, cls="text-neutral-400": f'<div class="absolute text-center text-[12px] leading-4 {cls}" style="left:{left}px;top:{t}px;width:{w}px">{txt}</div>'
 tm = lambda k, extra="": "{{ node_time.get('%s', '') }}%s" % (k, extra)
@@ -46,9 +46,9 @@ out = [f'<div class="relative" style="width:{W}px;height:{HH}px">',
        '<defs><marker id="ov-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
        '<path d="M0 0 L8 4 L0 8 Z" fill="currentColor"/></marker></defs>', *paths, "</svg>",
        pill(A_C - 48, top("start"), "__start__"),
-       node("prepare", "准备 · 打开数据", "{% if latest %}{{ latest.n_sections|int }} 切片{% if n_tiles %} · {{ n_tiles }} tile{% endif %}{% endif %}"),
+       node("prepare", "打开数据", ""),
        node("next_group", "取下一个 z 段", "条件分支", diamond=True),
-       node("ingest", "读取 · 统计", tm("ingest")),
+       node("ingest", "读取", tm("ingest")),
        node("slice_qc", "切片检查", tm("slice_qc", loop)),
        node("serial_qc", "序列检查", tm("serial_qc", loop)),
        node("aggregate", "汇总 · 分级", tm("aggregate", loop)),
@@ -60,7 +60,6 @@ out = [f'<div class="relative" style="width:{W}px;height:{HH}px">',
        lab(A_C + 12, (bot("next_group") + top("ingest")) // 2 - 8, 64, "还有 z 段"),
        lab(A_R + (B_L - A_R) // 2 - 34, cy("next_group") - 28, 68, "全部完成"),
        lab(JX + 8, cy("slice_qc") + 12, 40, "取消"),
-       lab(A_C + 12, (bot("persist") + top("group_done")) // 2 - 8, 84, "本段 tile 完"),
        lab(Z_X + 6, (cy("slice_qc") + cy("persist")) // 2 - 16, 52, "下一个<br>tile", "text-neutral-400"),
        lab(Z_X + 4, cy("next_group") - 28, 96, "下一个 z 段", "text-neutral-400"),
        "</div>"]

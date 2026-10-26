@@ -17,9 +17,9 @@
 <path d="M 140 886 L 36 886 L 36 244 L 137 244" class="text-neutral-500" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
 </svg>
 <div class="absolute flex items-center justify-center rounded-full border border-dashed border-neutral-700 bg-ink-900 font-mono text-[11px] text-neutral-400" style="left:192px;top:24px;width:96px;height:32px">__start__</div>
-<button type="button" data-node="prepare" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:104px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">准备 · 打开数据</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{% if latest %}{{ latest.n_sections|int }} 切片{% if n_tiles %} · {{ n_tiles }} tile{% endif %}{% endif %}</span></button>
+<button type="button" data-node="prepare" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:104px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">打开数据</span></button>
 <button type="button" data-node="next_group" aria-pressed="false" class="ov-node ov-diamond" style="left:140px;top:204px;width:200px;height:80px"><span class="block text-[13.5px] font-semibold leading-tight">取下一个 z 段</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">条件分支</span></button>
-<button type="button" data-node="ingest" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:332px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">读取 · 统计</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{{ node_time.get('ingest', '') }}</span></button>
+<button type="button" data-node="ingest" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:332px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">读取</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{{ node_time.get('ingest', '') }}</span></button>
 <button type="button" data-node="slice_qc" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:432px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">切片检查</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{{ node_time.get('slice_qc', '') }}{% if n_tiles %} · ×{{ n_tiles }}{% endif %}</span></button>
 <button type="button" data-node="serial_qc" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:532px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">序列检查</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{{ node_time.get('serial_qc', '') }}{% if n_tiles %} · ×{{ n_tiles }}{% endif %}</span></button>
 <button type="button" data-node="aggregate" aria-pressed="false" class="ov-node ov-box" style="left:140px;top:632px;width:200px;height:52px"><span class="block text-[13.5px] font-semibold leading-tight">汇总 · 分级</span><span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{{ node_time.get('aggregate', '') }}{% if n_tiles %} · ×{{ n_tiles }}{% endif %}</span></button>
@@ -31,7 +31,6 @@
 <div class="absolute text-center text-[12px] leading-4 text-neutral-400" style="left:252px;top:300px;width:64px">还有 z 段</div>
 <div class="absolute text-center text-[12px] leading-4 text-neutral-400" style="left:356px;top:216px;width:68px">全部完成</div>
 <div class="absolute text-center text-[12px] leading-4 text-neutral-400" style="left:398px;top:470px;width:40px">取消</div>
-<div class="absolute text-center text-[12px] leading-4 text-neutral-400" style="left:252px;top:828px;width:84px">本段 tile 完</div>
 <div class="absolute text-center text-[12px] leading-4 text-neutral-400" style="left:42px;top:599px;width:52px">下一个<br>tile</div>
 <div class="absolute text-center text-[12px] leading-4 text-neutral-400" style="left:40px;top:216px;width:96px">下一个 z 段</div>
 </div>
