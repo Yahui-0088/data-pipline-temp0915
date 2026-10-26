@@ -19,7 +19,7 @@ from emqc.qc import catalog
 
 from ..serializers import block_to_dict, dataset_to_dict, export_job_to_dict, finding_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict, stream_to_dict, trace_to_dict
 from .auth import current_user, page_user, safe_next
-from .qc import pipeline_status, run_graph, run_summary
+from .qc import pipeline_dashboard, pipeline_status, run_graph, run_summary
 
 router = APIRouter(tags=["dashboard"], include_in_schema=False)
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
@@ -344,9 +344,70 @@ def traces_page(request: Request, s: Session = Depends(get_session)):
     return _render("traces.html", request, traces=traces, served=served, served_kinds=served_kinds, active="traces")
 
 
+# 总览页：左边 LangGraph 流程图，右边每一步的产出（手风琴）。数字全部来自 pipeline_dashboard（和旧的仪表盘同一个数据源）
+SERIAL_TYPES = {"contrast_drift", "brightness_jump", "slice_jump", "global_misalign"}
+OVERVIEW_STEPS = [  # (节点 id, 类型, 标题, 说明)
+    ("prepare", "NODE", "准备 · 打开数据", "打开数据集，读元数据，按 z 段和 tile 切分任务。"),
+    ("ingest", "NODE", "读取 · 统计", "逐段读入图像，计算亮度、对比度等基础统计，供后面的检查使用。"),
+    ("slice_qc", "NODE", "切片检查", "单张切片自己的问题：空白、模糊、过曝、损坏、污染、形变。"),
+    ("serial_qc", "NODE", "序列检查", "相邻切片之间的问题：对比度漂移、亮度突变、切片跳变、整体错位。"),
+    ("aggregate", "NODE", "汇总 · 分级", "把问题汇总到每个 tile，打质量分、定等级，算出能用于训练的切片比例。"),
+    ("persist", "BRANCH", "落库", "写入问题记录和 tile 结果；还有 tile 回到切片检查，本段查完进入本段完成。"),
+    ("finalize", "NODE", "数据集收尾", "汇总整个数据集：等级、可用比例，标出可以导出的切片。"),
+]
+
+
+def _overview_ctx(s: Session) -> dict:
+    d = pipeline_dashboard(days=0, dataset_id=None, s=s)
+    kpi, runs = d["kpi"], d["runs"]
+    latest = max(runs, key=lambda r: (r.get("finished_at") or "", r["run_id"])) if runs else None
+    pct = lambda x: "–" if x is None else f"{x * 100:.1f}%"
+    secs = lambda x: "–" if x is None else (f"{x:.2f} s" if x < 10 else f"{x:.1f} s")
+    st = (latest or {}).get("stages") or {}
+    wall = (latest or {}).get("wall_s") or 0
+    n_tiles = sum(((latest or {}).get("grades") or {}).values())
+    fails = d["failures"]
+    slice_f = [f for f in fails if f["type"] not in SERIAL_TYPES]
+    serial_f = [f for f in fails if f["type"] in SERIAL_TYPES]
+    grades = (latest or {}).get("grades") or {}
+    grade_txt = " · ".join(f"{g} {grades[g]}" for g in sorted(grades)) or "–"
+    ds_grade = next((x["grade"] for x in d["datasets"] if latest and x["run_id"] == latest["run_id"]), None)
+    share = lambda k: f"{st[k] / wall * 100:.0f}%" if wall and st.get(k) else "–"
+    items = {
+        "prepare": [("切片", f"{int(latest['n_sections'])}" if latest else "–"), ("tile", str(n_tiles or "–")), ("读取量", f"{latest['bytes_read'] / 1e6:.1f} MB" if latest and latest.get("bytes_read") else "–")],
+        "ingest": [("耗时", secs(st.get("ingest"))), ("吞吐", f"{latest['sections_per_s']:.1f} 张/s" if latest and latest.get("sections_per_s") else "–"), ("占这次运行", share("ingest"))],
+        "slice_qc": [("问题记录", str(int(latest["n_findings"])) if latest else "–"), ("占这次运行", share("slice_qc")), ("最多的类型", slice_f[0]["zh"] if slice_f else "–")],
+        "serial_qc": [(f["zh"], str(f["n"])) for f in serial_f[:3]] or [("问题", "0")],
+        "aggregate": [("可用比例", pct((latest or {}).get("retention"))), ("质量分", f"{latest['quality']:.2f}" if latest and latest.get("quality") is not None else "–"), ("tile 等级", grade_txt)],
+        "persist": [("写入问题", f"{int(latest['n_findings'])} 条" if latest else "–"), ("tile", str(n_tiles or "–")), ("耗时", secs(st.get("persist")))],
+        "finalize": [("数据集等级", ds_grade or "–"), ("可用比例", pct((latest or {}).get("retention"))), ("总耗时", secs(wall or None))],
+    }
+    loop = {"slice_qc", "serial_qc", "aggregate", "persist"}
+    steps = []
+    for i, (nid, kind, title, desc) in enumerate(OVERVIEW_STEPS, 1):
+        tag = [f"{i:02d}", kind]
+        if nid in loop and n_tiles:
+            tag.append(f"×{n_tiles}")
+        if st.get(nid) is not None:
+            tag.append(secs(st[nid]))
+        steps.append({"id": nid, "tag": " · ".join(tag), "title": title, "desc": desc, "rows": items[nid]})
+    node_time = {k: secs(v) for k, v in st.items()}
+    return {
+        "kpi": kpi, "latest": latest, "steps": steps, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
+        "runs": sorted(runs, key=lambda r: r["run_id"], reverse=True)[:8], "delivery": d["delivery"],
+        "pct": pct, "secs": secs, "fmt_mb": lambda b: f"{(b or 0) / 1e6:.1f} MB",
+    }
+
+
 @router.get("/overview", response_class=HTMLResponse)
-def overview_page(request: Request):
-    return _render("overview.html", request, active="overview")
+def overview_page(request: Request, s: Session = Depends(get_session)):
+    return _render("overview.html", request, active="overview", **_overview_ctx(s))
+
+
+@router.get("/overview/classic", response_class=HTMLResponse)
+def overview_classic_page(request: Request):
+    """旧的指标仪表盘（筛选、图表、数据表），从新总览页的「详细仪表盘」进来。"""
+    return _render("overview_classic.html", request, active="overview")
 
 
 @router.get("/pipeline", response_class=HTMLResponse)

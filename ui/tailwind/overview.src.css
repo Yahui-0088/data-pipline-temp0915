@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 总览页的几种组件：圆角卡片、按钮、流程图节点、右侧手风琴 */
+@layer components {
+  .ov-panel { @apply border border-white/[0.06] bg-white/[0.02]; }
+  .ov-link { @apply text-slate-400 transition-colors duration-200 hover:text-slate-100; }
+  .ov-btn { @apply inline-flex items-center gap-1.5 rounded-lg border border-white/10 font-medium text-slate-100 transition-colors duration-200 hover:border-white/20 hover:bg-white/5; }
+  .ov-btn-primary { @apply inline-flex h-9 items-center rounded-lg bg-slate-100 px-4 text-sm font-medium text-ink-950 transition-colors duration-200 hover:bg-white; }
+  .ov-chip { @apply rounded-md border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono text-xs text-slate-200; }
+  :is(a, button):focus-visible { @apply outline-none ring-2 ring-sky-400/70 ring-offset-2 ring-offset-ink-950; }
+
+  /* 流程图节点：卡片 / 菱形（条件分支）；data-on = 当前展开的那一步 */
+  .ov-node { @apply absolute flex flex-col items-center justify-center text-center text-slate-100 transition duration-300; }
+  .ov-card { @apply border border-white/10 bg-ink-850 hover:border-white/25; }
+  .ov-diamond { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); @apply bg-[#16213A] hover:bg-[#1C2A48]; }
+  .ov-card[data-on] { @apply border-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.12)]; }
+  .ov-diamond[data-on] { @apply bg-sky-500/30; }
+
+  /* 右侧手风琴：默认折叠暗态；data-open = 展开（高度 450ms，颜色 / 透明度 300ms，ease-out） */
+  .ov-step { @apply relative rounded-xl px-4 py-5 transition-colors duration-300 ease-out; }
+  .ov-step[data-open] { @apply bg-white/[0.03]; }
+  .ov-step-head { @apply block w-full rounded-md text-left; }
+  .ov-step-tag { @apply block font-mono text-[11.5px] tracking-[0.06em] text-slate-600 transition-colors duration-300 ease-out; }
+  .ov-step-title { @apply mt-1.5 block text-[clamp(20px,2vw,28px)] font-semibold leading-tight tracking-tight text-slate-500 transition-colors duration-300 ease-out; }
+  .ov-step[data-open] .ov-step-tag { @apply text-sky-300; }
+  .ov-step[data-open] .ov-step-title { @apply text-slate-50; }
+  .ov-step-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 450ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .ov-step[data-open] .ov-step-body { grid-template-rows: 1fr; }
+  .ov-step-inner { @apply translate-y-2 pt-4 opacity-0; visibility: hidden; transition: opacity 300ms ease-out, transform 300ms ease-out, visibility 300ms; }
+  .ov-step[data-open] .ov-step-inner { @apply translate-y-0 opacity-100; visibility: visible; }
+  .ov-dot { @apply absolute -right-3 top-8 h-[7px] w-[7px] scale-50 rounded-full bg-sky-400 opacity-0 transition duration-300 ease-out; }
+  .ov-step[data-open] .ov-dot { @apply scale-100 opacity-100; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-step-body, .ov-step-inner, .ov-dot, .ov-node, .ov-step-tag, .ov-step-title { transition: none !important; }
+  html { scroll-behavior: auto; }
+}
