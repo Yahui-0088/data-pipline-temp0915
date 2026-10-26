@@ -213,60 +213,50 @@
 {% endif %}
 
 <div class="mx-auto max-w-[1200px] px-6 pb-16">
-  <div class="mt-16 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-    <section aria-labelledby="runs-h" class="min-w-0">
-      <div class="flex items-center justify-between">
-        <h2 id="runs-h" class="text-[18px] font-semibold text-white">运行记录</h2>
-        <a href="/pipeline" class="ov-link">全部运行 →</a>
+  <section aria-labelledby="runs-h" class="mt-24 min-w-0">
+    <div class="flex items-end justify-between">
+      <h2 id="runs-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">运行记录</h2>
+      <a href="/pipeline" class="ov-link">全部运行 →</a>
+    </div>
+    {# 运行记录图：三块共用一条横轴（每次运行），可用比例 / 问题数 / 用时各一块；悬停十字线 + 提示，点击进运行详情（ov-runs.js） #}
+    <div class="ov-card mt-5 px-4 pb-4 pt-5 sm:px-6" id="rc">
+      {% if run_series %}
+      <div class="rc-tabs" role="tablist" aria-label="看哪一项">
+        <button type="button" role="tab" data-m="keep" aria-selected="true">可用率</button><button type="button" role="tab" data-m="f" aria-selected="false">问题数</button><button type="button" role="tab" data-m="s" aria-selected="false">用时</button>
       </div>
-      <div class="ov-card mt-4 overflow-x-auto">
-        <table class="w-full min-w-[620px]">
-          <thead>
-            <tr class="text-left text-[12px] text-neutral-400">
-              <th class="px-5 pb-2 pt-3 font-normal">运行</th><th class="px-3 pb-2 pt-3 font-normal">数据集</th>
-              <th class="px-3 pb-2 pt-3 text-right font-normal">切片</th><th class="px-3 pb-2 pt-3 text-right font-normal">问题</th>
-              <th class="px-3 pb-2 pt-3 text-right font-normal">可用</th><th class="px-3 pb-2 pt-3 text-right font-normal">用时</th><th class="px-5 pb-2 pt-3 text-right font-normal">完成时间</th>
-            </tr>
-          </thead>
-          <tbody class="tabular-nums">
-            {% for r in runs[:5] %}
-            <tr class="border-t border-line-soft transition-colors hover:bg-white/[0.03]">
-              <td class="px-5 py-3"><a href="/runs/{{ r.run_id }}" class="font-mono text-[13px] text-white hover:underline">#{{ r.run_id }}</a></td>
-              <td class="px-3 py-3 text-neutral-300">{{ r.dataset_id }}</td>
-              <td class="px-3 py-3 text-right text-neutral-200">{{ (r.n_sections or 0)|int }}</td>
-              <td class="px-3 py-3 text-right text-neutral-200">{{ (r.n_findings or 0)|int }}</td>
-              <td class="px-3 py-3 text-right text-white">{{ pct(r.retention) }}</td>
-              <td class="px-3 py-3 text-right text-neutral-200">{{ secs(r.wall_s) }}</td>
-              <td class="px-5 py-3 text-right text-neutral-400">{{ (r.finished_at or '')[5:]|replace('T', ' ') }}</td>
-            </tr>
-            {% else %}
-            <tr class="border-t border-line-soft"><td colspan="7" class="px-5 py-8 text-neutral-400">还没有运行记录。</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div class="rc-chart" id="rc-chart"></div>
+      <div class="rc-play" id="rc-play">
+        <button type="button" class="rc-play-btn" id="rc-play-btn" aria-label="回放运行"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg></button>
+        <span class="rc-play-label">回放运行</span>
+        <div class="rc-play-track" id="rc-play-track" role="slider" tabindex="0" aria-label="回放到哪一次运行"><span class="rc-play-fill"></span><span class="rc-play-head"></span></div>
+        <span class="rc-play-time" id="rc-play-time"></span>
       </div>
-    </section>
+      <script type="application/json" id="rc-data">{{ run_series|tojson }}</script>
+      {% else %}
+      <p class="px-2 py-8 text-neutral-400">还没有运行记录。</p>
+      {% endif %}
+    </div>
+  </section>
 
-    <section aria-labelledby="dv-h" class="flex min-w-0 flex-col">
-      <div class="flex items-center justify-between">
-        <h2 id="dv-h" class="text-[18px] font-semibold text-white">交付</h2>
-        <a href="/delivery" class="ov-link">去交付 →</a>
+  <section aria-labelledby="dv-h" class="mt-16 min-w-0">
+    <div class="flex items-end justify-between">
+      <h2 id="dv-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">交付</h2>
+      <a href="/delivery" class="ov-link">去交付 →</a>
+    </div>
+    {% set dv = delivery %}
+    <dl class="ov-card mt-5 grid grid-cols-1 sm:grid-cols-2">
+      <div class="border-b border-line px-6 py-5 sm:border-b-0 sm:border-r">
+        <dt class="text-[13px] text-neutral-400">训练导出</dt>
+        <dd class="mt-1 text-[28px] font-semibold leading-9 tabular-nums text-white">{{ dv.export_sections }}<span class="ml-1 text-[13px] font-normal text-neutral-400">张切片</span></dd>
+        <dd class="mt-0.5 tabular-nums text-neutral-400">{{ dv.n_exports }} 次导出，{{ fmt_mb(dv.export_bytes) }}</dd>
       </div>
-      {% set dv = delivery %}
-      <dl class="ov-card mt-4 flex flex-1 flex-col">
-        <div class="flex-1 border-b border-line px-5 py-4">
-          <dt class="text-[13px] text-neutral-400">训练导出</dt>
-          <dd class="mt-1 text-[24px] font-semibold leading-8 tabular-nums text-white">{{ dv.export_sections }}<span class="ml-1 text-[13px] font-normal text-neutral-400">张切片</span></dd>
-          <dd class="mt-0.5 tabular-nums text-neutral-400">{{ dv.n_exports }} 次导出，{{ fmt_mb(dv.export_bytes) }}</dd>
-        </div>
-        <div class="flex-1 px-5 py-4">
-          <dt class="text-[13px] text-neutral-400">推理数据流</dt>
-          <dd class="mt-1 text-[24px] font-semibold leading-8 tabular-nums text-white">{{ dv.stream_chunks }}<span class="ml-1 text-[13px] font-normal text-neutral-400">个数据块</span></dd>
-          <dd class="mt-0.5 tabular-nums text-neutral-400">{{ dv.n_streams }} 个数据流，{{ fmt_mb(dv.stream_bytes) }}{% if dv.n_streams_open %}，{{ dv.n_streams_open }} 个正在传输{% endif %}</dd>
-        </div>
-      </dl>
-    </section>
-  </div>
+      <div class="px-6 py-5">
+        <dt class="text-[13px] text-neutral-400">推理数据流</dt>
+        <dd class="mt-1 text-[28px] font-semibold leading-9 tabular-nums text-white">{{ dv.stream_chunks }}<span class="ml-1 text-[13px] font-normal text-neutral-400">个数据块</span></dd>
+        <dd class="mt-0.5 tabular-nums text-neutral-400">{{ dv.n_streams }} 个数据流，{{ fmt_mb(dv.stream_bytes) }}{% if dv.n_streams_open %}，{{ dv.n_streams_open }} 个正在传输{% endif %}</dd>
+      </div>
+    </dl>
+  </section>
 </div>
 
 <footer class="border-t border-line">
@@ -286,5 +276,6 @@
 <script src="/static/overview.js?v={{ static_v('overview.js') }}" defer></script>
 <script src="/static/ov-wall.js?v={{ static_v('ov-wall.js') }}" defer></script>
 <script src="/static/ov-pack.js?v={{ static_v('ov-pack.js') }}" defer></script>
+<script src="/static/ov-runs.js?v={{ static_v('ov-runs.js') }}" defer></script>
 </body>
 </html>

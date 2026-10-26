@@ -159,6 +159,8 @@ def test_pipeline_dashboard(registered, qc_run):
     assert c.get("/static/vendor/gsap/gsap.min.js").status_code == 200 and c.get("/static/vendor/gsap/ScrollTrigger.min.js").status_code == 200
     assert c.get("/static/tw/overview.css").status_code == 200 and c.get("/static/overview.js").status_code == 200
     # 问题切片墙：真实的问题截图，每种问题一行
+    # 运行记录图 + 交付（上下排）
+    assert 'id="rc-chart"' in new and 'id="rc-play-btn"' in new and 'id="dv-h"' in new and c.get("/static/ov-runs.js").status_code == 200
     # 导出数据包：数字由前端调 /api/v1/packs/plan 取
     assert 'id="pk"' in new and 'data-level="patch"' in new and c.get("/static/ov-pack.js").status_code == 200
     assert 'id="ov-wall"' in new and 'class="ov-wall-row"' in new and 'class="ov-wall-card"' in new and c.get("/static/ov-wall.js").status_code == 200

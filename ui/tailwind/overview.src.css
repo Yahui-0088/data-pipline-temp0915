@@ -303,3 +303,54 @@
 }
 @media (max-width: 560px) { .pk-hero { height: 470px; } .pk-scene { top: 190px; transform: scale(0.6); margin-left: -280px; left: 50%; } }
 @media (prefers-reduced-motion: reduce) { .pk-layer, .pk-cube, .pk-card, .pk-seg button { transition-duration: 1ms !important; } }
+
+/* ---------- 运行记录图：横轴完成时间，纵轴可切换；只有折线是淡紫色，其余保持中性 ---------- */
+.rc-tabs { display: inline-flex; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); }
+.rc-tabs button { cursor: pointer; padding: 6px 18px; border-radius: 999px; font-size: 13.5px; color: #a3a3a3; transition: color 200ms ease, background-color 200ms ease, box-shadow 200ms ease; }
+@media (hover: hover) and (pointer: fine) { .rc-tabs button:hover { color: #fff; } }
+.rc-tabs button[aria-selected="true"] { color: #fff; background: rgba(255, 255, 255, 0.10); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16); }
+.rc-chart { position: relative; margin-top: 18px; }
+.rc-svg { display: block; overflow: visible; outline: none; }
+.rc-svg:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.4); outline-offset: 4px; border-radius: 8px; }
+.rc-grid { stroke: rgba(255, 255, 255, 0.06); stroke-width: 1; }
+.rc-vgrid { stroke: rgba(255, 255, 255, 0.045); stroke-width: 1; }
+.rc-base { stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; }
+.rc-tick, .rc-xtick { fill: #8a8a8a; font: 500 12px/1 theme("fontFamily.mono"); font-variant-numeric: tabular-nums; }
+.rc-ytitle, .rc-xtitle { fill: #a3a3a3; font-size: 12.5px; }
+.rc-xday { fill: #5f5f5f; font: 500 11px/1 theme("fontFamily.mono"); }
+.rc-line { fill: none; stroke: #C9B8F0; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 5px rgba(201, 184, 240, 0.45)); }
+.rc-dot { fill: #111111; stroke: #e5e5e5; stroke-width: 2; transform-box: fill-box; transform-origin: center; transition: transform 200ms var(--ease-out), stroke 200ms ease, opacity 200ms ease; }
+.rc-svg.has-hover .rc-dot:not(.on) { opacity: 0.55; }
+.rc-dot.on { transform: scale(1.45); stroke: #fff; fill: #fff; filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8)); }
+.rc-drop { stroke: rgba(255, 255, 255, 0.45); stroke-width: 1; stroke-dasharray: 4 4; pointer-events: none; }
+.rc-hit { fill: transparent; cursor: pointer; }
+.rc-svg.is-pre .rc-line, .rc-svg.is-pre .rc-dot { opacity: 0; }
+.rc-tip { position: absolute; left: 0; top: 0; z-index: 3; min-width: 150px; padding: 10px 12px; border-radius: 12px; pointer-events: none;
+  background: rgba(22, 22, 22, 0.92); border: 1px solid rgba(255, 255, 255, 0.14); backdrop-filter: blur(10px); box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.9);
+  font-size: 12.5px; color: #a3a3a3; transition: transform 180ms var(--ease-out); }
+.rc-tip::after { content: ""; position: absolute; left: var(--caret, 50%); bottom: -6px; width: 10px; height: 10px; margin-left: -5px; transform: rotate(45deg);
+  background: rgba(22, 22, 22, 0.92); border-right: 1px solid rgba(255, 255, 255, 0.14); border-bottom: 1px solid rgba(255, 255, 255, 0.14); }
+.rc-tip.is-below::after { bottom: auto; top: -6px; transform: rotate(225deg); }
+.rc-tip-h { font: 600 14px/1.2 theme("fontFamily.mono"); color: #fff; }
+.rc-tip-sub { margin: 2px 0 6px; color: #8a8a8a; white-space: nowrap; }
+.rc-tip-r { display: flex; justify-content: space-between; gap: 18px; line-height: 20px; }
+.rc-tip-r b { font-weight: 500; color: #fff; font-variant-numeric: tabular-nums; }
+/* 回放运行 */
+.rc-play { display: flex; align-items: center; gap: 14px; margin-top: 10px; padding: 10px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); }
+.rc-play-btn { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; color: #fff; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.06); transition: transform 160ms var(--ease-out), background-color 200ms ease; }
+.rc-play-btn:active { transform: scale(0.94); }
+@media (hover: hover) and (pointer: fine) { .rc-play-btn:hover { background: rgba(255, 255, 255, 0.12); } }
+.rc-play-btn.is-on svg path { d: path("M4 3h3v10H4zM9 3h3v10H9z"); }
+.rc-play-label { font-size: 14px; color: #e5e5e5; white-space: nowrap; }
+.rc-play-track { --p: 1; position: relative; flex: 1; height: 24px; cursor: pointer; touch-action: none; outline: none; }
+.rc-play-track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
+.rc-play-fill { position: absolute; left: 0; top: 50%; height: 2px; margin-top: -1px; width: calc(var(--p) * 100%); border-radius: 2px; background: rgba(255, 255, 255, 0.55); transition: width 300ms var(--ease-out); }
+.rc-play-dot { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #5a5a5a; transition: background-color 200ms ease; }
+.rc-play-dot.done { background: #d4d4d4; }
+.rc-play-head { position: absolute; top: 50%; left: calc(var(--p) * 100%); width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; z-index: 1;
+  background: #111; border: 2px solid #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.6); transition: left 300ms var(--ease-out); }
+.rc-play-track:focus-visible .rc-play-head { outline: 2px solid rgba(255, 255, 255, 0.5); outline-offset: 3px; }
+.rc-play-time { font: 500 12.5px/1 theme("fontFamily.mono"); color: #a3a3a3; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) { .rc-play-label { display: none; } }
+@media (prefers-reduced-motion: reduce) { .rc-tip, .rc-play-fill, .rc-play-head, .rc-dot { transition: none !important; } }

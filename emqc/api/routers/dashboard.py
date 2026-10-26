@@ -437,6 +437,10 @@ def _overview_ctx(s: Session) -> dict:
         "stage": stage, "datasets": datasets, "wall": wall,
         "kpi": kpi, "latest": latest, "steps": steps, "finding": finding, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
         "runs": sorted(runs, key=lambda r: r["run_id"], reverse=True)[:8], "delivery": d["delivery"],
+        # 运行记录图：最近 24 次运行，按时间从旧到新
+        "run_series": [{"id": r["run_id"], "ds": r["dataset_id"], "at": (r.get("finished_at") or "")[5:].replace("T", " "), "t": r.get("finished_at"), "n": int(r.get("n_sections") or 0),
+                        "f": int(r.get("n_findings") or 0), "keep": r.get("retention"), "s": r.get("wall_s")}
+                       for r in sorted(runs, key=lambda r: r["run_id"])[-24:]],
         "pct": pct, "secs": secs, "fmt_mb": lambda b: f"{(b or 0) / 1e6:.1f} MB",
     }
 
