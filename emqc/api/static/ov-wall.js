@@ -65,8 +65,74 @@
       lb.style.top = `${Math.min(Math.max(r.top + r.height / 2 - wr.top, 26), wr.height - 26)}px`;
     });
   }
-  placeLabels();
-  addEventListener("resize", placeLabels);
+  // ------------------------------------------------------------------ 一次看三行：右侧发光滚轮 + 鼠标滚轮上下切换
+  const SHOW = 3;
+  const box = document.getElementById("ov-wall-box");
+  const plane = wall.querySelector(".ov-wall-plane");
+  const scroller = document.getElementById("ov-wall-scroll");
+  const sThumb = scroller && scroller.querySelector(".ov-wall-scroll-thumb");
+  const maxStart = Math.max(0, cols.length - SHOW);
+  let start = 0, quietUntil = 0;
+  function follow(ms) {  // 平面在动的这段时间里，分类名跟着投影位置走
+    const t0 = performance.now();
+    const step = () => { placeLabels(); if (performance.now() - t0 < ms) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
+  function setStart(s, instant) {
+    s = Math.max(0, Math.min(maxStart, s));
+    const changed = s !== start; start = s;
+    const row = cols[0] ? cols[0].col : null;
+    const unit = row ? row.offsetHeight + parseFloat(getComputedStyle(plane).rowGap || 22) : 190;
+    if (instant) plane.style.transition = "none";
+    plane.style.setProperty("--shift", `${(cols.length - SHOW - start) * unit}px`);
+    if (instant) { plane.offsetHeight; plane.style.transition = ""; }
+    cols.forEach((c, i) => {
+      const out = i < start || i >= start + SHOW;
+      c.col.classList.toggle("is-out", out);
+      c.col.querySelectorAll(".ov-wall-card").forEach((b) => { if (!b.hasAttribute("aria-hidden")) b.tabIndex = out ? -1 : 0; });
+    });
+    wall.querySelectorAll(".ov-wall-label").forEach((lb) => { const i = +lb.dataset.row; lb.classList.toggle("is-out", i < start || i >= start + SHOW); });
+    if (sThumb) {
+      const h = scroller.clientHeight, th = Math.max(24, (h * SHOW) / cols.length);
+      sThumb.style.height = `${th}px`;
+      sThumb.style.top = `${maxStart ? (start / maxStart) * (h - th) : 0}px`;
+      scroller.setAttribute("aria-valuemin", "0"); scroller.setAttribute("aria-valuemax", String(maxStart)); scroller.setAttribute("aria-valuenow", String(start));
+      scroller.setAttribute("aria-valuetext", `第 ${start + 1}–${Math.min(cols.length, start + SHOW)} 类，共 ${cols.length} 类`);
+    }
+    if (instant) placeLabels(); else if (changed) follow(reduce ? 50 : 620);
+  }
+  setStart(0, true);
+  addEventListener("resize", () => setStart(start, true));
+
+  // 鼠标在图片墙或滚轮上滚动：一格换一行；已经到头时不拦截，页面照常滚动
+  let wAcc = 0, wLast = 0, wLockUntil = 0;
+  const onWallWheel = (e) => {
+    if (focus || maxStart === 0) return;
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
+    if ((dy > 0 && start >= maxStart) || (dy < 0 && start <= 0)) return;
+    e.preventDefault();
+    const now = performance.now();
+    if (now - wLast > 220) wAcc = 0;
+    wLast = now;
+    if (now < wLockUntil) return;
+    wAcc += dy;
+    clearTimeout(hoverT); hoverT = 0; quietUntil = now + 700;
+    if (Math.abs(wAcc) >= 46) { setStart(start + (wAcc > 0 ? 1 : -1)); wAcc = 0; wLockUntil = now + 480; }
+  };
+  wall.addEventListener("wheel", onWallWheel, { passive: false });
+  if (scroller) {
+    scroller.addEventListener("wheel", onWallWheel, { passive: false });
+    let sDrag = false;
+    const at = (y) => { const r = scroller.getBoundingClientRect(); return Math.round(Math.max(0, Math.min(1, (y - r.top) / r.height)) * maxStart); };
+    scroller.addEventListener("pointerdown", (e) => { e.preventDefault(); sDrag = true; sThumb.classList.add("is-drag"); scroller.setPointerCapture(e.pointerId); setStart(at(e.clientY)); });
+    scroller.addEventListener("pointermove", (e) => { if (sDrag) setStart(at(e.clientY)); });
+    const end = () => { sDrag = false; sThumb.classList.remove("is-drag"); };
+    scroller.addEventListener("pointerup", end); scroller.addEventListener("pointercancel", end);
+    scroller.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); setStart(start + 1); }
+      else if (e.key === "ArrowUp" || e.key === "PageUp") { e.preventDefault(); setStart(start - 1); }
+    });
+  }
 
   // 速度平滑过渡（悬停一行 → 慢下来；聚焦 → 停住）
   let raf = 0;
@@ -169,7 +235,7 @@
     cols.forEach((x) => setRate(x, 0));
     hold(c, k);
     layer.hidden = false;
-    wall.classList.add("is-focus");
+    wall.classList.add("is-focus"); box && box.classList.add("is-focus");
     caption();
     // 从原位置飞到中央：同一个框，先放在原卡片的位置（FLIP），再回到正常位置
     const r = card.getBoundingClientRect();
@@ -187,7 +253,7 @@
     const target = visibleCard(c, k);
     const fr = frame.getBoundingClientRect();
     layer.classList.remove("is-open");
-    wall.classList.remove("is-focus");
+    wall.classList.remove("is-focus"); box && box.classList.remove("is-focus");
     let a;
     if (target && !reduce) {
       const r = target.getBoundingClientRect();
@@ -229,13 +295,22 @@
   }
 
   // ------------------------------------------------------------------ 进入：悬停（有鼠标）/ 点击（触屏、键盘）
-  let hoverT = 0;
-  wall.addEventListener("pointerover", (e) => {
-    if (!finePointer || focus) return;
+  // 只有鼠标自己移到图片上才打开：胶片在滚、或者刚用滚轮翻过行，图片从静止的鼠标底下滑过去时不打开
+  let hoverT = 0, lastMove = 0;
+  wall.addEventListener("pointermove", (e) => {
+    if (e.pointerType !== "mouse") return;
+    lastMove = performance.now();
+    if (!finePointer || focus || performance.now() < quietUntil) return;
     const card = e.target.closest(".ov-wall-card");
-    clearTimeout(hoverT);
-    if (card) hoverT = setTimeout(() => { if (card.matches(":hover")) open(card); }, 160);  // 一扫而过不触发
+    if (!card) { clearTimeout(hoverT); hoverT = 0; return; }
+    if (hoverT && card === hoverCard) return;
+    clearTimeout(hoverT); hoverCard = card;
+    hoverT = setTimeout(() => {  // 停留 160ms 才打开，一扫而过不触发
+      hoverT = 0;
+      if (!focus && card.matches(":hover") && performance.now() - lastMove < 400 && performance.now() >= quietUntil) open(card);
+    }, 160);
   });
+  let hoverCard = null;
   wall.addEventListener("pointerleave", () => clearTimeout(hoverT));
   wall.addEventListener("click", (e) => {
     const card = e.target.closest(".ov-wall-card");

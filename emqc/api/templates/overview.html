@@ -126,9 +126,9 @@
 <section id="ov-wall-section" aria-labelledby="wall-h" class="mx-auto mt-20 max-w-[1200px] px-6">
   <div class="flex flex-wrap items-baseline justify-between gap-2">
     <h2 id="wall-h" class="text-[18px] font-semibold text-white">问题切片</h2>
-    <p class="text-[13px] text-neutral-500">各数据集最新运行里的问题截图 · 悬停放大 · 滚轮切换同一类 · Esc 退出</p>
   </div>
-  <div class="ov-wall mt-5" id="ov-wall">
+  <div class="ov-wall-box mt-5" id="ov-wall-box">
+  <div class="ov-wall" id="ov-wall">
     <div class="ov-wall-plane">
       {% for c in wall %}
       <div class="ov-wall-row" data-row="{{ loop.index0 }}">
@@ -143,6 +143,8 @@
     </div>
     <div class="ov-wall-shade" aria-hidden="true"></div>
     <div class="ov-wall-labels">{% for c in wall %}<span class="ov-wall-label" data-row="{{ loop.index0 }}">{{ c.zh }}<b>{{ c.n }}</b></span>{% endfor %}</div>
+  </div>
+  {% if wall|length > 3 %}<div class="ov-wall-scroll" id="ov-wall-scroll" role="scrollbar" aria-controls="ov-wall" aria-orientation="vertical" aria-label="问题类型" tabindex="0"><span class="ov-wall-scroll-thumb"></span></div>{% endif %}
   </div>
   <script type="application/json" id="ov-wall-data">{{ wall|tojson }}</script>
 </section>

@@ -108,20 +108,22 @@
 }
 
 /* ---------- 问题切片：地面透视的多轨胶片（每种问题一行，横向滚动）+ 悬停聚焦 ---------- */
-.ov-wall { position: relative; height: 600px; overflow: hidden; border-radius: 16px; background: radial-gradient(120% 90% at 50% 100%, #161616 0%, #0b0b0b 60%, #080808 100%);
+.ov-wall { position: relative; height: 520px; overflow: hidden; border-radius: 16px; background: radial-gradient(120% 90% at 50% 100%, #161616 0%, #0b0b0b 60%, #080808 100%);
   perspective: 1000px; perspective-origin: 50% -20%;
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 10%, #000 90%, transparent 100%), linear-gradient(to bottom, transparent 0, #000 10%, #000 90%, transparent 100%);
   -webkit-mask-composite: source-in; mask-image: linear-gradient(to right, transparent 0, #000 10%, #000 90%, transparent 100%), linear-gradient(to bottom, transparent 0, #000 10%, #000 90%, transparent 100%);
   mask-composite: intersect; }
-.ov-wall-plane { position: absolute; left: 50%; bottom: -30px; width: 2400px; display: flex; flex-direction: column; gap: 18px; transform-style: preserve-3d;
-  transform: translateX(-50%) rotateX(48deg) rotateZ(-5deg); transform-origin: 50% 100%;
-  transition: filter 450ms var(--ease-out), opacity 450ms var(--ease-out); }
-.ov-wall-row { position: relative; height: 132px; transform-style: preserve-3d; }
+.ov-wall-plane { position: absolute; left: 50%; bottom: -10px; width: 2400px; display: flex; flex-direction: column; gap: 22px; transform-style: preserve-3d;
+  /* 一次只看三行：整片沿地面前后平移（--shift 由 ov-wall.js 按当前看到第几行算出） */
+  transform: translateX(-50%) rotateX(50deg) rotateZ(-5deg) translateY(var(--shift, 0px)); transform-origin: 50% 100%;
+  transition: transform 560ms var(--ease-out), filter 450ms var(--ease-out), opacity 450ms var(--ease-out); }
+.ov-wall-row { position: relative; height: 168px; transform-style: preserve-3d; transition: opacity 420ms var(--ease-out); }
+.ov-wall-row.is-out { opacity: 0; pointer-events: none; }
 .ov-wall-anchor { position: absolute; top: 0; width: 1px; height: 100%; left: 600px; visibility: hidden; }
 .ov-wall-track { position: relative; height: 100%; overflow: hidden; transform-style: preserve-3d; }
 .ov-wall-reel { display: flex; gap: 16px; height: 100%; width: max-content; will-change: transform; transform-style: preserve-3d; }
-.ov-wall-row:nth-child(even) .ov-wall-reel { padding-left: 74px; }  /* 相邻两行错开半张 */
-.ov-wall-card { position: relative; display: block; height: 132px; aspect-ratio: 1; flex: none; padding: 0; overflow: hidden; cursor: zoom-in;
+.ov-wall-row:nth-child(even) .ov-wall-reel { padding-left: 95px; }  /* 相邻两行错开半张 */
+.ov-wall-card { position: relative; display: block; height: 168px; aspect-ratio: 1; flex: none; padding: 0; overflow: hidden; cursor: zoom-in;
   border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.12); background: #141414;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 18px -8px rgba(0, 0, 0, 0.8);
   filter: brightness(0.78); transition: filter 300ms var(--ease-out), transform 300ms var(--ease-out), box-shadow 300ms var(--ease-out), opacity 300ms var(--ease-out); }
@@ -141,6 +143,22 @@
   padding: 4px 10px; border-radius: 999px; background: rgba(17, 17, 17, 0.85); border: 1px solid #2a2a2a; font-size: 13px; font-weight: 600; color: #e5e5e5; }
 .ov-wall-label b { font: 500 12px/1 theme("fontFamily.mono"); color: #8a8a8a; font-variant-numeric: tabular-nums; }
 .ov-wall.is-focus .ov-wall-labels { opacity: 0.25; filter: blur(2px); }
+.ov-wall-label { transition: opacity 300ms var(--ease-out); }
+.ov-wall-label.is-out { opacity: 0; }
+/* 右侧的滚轮：白色发光滑块 = 现在看到的三行在全部类型里的位置；上下滚 / 拖 / 点轨道切换 */
+.ov-wall-box { position: relative; }
+.ov-wall-scroll { position: absolute; right: -22px; top: 50%; height: 62%; width: 4px; transform: translateY(-50%); border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1); cursor: pointer; touch-action: none; }
+.ov-wall-scroll::before { content: ""; position: absolute; inset: -6px -12px; }
+.ov-wall-scroll-thumb { position: absolute; left: -1px; right: -1px; top: 0; border-radius: 4px; background: #fff; cursor: grab;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.95), 0 0 16px rgba(255, 255, 255, 0.55), 0 0 28px rgba(217, 242, 207, 0.3);
+  transition: top 560ms var(--ease-out), box-shadow 200ms ease; }
+.ov-wall-scroll-thumb.is-drag { cursor: grabbing; transition: box-shadow 200ms ease; }
+@media (hover: hover) and (pointer: fine) {
+  .ov-wall-scroll:hover .ov-wall-scroll-thumb { box-shadow: 0 0 8px rgba(255, 255, 255, 1), 0 0 22px rgba(255, 255, 255, 0.7), 0 0 36px rgba(217, 242, 207, 0.4); }
+}
+.ov-wall-box.is-focus .ov-wall-scroll { opacity: 0.25; pointer-events: none; }
+@media (max-width: 767px) { .ov-wall-scroll { right: 6px; } }
 
 /* 聚焦层：固定在视口上，只有中间那一块接收鼠标 */
 .ov-focus { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
@@ -161,7 +179,7 @@
 .ov-focus-desc { margin: 8px 0 0; color: #a3a3a3; font-size: 13px; line-height: 1.6; }
 @media (max-width: 767px) {
   .ov-wall { height: 440px; }
-  .ov-wall-plane { transform: translateX(-50%) rotateX(52deg) rotateZ(-5deg) scale(0.7); }
+  .ov-wall-plane { transform: translateX(-50%) rotateX(50deg) rotateZ(-5deg) scale(0.7) translateY(var(--shift, 0px)); }
   .ov-focus-stage { flex-direction: column; align-items: stretch; }
   .ov-focus-side { flex-direction: row; align-self: auto; }
   .ov-focus-bar { display: none; }
