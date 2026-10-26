@@ -92,7 +92,8 @@ def test_admin_manages_reporters_and_sees_everything(app, registered):
         assert bulk["n_ok"] == 0 and "项目" in bulk["results"][0]["error"]
         d = c.get("/api/v1/report/data").json()
         assert not d["limited"] and registered in [x["dataset_id"] for x in d["datasets"]]
-        assert c.get("/overview").status_code == 200 and 'href="/report"' in c.get("/overview").text
+        # 总览页顶栏只留「详细仪表盘」（不再放汇报入口）；汇报页本身照样能进
+        assert c.get("/overview").status_code == 200 and c.get("/report").status_code == 200
 
 
 def test_cli_creates_reporter(app, capsys):
