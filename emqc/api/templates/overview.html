@@ -12,76 +12,23 @@
 <script>try { const v = +sessionStorage.getItem("gx-intro") || 0; if (v && Date.now() - v < 15000 && !matchMedia("(prefers-reduced-motion: reduce)").matches) document.documentElement.classList.add("ov-in"); } catch (e) {}</script>
 </head>
 <body class="min-h-screen bg-ink-950 font-sans text-[14px] leading-5 text-neutral-200 antialiased">
-{# 从汇报页点细胞过来：页面加载时，四散的光点「接着往外飘 → 顺势掉头收拢到中心」一条连续曲线，缩成一点后散成光晕露出总览（没有标记就什么都不做） #}
-<canvas id="ov-intro" aria-hidden="true" style="position:fixed;inset:0;width:100vw;height:100vh;z-index:100;background:#000;pointer-events:none;display:none"></canvas>
+{# 从汇报页点细胞过来：那边已经把光点收成了中心一个静止的亮点，这里第一帧画同一个亮点；
+   页面排版、脚本跑完之后，光晕散开、黑底淡出，露出总览（没有标记就什么都不做） #}
+<script src="/static/gx-transition.js?v={{ static_v('gx-transition.js') }}"></script>
 <script>
 (() => {
-  let t0 = 0;
-  try { t0 = +sessionStorage.getItem("gx-intro") || 0; sessionStorage.removeItem("gx-intro"); } catch (e) {}
-  if (!t0 || Date.now() - t0 > 15000 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (!document.documentElement.classList.contains("ov-in") || !window.GxTransition) { document.documentElement.classList.remove("ov-in"); return; }
+  try { sessionStorage.removeItem("gx-intro"); } catch (e) {}
   document.documentElement.style.background = "#000";
-  let finish, asked = false, scripts = false; window.__ovIntro = new Promise((r) => { finish = r; });
-  window.__ovScriptsDone = () => { scripts = true; };
-  const cv = document.getElementById("ov-intro"), g = cv.getContext("2d", { alpha: false });
-  const W = innerWidth, H = innerHeight, dpr = Math.min(2, devicePixelRatio || 1);
-  cv.width = W * dpr; cv.height = H * dpr; cv.style.display = "block"; g.scale(dpr, dpr);
-  const cx = W / 2, cy = H * 0.46, N = Math.round(Math.min(3000, W * H / 360));
-  // 光点贴图：每种颜色预先画一张软边小圆（drawImage 比每颗 arc 快得多，帧率稳）
-  const COLS = ["201,184,240", "157,134,224", "232,226,255", "255,255,255", "176,160,226"];
-  const SPR = COLS.map((c) => {
-    const s = document.createElement("canvas"); s.width = s.height = 32; const q = s.getContext("2d");
-    const r = q.createRadialGradient(16, 16, 0, 16, 16, 16);
-    r.addColorStop(0, `rgba(${c},1)`); r.addColorStop(0.35, `rgba(${c},0.55)`); r.addColorStop(1, `rgba(${c},0)`);
-    q.fillStyle = r; q.fillRect(0, 0, 32, 32); return s;
+  let ready; const whenReady = new Promise((r) => { ready = r; });
+  // 页面脚本加载器（在页尾）会先等这个 promise；脚本跑完后调 __ovScriptsDone，然后光晕才散开
+  window.__ovIntro = new Promise((r) => {
+    const start = () => { document.documentElement.classList.remove("ov-in"); r(); };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
   });
-  const P = new Array(N);
-  for (let i = 0; i < N; i++) {
-    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * Math.hypot(W, H) * 0.6, s = Math.random();
-    P[i] = { ox: Math.cos(a) * r, oy: Math.sin(a) * r * 0.8, s, sz: (1.6 + Math.random() * 3.4) * (Math.random() < 0.06 ? 2.2 : 1),
-             c: (Math.random() * COLS.length) | 0, sq: Math.random() < 0.08, al: 0.5 + 0.5 * Math.random() };
-  }
-  // 一条连续的曲线 f(u)：从 1 开始先顺着散开的方向再往外飘一点（初速度向外），在最远处顺势掉头，
-  // 加速收向中心，最后缓缓落到 0（终点速度 0）。没有停顿、没有分段，所以不会有「停一下再收」的顿挫。
-  // f(u) = (1 - u)^2 · (1 + (2 + K)·u)：f(0)=1，f'(0)=K>0（向外），f(1)=0，f'(1)=0
-  const K = 1.4, f = (u) => (1 - u) * (1 - u) * (1 + (2 + K) * u);
-  const DUR = 1150, REVEAL = 480;
-  let start = 0, ready = document.readyState !== "loading", doneAt = 0;
-  document.addEventListener("DOMContentLoaded", () => { ready = true; });
-  function draw(now) {
-    if (!start) start = now;
-    const t = now - start;
-    g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
-    g.globalCompositeOperation = "lighter";
-    for (let i = 0; i < N; i++) {
-      const p = P[i];
-      const u = Math.min(1, Math.max(0, (t / DUR) * 1.25 - p.s * 0.25));        // 每颗错开一点：外圈的先掉头
-      const k = f(u), x = cx + p.ox * k, y = cy + p.oy * k;
-      const sz = p.sz * (0.35 + 0.65 * k), al = p.al * (0.4 + 0.6 * k);
-      g.globalAlpha = al;
-      if (p.sq) { g.fillStyle = "rgba(225,222,240,1)"; g.fillRect(x - sz * 0.35, y - sz * 0.35, sz * 0.7, sz * 0.7); }
-      else g.drawImage(SPR[p.c], x - sz, y - sz, sz * 2, sz * 2);
-    }
-    g.globalAlpha = 1;
-    // 中心的亮点：收得越拢越亮
-    const c = Math.min(1, t / DUR), glow = c * c * c;
-    if (glow > 0.01) {
-      const R = 8 + 64 * glow, rg = g.createRadialGradient(cx, cy, 0, cx, cy, R);
-      rg.addColorStop(0, `rgba(255,255,255,${0.95 * glow})`); rg.addColorStop(0.35, `rgba(201,184,240,${0.5 * glow})`); rg.addColorStop(1, "rgba(157,134,224,0)");
-      g.fillStyle = rg; g.fillRect(cx - R, cy - R, R * 2, R * 2);
-    }
-    g.globalCompositeOperation = "source-over";
-    // 收完：光点停在中心那一刻再跑页面脚本（静止的亮点停一下看不出来，放在运动中间才会卡），脚本跑完再散开光晕露出总览
-    if (t >= DUR && ready && !asked) { asked = true; document.documentElement.classList.remove("ov-in"); finish(); }
-    if (t >= DUR && scripts) {
-      if (!doneAt) { doneAt = now; document.documentElement.style.background = ""; }
-      const r = Math.min(1, (now - doneAt) / REVEAL);
-      cv.style.opacity = String(1 - r * r * (3 - 2 * r));
-      if (r >= 1) { cv.remove(); return; }
-    }
-    if (t > 8000) { cv.remove(); document.documentElement.classList.remove("ov-in"); if (!asked) finish(); return; }
-    requestAnimationFrame(draw);
-  }
-  requestAnimationFrame(draw);
+  window.__ovScriptsDone = () => { document.documentElement.style.background = ""; ready(); };
+  window.GxTransition.arrive(whenReady);
+  setTimeout(() => { document.documentElement.classList.remove("ov-in"); ready(); }, 6000);   // 兜底
 })();
 </script>
 

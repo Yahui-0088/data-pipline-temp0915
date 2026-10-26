@@ -85,27 +85,25 @@ async function main() {
   }
   const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let leaving = null;
+  // 点细胞：细胞本身很快淡掉，白 / 紫 / 绿的光点从它的位置炸开、飘、再收回屏幕中心成一个静止亮点（gx-transition.js），
+  // 静止那一刻才跳到总览；总览页第一帧接着画同一个亮点，再散开光晕露出页面
   function leave() {
     if (leaving) return;
     const href = "/overview";
     const pre = document.createElement("link"); pre.rel = "prefetch"; pre.href = href; document.head.append(pre);
     document.body.classList.add("gx-leaving");
-    leaving = { t0: performance.now(), dur: REDUCE ? 350 : 1350, href };
-    // 告诉总览页：是从这里散开过去的，到了那边接着把粒子收拢到中心、再露出页面
-    try { if (!REDUCE) sessionStorage.setItem("gx-intro", String(Date.now())); } catch {}
-    // 跳转不依赖渲染循环：就算某一帧出错、或者标签页在后台不画了，到点也一定进总览
-    setTimeout(() => { if (leaving && !leaving.gone) { leaving.gone = true; location.href = href; } }, leaving.dur + 150);
-    if (!REDUCE) rig.setDistance(rig.target.dist * 0.82);            // 镜头轻轻往前推一点，散开更有纵深
+    const go = () => { if (leaving && !leaving.gone) { leaving.gone = true; location.href = href; } };
+    leaving = { t0: performance.now() };
+    if (REDUCE || !window.GxTransition) { setTimeout(go, 350); return; }
+    try { sessionStorage.setItem("gx-intro", String(Date.now())); } catch {}
+    const cam = gscene.camera, c0 = project(cam.position.clone().multiplyScalar(0));
+    const e = project(cam.position.clone().cross(cam.up).normalize().multiplyScalar(CELL_R));
+    canvas.style.transition = "opacity 220ms ease-out"; canvas.style.opacity = "0";
+    window.GxTransition.burst({ x: c0.x, y: c0.y, r: Math.hypot(e.x - c0.x, e.y - c0.y) }, go);
+    setTimeout(go, 4000);                                             // 兜底：动画出了任何问题也照样进总览
   }
-  function leaveStep(now) {
-    if (typeof sculpture.setBurst !== "function") return;            // 万一拿到的是旧版脚本：只做淡出，照样跳转
-    const s = (now - leaving.t0) / leaving.dur;
-    if (REDUCE) { sculpture.setBurst(0, Math.min(1, s)); }
-    else {
-      // 炸开（着色器里是快出慢停）后继续漂浮，不淡出：总览页一打开就是同样四散的光点，再收拢到中心
-      sculpture.setBurst((now - leaving.t0) / 1200, 0);              // 0→1 散开，>1 后继续匀速往外飘，一直到跳转
-    }
-    if (s >= 1 && !leaving.gone) { leaving.gone = true; location.href = leaving.href; }
+  function leaveStep() {
+    if (leaving && performance.now() - leaving.t0 > 300) running = false;   // 细胞淡掉后就停掉 WebGL，把帧全留给转场
   }
 
   // ---------------------------------------------------------------- 渲染循环（只有一个）
@@ -129,7 +127,12 @@ async function main() {
   requestAnimationFrame(frame);
 
   // 从总览按「后退」回来时（页面从缓存里恢复），粒子要回到原样
-  addEventListener("pageshow", (e) => { if (e.persisted && leaving) { leaving = null; sculpture.setBurst(0, 0); document.body.classList.remove("gx-leaving"); rig.reset(); } });
+  addEventListener("pageshow", (e) => {
+    if (!(e.persisted && leaving)) return;
+    leaving = null; document.body.classList.remove("gx-leaving"); canvas.style.opacity = "1";
+    document.querySelectorAll("body > canvas").forEach((c) => c.remove());
+    rig.reset(); if (!running) { running = true; last = performance.now(); requestAnimationFrame(frame); }
+  });
   addEventListener("pagehide", (e) => { if (!e.persisted) { running = false; sculpture.dispose(); gscene.dispose(); } });
   // 给自动化测试 / 调试用：只读的状态快照
   window.__galaxy = { rig, data, sculpture, leave, get hovered() { return sculpture.hovered; } };
