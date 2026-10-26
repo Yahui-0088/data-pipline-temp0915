@@ -33,7 +33,13 @@
   <div class="flex flex-wrap items-start justify-between gap-4">
     <div class="min-w-0">
       <h1 class="text-[24px] font-semibold leading-8 text-white">总览</h1>
-      <p class="mt-1 max-w-3xl text-[15px] leading-6 text-neutral-400">{{ finding or "还没有完成的运行。到流水线选一个数据集开始质量检查。" }}</p>
+      {% if finding %}
+      <ul class="mt-2 space-y-1 text-[15px] leading-6 text-neutral-400">
+        {% for f in finding %}<li class="flex items-baseline gap-2.5"><span aria-hidden="true" class="h-1 w-1 shrink-0 -translate-y-1 rounded-full bg-neutral-500"></span>{{ f }}</li>{% endfor %}
+      </ul>
+      {% else %}
+      <p class="mt-1 text-[15px] leading-6 text-neutral-400">还没有完成的运行。到流水线选一个数据集开始质量检查。</p>
+      {% endif %}
     </div>
     <div class="flex gap-2">
       <a href="/overview/classic" class="ov-btn">详细仪表盘</a>
