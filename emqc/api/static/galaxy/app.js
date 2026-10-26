@@ -90,7 +90,9 @@ async function main() {
     const href = "/overview";
     const pre = document.createElement("link"); pre.rel = "prefetch"; pre.href = href; document.head.append(pre);
     document.body.classList.add("gx-leaving");
-    leaving = { t0: performance.now(), dur: REDUCE ? 350 : 2300, href };
+    leaving = { t0: performance.now(), dur: REDUCE ? 350 : 1600, href };
+    // 告诉总览页：是从这里散开过去的，到了那边接着把粒子收拢到中心、再露出页面
+    try { if (!REDUCE) sessionStorage.setItem("gx-intro", String(Date.now())); } catch {}
     // 跳转不依赖渲染循环：就算某一帧出错、或者标签页在后台不画了，到点也一定进总览
     setTimeout(() => { if (leaving && !leaving.gone) { leaving.gone = true; location.href = href; } }, leaving.dur + 150);
     if (!REDUCE) rig.setDistance(rig.target.dist * 0.82);            // 镜头轻轻往前推一点，散开更有纵深
@@ -100,8 +102,8 @@ async function main() {
     const s = (now - leaving.t0) / leaving.dur;
     if (REDUCE) { sculpture.setBurst(0, Math.min(1, s)); }
     else {
-      // 前 1.4 秒炸开（着色器里是快出慢停），之后继续漂浮；最后 0.7 秒整体淡出
-      sculpture.setBurst(Math.min(1, (now - leaving.t0) / 1400), Math.max(0, Math.min(1, (s - 0.7) / 0.3)));
+      // 炸开（着色器里是快出慢停）后继续漂浮，不淡出：总览页一打开就是同样四散的光点，再收拢到中心
+      sculpture.setBurst(Math.min(1, (now - leaving.t0) / 1400), 0);
     }
     if (s >= 1 && !leaving.gone) { leaving.gone = true; location.href = leaving.href; }
   }
