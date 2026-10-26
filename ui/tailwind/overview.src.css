@@ -211,6 +211,9 @@
 .pk-big .m { margin-top: 6px; color: #8a8a8a; font-size: 13.5px; line-height: 1.5; }
 
 .pk-scene { position: absolute; left: 50%; top: 18px; width: 560px; height: 360px; margin-left: -250px; perspective: 1400px; }
+.pk-world { position: absolute; inset: 0; transform-style: preserve-3d; transform-origin: 300px 190px; cursor: grab; touch-action: pan-y;
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); }
+.pk-world.is-drag { cursor: grabbing; }
 .pk-vol { position: absolute; left: 120px; top: 40px; width: 280px; height: 280px; transform-style: preserve-3d; transform: rotateX(58deg) rotateZ(-36deg); }
 .pk-layer { position: absolute; inset: 0; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.20);
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.01) 55%, rgba(201, 184, 240, 0.03));
@@ -231,7 +234,8 @@
 .pk-face.f1 { transform: translateZ(52px); } .pk-face.f2 { transform: rotateY(180deg) translateZ(52px); }
 .pk-face.f3 { transform: rotateY(90deg) translateZ(52px); } .pk-face.f4 { transform: rotateY(-90deg) translateZ(52px); }
 .pk-face.f5 { transform: rotateX(90deg) translateZ(52px); } .pk-face.f6 { transform: rotateX(-90deg) translateZ(52px); }
-.pk-link { position: absolute; inset: 0; pointer-events: none; transition: opacity 300ms ease; }
+.pk-link { position: absolute; inset: 0; pointer-events: none; overflow: visible; transition: opacity 300ms ease; }
+.pk-pt { position: absolute; width: 0; height: 0; }
 .pk-link path { stroke: #C9B8F0; stroke-opacity: 0.8; stroke-dasharray: 4 5; fill: none; }
 /* 预览切到 2D 切片：最上面一张抬起来、描淡紫边；3D 连续段：中间一段描淡紫；3D patch：切出的立方体 */
 .pk-scene:not([data-view="patch"]) .pk-cube { opacity: 0; transform: rotateX(-24deg) rotateY(-38deg) translate3d(-40px, 10px, 0) scale(0.8); }

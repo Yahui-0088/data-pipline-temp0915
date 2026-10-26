@@ -176,9 +176,11 @@
     <div class="pk-hero">
       <div class="pk-big" aria-live="polite"><div class="k" id="pk-big-k">最多</div><div class="n"><span id="pk-big-n">–</span><small id="pk-big-u"></small></div><div class="t" id="pk-big-t"></div><div class="m" id="pk-big-m"></div></div>
       <div class="pk-scene" id="pk-scene" data-view="patch" aria-hidden="true">
+        <div class="pk-world" id="pk-world">
         <div class="pk-vol" id="pk-vol"></div>
-        <svg class="pk-link" viewBox="0 0 560 360"><path id="pk-l1" d=""/><path id="pk-l2" d=""/></svg>
         <div class="pk-cube">{% for f in range(6) %}<div class="pk-face f{{ f + 1 }}"></div>{% endfor %}</div>
+        </div>
+        <svg class="pk-link" viewBox="0 0 560 360"><path id="pk-l1" d=""/><path id="pk-l2" d=""/></svg>
       </div>
     </div>
     <div class="pk-cards" id="pk-cards">
@@ -199,7 +201,7 @@
       </div>
       {% endfor %}
     </div>
-    <div class="pk-hint"><span>点击卡片预览，勾选加入产出</span><span id="pk-hint-r">patch 数量为上限估计</span></div>
+    <div class="pk-hint"><span></span><span id="pk-hint-r">patch 数量为上限估计</span></div>
     <div class="pk-list" id="pk-list" hidden></div>
     <div class="pk-bar">
       <span class="pk-sel">已选<b id="pk-count">0</b>种产出</span><span class="pk-sep" aria-hidden="true"></span>
