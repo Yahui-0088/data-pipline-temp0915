@@ -67,7 +67,7 @@
   <div class="ov-stage-pin">
     <div class="flex h-full flex-col px-4 lg:px-6">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 pt-6">
-        <h2 id="run-h" class="text-[18px] font-semibold text-white">最新运行</h2>
+        <h2 id="run-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">最新运行</h2>
         {% if latest %}
         <a id="ov-run-id" href="/runs/{{ latest.run_id }}" class="font-mono text-[13px] text-neutral-300 hover:text-white">#{{ latest.run_id }}</a>
         <span id="ov-run-ds" class="text-neutral-300">{{ latest.dataset_id }}</span>
@@ -125,7 +125,7 @@
 {% if wall %}
 <section id="ov-wall-section" aria-labelledby="wall-h" class="mx-auto mt-20 max-w-[1200px] px-6">
   <div class="flex flex-wrap items-baseline justify-between gap-2">
-    <h2 id="wall-h" class="text-[18px] font-semibold text-white">问题切片</h2>
+    <h2 id="wall-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">问题切片</h2>
   </div>
   <div class="ov-wall-box mt-5" id="ov-wall-box">
   <div class="ov-wall" id="ov-wall">
@@ -147,6 +147,67 @@
   {% if wall|length > 3 %}<div class="ov-wall-scroll" id="ov-wall-scroll" role="scrollbar" aria-controls="ov-wall" aria-orientation="vertical" aria-label="问题类型" tabindex="0"><span class="ov-wall-scroll-thumb"></span></div>{% endif %}
   </div>
   <script type="application/json" id="ov-wall-data">{{ wall|tojson }}</script>
+</section>
+{% endif %}
+
+{# 导出数据包：用途 × 形态，数字来自 /api/v1/packs/plan（这个数据集的真实统计），生成走 /api/v1/packs（ov-pack.js） #}
+{% if datasets %}
+<section id="pk" aria-labelledby="pk-h" class="pk mx-auto mt-24 max-w-[1200px] px-6" data-default="{{ latest.dataset_id if latest else datasets[0] }}">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h2 id="pk-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">导出数据包</h2>
+      <p class="mt-2 text-[15px] text-neutral-400">选择用途与形态，即可生成。</p>
+    </div>
+    <label class="sr-only" for="pk-ds">数据集</label>
+    <select id="pk-ds" class="ov-select">{% for d in datasets %}<option value="{{ d }}"{% if (latest and d == latest.dataset_id) %} selected{% endif %}>{{ d }}</option>{% endfor %}</select>
+  </div>
+  <div class="pk-shell">
+    <div class="pk-top">
+      <div class="pk-seg" role="tablist" aria-label="用途" id="pk-tasks">
+        <button type="button" role="tab" data-task="raw" aria-pressed="true">原图</button><button type="button" role="tab" data-task="qc" aria-pressed="false">质检分类</button><button type="button" role="tab" data-task="segmentation" aria-pressed="false">实例分割</button><button type="button" role="tab" data-task="membrane" aria-pressed="false">膜 / 边界</button><button type="button" id="pk-more" aria-pressed="false" aria-expanded="false">更多</button>
+      </div>
+      <div class="pk-seg pk-more" id="pk-more-list" hidden>
+        <button type="button" data-task="synapse" aria-pressed="false">突触</button><button type="button" data-task="mitochondria" aria-pressed="false">线粒体</button><button type="button" data-task="hard_negative" aria-pressed="false">困难负样本</button><button type="button" data-task="proofreading" aria-pressed="false">校对候选</button>
+      </div>
+    </div>
+    <div class="pk-seg pk-split" id="pk-split" aria-label="划分">
+      <button type="button" data-split="" aria-pressed="true">全部</button><button type="button" data-split="train" aria-pressed="false">train</button><button type="button" data-split="val" aria-pressed="false">val</button><button type="button" data-split="test" aria-pressed="false">test</button>
+    </div>
+    <div class="pk-hero">
+      <div class="pk-big" aria-live="polite"><div class="k" id="pk-big-k">最多</div><div class="n"><span id="pk-big-n">–</span><small id="pk-big-u"></small></div><div class="t" id="pk-big-t"></div><div class="m" id="pk-big-m"></div></div>
+      <div class="pk-scene" id="pk-scene" data-view="patch" aria-hidden="true">
+        <div class="pk-vol" id="pk-vol"></div>
+        <svg class="pk-link" viewBox="0 0 560 360"><path id="pk-l1" d=""/><path id="pk-l2" d=""/></svg>
+        <div class="pk-cube">{% for f in range(6) %}<div class="pk-face f{{ f + 1 }}"></div>{% endfor %}</div>
+      </div>
+    </div>
+    <div class="pk-cards" id="pk-cards">
+      {% for lv, zh, unit in [("slice", "2D 切片", "张"), ("segment", "3D 连续段", "段"), ("patch", "3D patch", "个")] %}
+      <div class="pk-card" data-level="{{ lv }}" data-unit="{{ unit }}" tabindex="0" role="button" aria-label="预览 {{ zh }}">
+        <div class="pk-head">
+          <label class="pk-check"><input type="checkbox" data-level="{{ lv }}" aria-label="把 {{ zh }} 加入产出"><span aria-hidden="true">✓</span></label>
+          <h3>{{ zh }}</h3><span class="pk-tag">当前预览</span>
+        </div>
+        <div class="pk-body">
+          <div class="pk-icon pk-icon-{{ lv }}" aria-hidden="true">
+            {% if lv == "slice" %}{% for i in range(4) %}<span class="ic-sheet" style="left:{{ 6 + i * 20 }}px"></span>{% endfor %}
+            {% elif lv == "segment" %}<div class="ic-stack">{% for i in range(8) %}<span class="ic-l" style="transform:translateZ({{ i * 5 }}px)"></span>{% endfor %}</div>
+            {% else %}<div class="ic-cube">{% for tf in ["translateZ(26px)", "rotateY(90deg) translateZ(26px)", "rotateX(90deg) translateZ(26px)", "rotateY(-90deg) translateZ(26px)", "rotateX(-90deg) translateZ(26px)", "rotateY(180deg) translateZ(26px)"] %}<span class="ic-cf" style="transform:{{ tf }}"></span>{% endfor %}</div>{% endif %}
+          </div>
+          <div class="min-w-0"><div class="pk-num"><span class="pk-n">–</span><small>{{ unit }}</small></div><div class="pk-meta">…</div></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="pk-hint"><span>点击卡片预览，勾选加入产出</span><span id="pk-hint-r">patch 数量为上限估计</span></div>
+    <div class="pk-list" id="pk-list" hidden></div>
+    <div class="pk-bar">
+      <span class="pk-sel">已选<b id="pk-count">0</b>种产出</span><span class="pk-sep" aria-hidden="true"></span>
+      <button type="button" class="pk-listbtn" id="pk-listbtn" aria-expanded="false" aria-controls="pk-list">查看清单 ›</button>
+      <span class="pk-msg" id="pk-msg" aria-live="polite"></span>
+      <button type="button" class="pk-go" id="pk-go" disabled>生成产出 <span aria-hidden="true">→</span></button>
+    </div>
+  </div>
 </section>
 {% endif %}
 
@@ -223,5 +284,6 @@
 <script src="/static/vendor/gsap/ScrollTrigger.min.js?v={{ static_v('vendor/gsap/ScrollTrigger.min.js') }}" defer></script>
 <script src="/static/overview.js?v={{ static_v('overview.js') }}" defer></script>
 <script src="/static/ov-wall.js?v={{ static_v('ov-wall.js') }}" defer></script>
+<script src="/static/ov-pack.js?v={{ static_v('ov-pack.js') }}" defer></script>
 </body>
 </html>
