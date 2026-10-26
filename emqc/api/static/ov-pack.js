@@ -140,6 +140,7 @@
       const lv = card.dataset.level, c = cell(st.task, lv), q = count(c);
       const box = card.querySelector("input");
       card.classList.toggle("on", lv === st.view);
+      card.setAttribute("aria-pressed", String(st.sel.has(key(st.task, lv))));
       card.classList.toggle("is-off", !q);
       box.disabled = !q;
       box.checked = st.sel.has(key(st.task, lv));
@@ -211,11 +212,21 @@
   });
   root.querySelectorAll("[data-split]").forEach((b) => b.addEventListener("click", () => { st.split = b.dataset.split; render(); }));
   root.querySelectorAll(".pk-card").forEach((card) => {
-    card.addEventListener("click", (e) => { if (e.target.closest(".pk-check")) return; st.view = card.dataset.level; render(); });
-    card.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === card) { e.preventDefault(); st.view = card.dataset.level; render(); } });
     const box = card.querySelector("input");
+    // 点整张卡片：预览这一种，同时勾选 / 取消勾选（做不了的只预览）
+    const toggle = () => {
+      st.view = card.dataset.level;
+      if (!box.disabled) {
+        const k = key(st.task, card.dataset.level);
+        if (st.sel.has(k)) st.sel.delete(k); else st.sel.add(k);
+      }
+      render();
+    };
+    card.addEventListener("click", (e) => { if (e.target.closest(".pk-check")) return; toggle(); });  // 小方框自己会处理
+    card.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === card) { e.preventDefault(); toggle(); } });
     box.addEventListener("click", (e) => e.stopPropagation());
     box.addEventListener("change", () => {
+      st.view = card.dataset.level;
       const k = key(st.task, card.dataset.level);
       if (box.checked) st.sel.add(k); else st.sel.delete(k);
       render();
