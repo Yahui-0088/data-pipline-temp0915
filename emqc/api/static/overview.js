@@ -98,6 +98,26 @@
     fitGraph();
     if (!live) show(Math.max(0, current));
   }
+  // 点左边流程图的节点：右边跳到那一步。固定舞台时滚到那一步对应的滚动位置（滚动和舞台保持一致）；
+  // 手机 / 减少动画的列表模式下把那一块滚进视野。控制节点跳到它后面那一步
+  const ALIAS = { next_group: "ingest", group_done: "finalize" };
+  function jumpTo(nodeId) {
+    const i = steps.indexOf(ALIAS[nodeId] || nodeId);
+    if (i < 0) return;
+    if (trigger && !live) {
+      const y = trigger.start + (trigger.end - trigger.start) * ((i + 0.5) / acts.length);
+      scrollTo({ top: y, behavior: reduce ? "auto" : "smooth" });
+      show(i);
+    } else if (theater.classList.contains("is-static")) {
+      show(i);
+      acts[i].scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    } else {
+      show(i);   // 正在跟着真实运行走：先看这一步，下一次进度更新时回到实时
+    }
+    acts[i].focus({ preventScroll: true });
+  }
+  for (const n of nodes) n.addEventListener("click", () => jumpTo(n.dataset.node));
+
   if (acts.length) {
     show(0);
     addEventListener("load", setupScroll);

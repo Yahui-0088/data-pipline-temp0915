@@ -24,6 +24,9 @@
   .ov-node { @apply absolute flex flex-col items-center justify-center text-center text-white; transition: border-color 300ms ease, background-color 300ms ease, opacity 300ms ease; }
   .ov-box { @apply rounded-[10px] border border-[#2e2e2e] bg-ink-850; }
   .ov-diamond { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); @apply bg-[#222222]; }
+  .ov-node { cursor: pointer; }
+  .ov-node:active { transform: scale(0.97); transition: transform 120ms var(--ease-out); }
+  @media (hover: hover) and (pointer: fine) { .ov-box:hover { @apply border-neutral-500; } .ov-diamond:hover { @apply bg-[#2c2c2c]; } }
   .ov-box[data-done] { @apply border-[#3a4a3a]; }
   .ov-box[data-on] { @apply border-mint bg-[#18201a]; }
   .ov-diamond[data-on] { @apply bg-[#2a3b2c]; }
