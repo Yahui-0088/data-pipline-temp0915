@@ -18,10 +18,6 @@
 <header class="gx-tl">
   <div class="gx-title">DATA GALAXY</div>
   <div class="gx-sub">Interactive Dataset Explorer · 数据星球</div>
-  <ul class="gx-hints" aria-label="操作说明">
-    <li><span aria-hidden="true">⟳</span>拖动旋转 · 滚轮缩放 · R 重置</li>
-    <li><i class="gx-sw ok"></i>鼠标滑过光点：绿 = 已处理，灰 = 未处理</li>
-  </ul>
   <div class="gx-badge todo" id="gx-mock" hidden title="没连上平台的汇报接口，显示的是示例数据">示例数据</div>
 </header>
 
@@ -29,11 +25,7 @@
   <div><span class="gx-k"><i class="gx-sw ok"></i>已处理</span><b id="gx-processed">–</b></div>
   <div><span class="gx-k"><i class="gx-sw todo"></i>未处理</span><b id="gx-unprocessed">–</b></div>
   <div><span class="gx-k">完成率</span><b id="gx-completion">–</b></div>
-  <div class="gx-links">
-    <a href="/report/summary">汇报详情 →</a>
-    {% if user and user.role != 'reporter' %}<a href="/overview">回到平台</a>{% endif %}
-    {% if user %}<button type="button" id="gx-logout">退出</button>{% endif %}
-  </div>
+  {% if user and user.role != 'reporter' %}<div class="gx-links"><a href="/overview">回到平台 →</a></div>{% endif %}
   <div class="gx-note" id="gx-overflow"></div>
 </section>
 
@@ -43,7 +35,6 @@
 <div id="gx-fatal" class="gx-overlay" hidden><div class="gx-card gx-glass"><div class="gx-title">DATA GALAXY</div><p></p><a href="/report/summary">打开汇报详情 →</a></div></div>
 <noscript><div class="gx-overlay"><div class="gx-card gx-glass"><p>需要开启 JavaScript。</p><a href="/report/summary">打开汇报详情 →</a></div></div></noscript>
 
-{% if user %}<script>document.getElementById("gx-logout").addEventListener("click", async () => { try { await fetch("/api/v1/auth/logout", {method: "POST"}); } catch (_) {} location.href = "/login"; });</script>{% endif %}
 <script type="module" src="/static/galaxy/app.js?v={{ static_v('galaxy/app.js') }}"></script>
 </body>
 </html>
