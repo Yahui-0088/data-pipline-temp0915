@@ -10,22 +10,8 @@
 <body class="min-h-screen bg-ink-950 font-sans text-[14px] leading-5 text-neutral-200 antialiased">
 
 <header class="border-b border-line bg-ink-950">
-  <div class="mx-auto flex min-h-14 max-w-[1200px] flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2.5">
-    <a href="/overview" class="flex items-center gap-2 text-white">
-      <span class="grid h-6 w-6 place-items-center rounded-md bg-mint text-[10px] font-bold text-ink-950">EM</span>
-      <span class="text-[14px] font-semibold">EM Image QC</span>
-    </a>
-    <nav aria-label="主导航" class="flex flex-wrap gap-x-5 gap-y-1">
-      <a href="/overview" aria-current="page" class="text-white">总览</a>
-      <a href="/pipeline" class="ov-link">流水线</a>
-      <a href="/" class="ov-link">数据集</a>
-      <a href="/training" class="ov-link">训练数据</a>
-      <a href="/delivery" class="ov-link">交付</a>
-    </nav>
-    <div class="flex-1"></div>
+  <div class="mx-auto flex min-h-14 max-w-[1200px] items-center justify-end px-6 py-2.5">
     <a href="/overview/classic" class="ov-link">详细仪表盘</a>
-    <a href="/report" class="ov-link">汇报</a>
-    {% if user %}<a href="/account" class="ov-link">{{ user.display_name or user.username }}</a>{% endif %}
   </div>
 </header>
 
