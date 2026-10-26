@@ -43,6 +43,7 @@
     i = Math.max(0, Math.min(acts.length - 1, i));
     if (i !== current) {
       acts.forEach((a, k) => {
+        a.classList.remove("is-reveal");
         a.classList.toggle("is-current", k === i);
         a.classList.toggle("is-past", k < i);
         a.setAttribute("aria-hidden", k === i || theater.classList.contains("is-static") ? "false" : "true");
@@ -117,6 +118,18 @@
     acts[i].focus({ preventScroll: true });
   }
   for (const n of nodes) n.addEventListener("click", () => jumpTo(n.dataset.node));
+
+  // 触屏没有悬停：点一下这一行切换景深（再点一次恢复）；点别处恢复。鼠标设备用 CSS :hover，键盘用 :focus-visible
+  const finePointer = matchMedia("(hover: hover) and (pointer: fine)");
+  for (const a of acts) {
+    a.addEventListener("click", () => {
+      if (finePointer.matches) return;
+      const on = !a.classList.contains("is-reveal");
+      acts.forEach((x) => x.classList.remove("is-reveal"));
+      a.classList.toggle("is-reveal", on);
+    });
+  }
+  document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".ov-act")) acts.forEach((x) => x.classList.remove("is-reveal")); });
 
   if (acts.length) {
     show(0);

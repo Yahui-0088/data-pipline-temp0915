@@ -34,13 +34,27 @@
   /* ---------- 舞台 ---------- */
   .ov-stage-section { @apply relative; }
   .ov-theater { @apply relative px-6 py-6 lg:px-12; }
-  .ov-act { @apply relative border-t border-line-soft py-6 first:border-t-0; }
+  .ov-act { @apply relative border-t border-line-soft py-10 first:border-t-0; cursor: default; }
   .ov-act-line { @apply flex items-baseline justify-between gap-6; }
+  /* 标题图层：悬停时平滑虚化 + 变暗 + 变淡（不消失），只有它被 blur */
   .ov-act-title { @apply m-0 font-extrabold leading-[0.95] tracking-[-0.04em] text-mint; font-size: clamp(30px, 4.3vw, 76px);
-    transition: filter 300ms var(--ease-out), opacity 300ms var(--ease-out), transform 300ms var(--ease-out); }
-  .ov-act-secs { @apply shrink-0 font-mono text-[15px] tabular-nums text-neutral-300; }
+    transition: filter 400ms var(--ease-out), opacity 400ms var(--ease-out); }
+  .ov-act-secs { @apply shrink-0 font-mono text-[15px] tabular-nums text-neutral-300; transition: opacity 400ms var(--ease-out); }
   .ov-act-secs small { @apply ml-0.5 text-[12px] text-neutral-500; }
-  .ov-act-desc { @apply mt-3 max-w-xl text-[16px] leading-7 text-neutral-300; }
+  /* 说明图层：叠在整行正中，清晰的小字号；淡入并从下方 8px 上移到位 */
+  .ov-act-desc { position: absolute; left: 50%; top: 50%; z-index: 1; width: min(34rem, 92%); margin: 0; text-align: center;
+    font-size: clamp(15px, 1.2vw, 18px); line-height: 1.65; font-weight: 500; color: #fff; pointer-events: none;
+    opacity: 0; transform: translate(-50%, calc(-50% + 8px));
+    transition: opacity 400ms var(--ease-out), transform 400ms var(--ease-out); }
+  /* 触发：整行悬停（有鼠标的设备）/ 键盘聚焦 / 触屏点一下（.is-reveal） */
+  .ov-act:focus-visible .ov-act-title, .ov-act.is-reveal .ov-act-title { filter: blur(8px) brightness(0.75); opacity: 0.7; }
+  .ov-act:focus-visible .ov-act-secs, .ov-act.is-reveal .ov-act-secs { opacity: 0.35; }
+  .ov-act:focus-visible .ov-act-desc, .ov-act.is-reveal .ov-act-desc { opacity: 1; transform: translate(-50%, -50%); }
+  @media (hover: hover) and (pointer: fine) {
+    .ov-act:hover .ov-act-title { filter: blur(8px) brightness(0.75); opacity: 0.7; }
+    .ov-act:hover .ov-act-secs { opacity: 0.35; }
+    .ov-act:hover .ov-act-desc { opacity: 1; transform: translate(-50%, -50%); }
+  }
   .ov-bar, .ov-bar-meta { @apply hidden; }
 }
 
@@ -48,7 +62,7 @@
 @media (min-width: 1024px) {
   .ov-stage-pin { height: 100vh; height: 100svh; }
   .ov-theater:not(.is-static) { @apply overflow-hidden; }
-  .ov-theater:not(.is-static) .ov-act { position: absolute; left: 3rem; right: 3rem; top: 50%; border: 0; padding: 0;
+  .ov-theater:not(.is-static) .ov-act { position: absolute; left: 3rem; right: 3rem; top: 50%; border: 0; padding: 2.5rem 0;
     opacity: 0; pointer-events: none; filter: blur(12px); transform: translateY(calc(-50% + 28px));
     transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out), filter 220ms var(--ease-out); }
   .ov-theater:not(.is-static) .ov-act-title { white-space: nowrap; }
@@ -56,18 +70,6 @@
   .ov-theater:not(.is-static) .ov-act.is-current { opacity: 1; pointer-events: auto; filter: blur(0); transform: translateY(-50%);
     transition-duration: 480ms; }
   .ov-theater:not(.is-static) .ov-act.is-past { transform: translateY(calc(-50% - 28px)); }
-
-  /* 景深切换：悬停 / 聚焦时大字退到后面（模糊 + 变淡），说明从后面来到前面 */
-  .ov-theater:not(.is-static) .ov-act-desc { position: absolute; left: 0; right: 9rem; top: 50%; margin: 0; max-width: 40rem;
-    font-size: clamp(20px, 1.9vw, 28px); line-height: 1.4; font-weight: 600; color: #fff;
-    opacity: 0; filter: blur(10px); transform: translateY(-50%) scale(1.04);
-    transition: opacity 260ms var(--ease-out), filter 260ms var(--ease-out), transform 260ms var(--ease-out); }
-  .ov-act.is-current:focus-visible .ov-act-title { filter: blur(10px); opacity: 0.22; transform: scale(0.97); }
-  .ov-act.is-current:focus-visible .ov-act-desc { opacity: 1; filter: blur(0); transform: translateY(-50%) scale(1); }
-  @media (hover: hover) and (pointer: fine) {
-    .ov-act.is-current:hover .ov-act-title { filter: blur(10px); opacity: 0.22; transform: scale(0.97); }
-    .ov-act.is-current:hover .ov-act-desc { opacity: 1; filter: blur(0); transform: translateY(-50%) scale(1); }
-  }
 
   /* 大字下方：白色带辉光的进度条（跑到哪一步填到哪里，全部跑完填满） */
   .ov-theater:not(.is-static) .ov-bar { display: block; position: absolute; left: 3rem; right: 3rem; top: calc(50% + clamp(56px, 5.2vw, 84px));
