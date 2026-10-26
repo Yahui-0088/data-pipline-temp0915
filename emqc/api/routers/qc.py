@@ -126,6 +126,7 @@ def run_summary(s: Session, run: QCRun) -> dict:
     d["blocks"] = [qcblock_to_dict(b) for b in s.scalars(select(QCBlock).where(QCBlock.run_id == run.id).order_by(QCBlock.block_id))]
     d["metrics"] = {m.metric_name: (m.extra_json if m.metric_name == "findings_by_type" else m.metric_value) for m in s.scalars(select(ETLMetric).where(ETLMetric.run_id == run.id, ETLMetric.block_id.is_(None)))}
     d["findings_by_severity"] = dict(s.execute(select(QCFinding.severity, func.count()).where(QCFinding.run_id == run.id).group_by(QCFinding.severity)).all())
+    d["findings_by_type"] = dict(s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id == run.id).group_by(QCFinding.failure_type)).all())
     return d
 
 

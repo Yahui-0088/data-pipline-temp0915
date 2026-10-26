@@ -98,11 +98,12 @@
           {% endfor %}
           <div id="ov-bar" class="ov-bar" aria-hidden="true" style="--p: 0"><span class="ov-bar-fill"></span><span class="ov-bar-headwrap"><span class="ov-bar-head"></span></span></div>
           <div class="ov-bar-meta" aria-hidden="true"><span id="ov-bar-step">0 / {{ stage|length }}</span><span id="ov-bar-total">{{ "%.2f"|format(stage[-1].at) if stage else '0.00' }} s</span></div>
-          {# 每完成一步，这一步的结果就打在横线下面（一步一步累积，全部跑完时都在） #}
+          {# 横线下面只放当前这一步自己的结果；到最后「结果汇总」才把每一步的结果一起列出来 #}
+          <script type="application/json" id="ov-fail-meta">{{ fail_meta|tojson }}</script>
           <section class="ov-results" aria-label="每一步的结果">
             {% for st in stage %}
             <div class="ov-result" data-step="{{ st.id }}">
-              <h4 class="ov-result-name">{{ st.title }}</h4>
+              <h4 class="ov-result-name">{{ "整体" if st.id == "finalize" else st.title }}</h4>
               <p class="ov-result-vals">{% for k2, v2 in st.rows %}<span>{{ k2 }} <b>{{ v2 }}</b></span>{% endfor %}</p>
             </div>
             {% endfor %}

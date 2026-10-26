@@ -63,9 +63,9 @@
     // 进度条：按「第几步 / 共几步」走，最后一步走满
     const prog = p != null ? p : (i + 1) / acts.length;
     if (bar) bar.style.setProperty("--p", Math.max(0, Math.min(1, prog)).toFixed(4));
-    // 横线下面：到这一步为止，每一步的结果都打出来（一步一步累积）
-    // （运行中由调用方给出「已经跑过的步骤」，因为 tile 会在 切片检查 → 落库 之间循环）
-    results.forEach((r) => r.toggleAttribute("data-shown", shown ? shown.has(r.dataset.step) : steps.indexOf(r.dataset.step) <= i));
+    // 横线下面：只放当前这一步自己的结果；到最后一步「结果汇总」时，前面每一步的结果一起列出来
+    const last = i === acts.length - 1;
+    results.forEach((r) => r.toggleAttribute("data-shown", last || r.dataset.step === steps[i]));
     if (stepLbl) stepLbl.textContent = `${i + 1} / ${acts.length}`;
   }
 
@@ -157,17 +157,25 @@
     const box = el.querySelector(".ov-result-vals");
     box.replaceChildren(...pairs.map(([k, v]) => { const sp = document.createElement("span"); const b = document.createElement("b"); b.textContent = v; sp.append(`${k} `, b); return sp; }));
   }
+  let FAIL = { zh: {}, serial: [] };
+  try { FAIL = JSON.parse($("ov-fail-meta").textContent); } catch {}
   function fillLive(r, n) {
     const t = (id) => (n[id] ? n[id].total_s : null);
     const findings = Object.values(r.findings_by_severity || {}).reduce((a, x) => a + x, 0);
     const grades = Object.entries(r.grade_counts || {}).sort().map(([g, c]) => `${g} ${c}`).join(" · ") || "–";
     setVals("prepare", [["tile", String(r.n_blocks ?? "–")], ["耗时", sec(t("prepare"))]]);
     setVals("ingest", [["耗时", sec(t("ingest"))]]);
-    setVals("slice_qc", [["耗时", sec(t("slice_qc"))], ["问题记录", String(findings)]]);
-    setVals("serial_qc", [["耗时", sec(t("serial_qc"))]]);
-    setVals("aggregate", [["已完成 tile", `${r.n_blocks_done ?? 0} / ${r.n_blocks ?? "–"}`], ["tile 等级", grades]]);
-    setVals("persist", [["耗时", sec(t("persist"))], ["写入问题", `${findings} 条`]]);
-    setVals("finalize", [["可用比例", pct(r.retention_rate)], ["质量分", r.quality_score == null ? "–" : r.quality_score.toFixed(2)]]);
+    // 切片检查只写单张切片的问题，序列检查只写相邻切片之间的问题（各自前三种类型）
+    const byType = Object.entries(r.findings_by_type || {}).sort((a, b) => b[1] - a[1]);
+    const part = (serial, label) => {
+      const xs = byType.filter(([ft]) => FAIL.serial.includes(ft) === serial);
+      return [[label, String(xs.reduce((a, [, c]) => a + c, 0))], ...xs.slice(0, 3).map(([ft, c]) => [FAIL.zh[ft] || ft, String(c)])];
+    };
+    setVals("slice_qc", part(false, "单张问题"));
+    setVals("serial_qc", part(true, "序列问题"));
+    setVals("aggregate", [["tile 等级", grades], ["质量分", r.quality_score == null ? "–" : r.quality_score.toFixed(2)], ["可用比例", pct(r.retention_rate)]]);
+    setVals("persist", [["写入问题", `${findings} 条`], ["写入 tile", `${r.n_blocks_done ?? 0} / ${r.n_blocks ?? "–"}`]]);
+    setVals("finalize", [["可用比例", pct(r.retention_rate)], ["总耗时", sec(Object.values(n).reduce((a, x) => a + (x.total_s || 0), 0))]]);
   }
 
   // ---------------------------------------------------------------- 跟着真实运行走
@@ -209,7 +217,7 @@
       const tiles = w.n_blocks ? w.n_blocks_done / w.n_blocks : 0;
       const p = done ? 1 : Math.max(lastP, Math.min(0.999, (ran.has("ingest") ? 1 : 0) / steps.length + tiles * 5 / steps.length));
       lastP = p;
-      show(done ? steps.length - 1 : idx, p, total || (performance.now() - t0) / 1000, done ? new Set(steps) : ran);
+      show(done ? steps.length - 1 : idx, p, total || (performance.now() - t0) / 1000);
       if (totalLbl) totalLbl.textContent = `${(total || 0).toFixed(2)} s`;
       if (done) {
         if (status) { status.textContent = w.status === "done" ? "完成" : w.status === "error" ? "出错" : "已取消"; status.className = w.status === "done" ? "ov-pill-ok" : "inline-flex h-6 items-center rounded-full bg-[#2c1a20] px-2.5 text-[12px] text-[#e5566f]"; }

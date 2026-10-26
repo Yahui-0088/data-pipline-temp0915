@@ -353,7 +353,7 @@ OVERVIEW_STEPS = [  # (节点 id, 类型, 标题, 说明)
     ("serial_qc", "NODE", "序列检查", "相邻切片之间的问题：对比度漂移、亮度突变、切片跳变、整体错位。"),
     ("aggregate", "NODE", "汇总 · 分级", "把问题汇总到每个 tile，打质量分、定等级，算出能用于训练的切片比例。"),
     ("persist", "BRANCH", "落库", "写入问题记录和 tile 结果；还有 tile 回到切片检查，本段查完进入本段完成。"),
-    ("finalize", "NODE", "数据集收尾", "汇总整个数据集：等级、可用比例，标出可以导出的切片。"),
+    ("finalize", "NODE", "结果汇总", "整个数据集跑完：前面每一步的结果都放在这里一起看。"),
 ]
 
 
@@ -367,8 +367,11 @@ def _overview_ctx(s: Session) -> dict:
     wall = (latest or {}).get("wall_s") or 0
     n_tiles = sum(((latest or {}).get("grades") or {}).values())
     fails = d["failures"]
-    slice_f = [f for f in fails if f["type"] not in SERIAL_TYPES]
-    serial_f = [f for f in fails if f["type"] in SERIAL_TYPES]
+    # 这次运行自己的问题，按类型拆成「单张切片」和「相邻切片之间」两组（和落库写入的条数对得上）
+    own = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id == latest["run_id"]).group_by(QCFinding.failure_type).order_by(func.count().desc())).all() if latest else []
+    own_f = [{"type": ft, "zh": FAILURE_ZH.get(ft, ft), "n": n} for ft, n in own]
+    slice_f = [f for f in own_f if f["type"] not in SERIAL_TYPES]
+    serial_f = [f for f in own_f if f["type"] in SERIAL_TYPES]
     grades = (latest or {}).get("grades") or {}
     grade_txt = " · ".join(f"{g} {grades[g]}" for g in sorted(grades)) or "–"
     ds_grade = next((x["grade"] for x in d["datasets"] if latest and x["run_id"] == latest["run_id"]), None)
@@ -376,11 +379,12 @@ def _overview_ctx(s: Session) -> dict:
     items = {
         "prepare": [("切片", f"{int(latest['n_sections'])}" if latest else "–"), ("tile", str(n_tiles or "–")), ("读取量", f"{latest['bytes_read'] / 1e6:.1f} MB" if latest and latest.get("bytes_read") else "–")],
         "ingest": [("耗时", secs(st.get("ingest"))), ("吞吐", f"{latest['sections_per_s']:.1f} 张/s" if latest and latest.get("sections_per_s") else "–"), ("占这次运行", share("ingest"))],
-        "slice_qc": [("问题记录", str(int(latest["n_findings"])) if latest else "–"), ("占这次运行", share("slice_qc")), ("最多的类型", slice_f[0]["zh"] if slice_f else "–")],
-        "serial_qc": [(f["zh"], str(f["n"])) for f in serial_f[:3]] or [("问题", "0")],
+        # 切片检查只写单张切片的问题，序列检查只写相邻切片之间的问题
+        "slice_qc": ([("单张问题", str(sum(f["n"] for f in slice_f)))] + [(f["zh"], str(f["n"])) for f in slice_f[:3]]) if slice_f else [("单张问题", "0")],
+        "serial_qc": ([("序列问题", str(sum(f["n"] for f in serial_f)))] + [(f["zh"], str(f["n"])) for f in serial_f[:3]]) if serial_f else [("序列问题", "0")],
         "aggregate": [("可用比例", pct((latest or {}).get("retention"))), ("质量分", f"{latest['quality']:.2f}" if latest and latest.get("quality") is not None else "–"), ("tile 等级", grade_txt)],
-        "persist": [("写入问题", f"{int(latest['n_findings'])} 条" if latest else "–"), ("tile", str(n_tiles or "–")), ("耗时", secs(st.get("persist")))],
-        "finalize": [("数据集等级", ds_grade or "–"), ("可用比例", pct((latest or {}).get("retention"))), ("总耗时", secs(wall or None))],
+        "persist": [("写入问题", f"{int(latest['n_findings'])} 条" if latest else "–"), ("写入 tile", str(n_tiles or "–"))],
+        "finalize": [("数据集等级", ds_grade or "–"), ("总耗时", secs(wall or None))],
     }
     loop = {"slice_qc", "serial_qc", "aggregate", "persist"}
     steps = []
@@ -426,7 +430,7 @@ def _overview_ctx(s: Session) -> dict:
 
 @router.get("/overview", response_class=HTMLResponse)
 def overview_page(request: Request, s: Session = Depends(get_session)):
-    return _render("overview.html", request, active="overview", **_overview_ctx(s))
+    return _render("overview.html", request, active="overview", fail_meta={"zh": FAILURE_ZH, "serial": sorted(SERIAL_TYPES)}, **_overview_ctx(s))
 
 
 @router.get("/overview/classic", response_class=HTMLResponse)
