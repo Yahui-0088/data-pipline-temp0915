@@ -89,8 +89,10 @@ void main() {
     p = p + vec3(0.92, 0.17, 0.28) * f * 0.35;
     mv = modelViewMatrix * vec4(p, 1.0);
     depth = -mv.z;
-    col = mix(uColB, uColA, 0.35 + 0.5 * aSeed);
-    alpha = (0.24 + 0.24 * aSeed) * uBright * (1.0 - f) * smoothstep(0.0, 0.08, f);
+    // 颜色随离细胞的距离渐变：贴着细胞 = 细胞的紫，越往外越白
+    float far = smoothstep(1.0, 1.9, length(p));
+    col = mix(mix(uColB, uColA, 0.3 + 0.25 * aSeed), vec3(1.0), far);
+    alpha = (0.24 + 0.24 * aSeed) * uBright * (1.0 - f) * smoothstep(0.0, 0.08, f) * (1.0 + 0.7 * far);   // 外圈的白色更实一点，不发灰
     size = aSize * 1.25;
     vSquare = 1.0;
   }
