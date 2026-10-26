@@ -420,8 +420,21 @@ def _overview_ctx(s: Session) -> dict:
             stage.append({"id": nid, "title": title, "desc": desc, "s": round(secs_of[nid], 2), "at": round(acc, 2), "p": round(acc / total, 4),
                           "rows": items[nid]})  # 这一步的结果：跑完以后列在进度条下面
     datasets = [x for (x,) in s.execute(select(Dataset.dataset_id).order_by(Dataset.dataset_id)).all()]
+    # 问题图片墙：每个数据集最新一次运行里、真实存下来的问题截图，按问题类型分行（问题多的类型在上，最多 6 行、每行最多 40 张）
+    wall = []
+    latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None))
+    rows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
+                            QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
+                     .where(QCFinding.run_id.in_(latest_ids), QCFinding.preview_path.is_not(None))
+                     .order_by(QCFinding.dataset_id, QCFinding.z, QCFinding.block_id)).all()
+    by_type: dict[str, list] = {}
+    for it in _viewer_items(rows, limit=5000):
+        by_type.setdefault(it["type"], []).append(it)
+    for ft, its in sorted(by_type.items(), key=lambda kv: -len(kv[1]))[:6]:
+        wall.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "n": len(its),
+                     "items": [{"url": i["url"], "z": i["z"], "dataset_id": i["dataset_id"], "href": i["href"]} for i in its[:40]]})
     return {
-        "stage": stage, "datasets": datasets,
+        "stage": stage, "datasets": datasets, "wall": wall,
         "kpi": kpi, "latest": latest, "steps": steps, "finding": finding, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
         "runs": sorted(runs, key=lambda r: r["run_id"], reverse=True)[:8], "delivery": d["delivery"],
         "pct": pct, "secs": secs, "fmt_mb": lambda b: f"{(b or 0) / 1e6:.1f} MB",

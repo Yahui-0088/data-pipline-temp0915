@@ -158,4 +158,6 @@ def test_pipeline_dashboard(registered, qc_run):
     assert "/static/tw/overview.css" in new and 'href="/overview/classic"' in new
     assert c.get("/static/vendor/gsap/gsap.min.js").status_code == 200 and c.get("/static/vendor/gsap/ScrollTrigger.min.js").status_code == 200
     assert c.get("/static/tw/overview.css").status_code == 200 and c.get("/static/overview.js").status_code == 200
+    # 问题切片墙：真实的问题截图，每种问题一行
+    assert 'id="ov-wall"' in new and 'class="ov-wall-row"' in new and 'class="ov-wall-card"' in new and c.get("/static/ov-wall.js").status_code == 200
     assert 'id="dashboard"' not in c.get("/pipeline").text
