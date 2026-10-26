@@ -14,7 +14,7 @@ W, HH = 620, 948
 fin_top, end_top, can_top = cy("next_group") - H // 2, cy("ingest") - 16, cy("slice_qc") - H // 2
 
 paths = []
-def seg(pts, head=True, dash=False, cls="text-slate-600"):
+def seg(pts, head=True, dash=False, cls="text-neutral-600"):
     d = "M " + " L ".join(f"{x} {y}" for x, y in pts)
     paths.append(f'<path d="{d}" class="{cls}" stroke="currentColor" stroke-width="1.5" fill="none"{" stroke-dasharray=&quot;5 5&quot;" if dash else ""}{" marker-end=&quot;url(#ov-head)&quot;" if head else ""}/>'.replace("&quot;", '"'))
 seq = ["prepare", "next_group", "ingest", "slice_qc", "serial_qc", "aggregate", "persist", "group_done"]
@@ -26,18 +26,18 @@ seg([(A_R, y), (B_L - 3, y)])
 seg([(JX, y), (JX, cy("slice_qc")), (B_L - 3, cy("slice_qc"))], dash=True)
 seg([(B_C, fin_top + H), (B_C, end_top - 3)])
 seg([(B_C, can_top), (B_C, end_top + 32 + 3)], dash=True)
-seg([(A_L, cy("persist")), (TILE_X, cy("persist")), (TILE_X, cy("slice_qc")), (A_L - 3, cy("slice_qc"))], cls="text-violet-300/60")
-seg([(A_L, cy("group_done")), (Z_X, cy("group_done")), (Z_X, cy("next_group")), (A_L - 3, cy("next_group"))], cls="text-violet-300/60")
+seg([(A_L, cy("persist")), (TILE_X, cy("persist")), (TILE_X, cy("slice_qc")), (A_L - 3, cy("slice_qc"))], cls="text-neutral-500")
+seg([(A_L, cy("group_done")), (Z_X, cy("group_done")), (Z_X, cy("next_group")), (A_L - 3, cy("next_group"))], cls="text-neutral-500")
 
 def node(k, title, sub_tpl, diamond=False, left=A_L, width=A_W, t=None):
     t = rows[k][0] if t is None else t
     h = DH if diamond else H
-    shape = "ov-diamond" if diamond else "ov-card rounded-xl"
+    shape = "ov-diamond" if diamond else "ov-box"
     return (f'<button type="button" data-node="{k}" aria-pressed="false" class="ov-node {shape}" style="left:{left}px;top:{t}px;width:{width}px;height:{h}px">'
             f'<span class="block text-[13.5px] font-semibold leading-tight">{title}</span>'
-            f'<span class="block mt-0.5 font-mono text-[11px] text-slate-400">{sub_tpl}</span></button>')
-pill = lambda left, t, txt: f'<div class="absolute flex items-center justify-center rounded-full border border-dashed border-slate-700 bg-[#0B1120] font-mono text-[11px] text-slate-500" style="left:{left}px;top:{t}px;width:96px;height:32px">{txt}</div>'
-lab = lambda left, t, w, txt, cls="text-slate-500": f'<div class="absolute text-center text-[12px] leading-4 {cls}" style="left:{left}px;top:{t}px;width:{w}px">{txt}</div>'
+            f'<span class="block mt-0.5 text-[11.5px] text-neutral-400 tabular-nums">{sub_tpl}</span></button>')
+pill = lambda left, t, txt: f'<div class="absolute flex items-center justify-center rounded-full border border-dashed border-neutral-700 bg-ink-900 font-mono text-[11px] text-neutral-400" style="left:{left}px;top:{t}px;width:96px;height:32px">{txt}</div>'
+lab = lambda left, t, w, txt, cls="text-neutral-400": f'<div class="absolute text-center text-[12px] leading-4 {cls}" style="left:{left}px;top:{t}px;width:{w}px">{txt}</div>'
 tm = lambda k, extra="": "{{ node_time.get('%s', '') }}%s" % (k, extra)
 loop = "{% if n_tiles %} · ×{{ n_tiles }}{% endif %}"
 
@@ -56,13 +56,13 @@ out = [f'<div class="relative mx-auto" style="width:{W}px;height:{HH}px">',
        node("group_done", "本段完成", "回到取下一个 z 段"),
        node("finalize", "数据集收尾", "{% if ds_grade %}等级 {{ ds_grade }} · {% endif %}{{ pct(latest.retention) if latest else '' }}", left=B_L, width=B_W, t=fin_top),
        pill(B_C - 48, end_top, "__end__"),
-       f'<div class="absolute flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-[#0B1120] text-center text-slate-500" style="left:{B_L}px;top:{can_top}px;width:{B_W}px;height:{H}px"><span class="text-[13.5px] font-semibold">取消</span><span class="text-[11px]">请求取消时走这里</span></div>',
+       f'<div class="absolute flex flex-col items-center justify-center rounded-xl border border-dashed border-neutral-700 bg-ink-900 text-center text-neutral-400" style="left:{B_L}px;top:{can_top}px;width:{B_W}px;height:{H}px"><span class="text-[13.5px] font-semibold">取消</span><span class="text-[11px]">请求取消时走这里</span></div>',
        lab(A_C + 12, (bot("next_group") + top("ingest")) // 2 - 8, 64, "还有 z 段"),
        lab(A_R + (B_L - A_R) // 2 - 34, cy("next_group") - 28, 68, "全部完成"),
        lab(JX + 8, cy("slice_qc") + 12, 40, "取消"),
        lab(A_C + 12, (bot("persist") + top("group_done")) // 2 - 8, 84, "本段 tile 完"),
-       lab(Z_X + 6, (cy("slice_qc") + cy("persist")) // 2 - 16, 52, "下一个<br>tile", "text-violet-300/80"),
-       lab(Z_X + 4, cy("next_group") - 28, 96, "下一个 z 段", "text-violet-300/80"),
+       lab(Z_X + 6, (cy("slice_qc") + cy("persist")) // 2 - 16, 52, "下一个<br>tile", "text-neutral-400"),
+       lab(Z_X + 4, cy("next_group") - 28, 96, "下一个 z 段", "text-neutral-400"),
        "</div>"]
 print("{# 由 ui/tailwind/gen_overview_graph.py 生成，改流程图请改那个脚本 #}")
 print("\n".join(out))

@@ -7,7 +7,7 @@ module.exports = {
   ],
   theme: {
     extend: {
-      colors: { ink: { 950: "#070B14", 900: "#0A0F1B", 850: "#0B1120" } },
+      colors: { ink: { 950: "#0A0A0A", 900: "#111111", 850: "#161616" }, line: { DEFAULT: "#262626", soft: "#1C1C1C" } },
       fontFamily: {
         sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "sans-serif"],
         mono: ["JetBrains Mono", "SF Mono", "ui-monospace", "Menlo", "Consolas", "monospace"],

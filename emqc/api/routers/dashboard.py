@@ -384,16 +384,23 @@ def _overview_ctx(s: Session) -> dict:
     }
     loop = {"slice_qc", "serial_qc", "aggregate", "persist"}
     steps = []
-    for i, (nid, kind, title, desc) in enumerate(OVERVIEW_STEPS, 1):
-        tag = [f"{i:02d}", kind]
+    for nid, kind, title, desc in OVERVIEW_STEPS:
+        tag = ["条件分支" if kind == "BRANCH" else "节点"]
         if nid in loop and n_tiles:
-            tag.append(f"×{n_tiles}")
+            tag.append(f"每个 tile 一次，共 {n_tiles} 次")
         if st.get(nid) is not None:
-            tag.append(secs(st[nid]))
+            tag.append(("累计 " if nid in loop else "") + secs(st[nid]))
         steps.append({"id": nid, "tag": " · ".join(tag), "title": title, "desc": desc, "rows": items[nid]})
+    # 标题下面那一句：这次运行最要紧的结论（能不能用、问题出在哪）
+    finding = None
+    if latest:
+        top = max(fails, key=lambda f: f["n"])["zh"] if fails else None
+        finding = (f"最新运行 #{latest['run_id']}（{latest['dataset_id']}）：{pct(latest.get('retention'))} 的切片可用于训练"
+                   + (f"，数据集等级 {ds_grade}" if ds_grade else "") + f"，{int(latest['n_findings'])} 条问题"
+                   + (f"，最多的是{top}" if top else "") + "。")
     node_time = {k: secs(v) for k, v in st.items()}
     return {
-        "kpi": kpi, "latest": latest, "steps": steps, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
+        "kpi": kpi, "latest": latest, "steps": steps, "finding": finding, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
         "runs": sorted(runs, key=lambda r: r["run_id"], reverse=True)[:8], "delivery": d["delivery"],
         "pct": pct, "secs": secs, "fmt_mb": lambda b: f"{(b or 0) / 1e6:.1f} MB",
     }

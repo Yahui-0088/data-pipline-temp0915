@@ -1,101 +1,91 @@
 <!doctype html>
-<html lang="zh" class="scroll-smooth">
+<html lang="zh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>总览 · EM Image QC</title>
-{# 样式由 Tailwind 编译而来：ui/tailwind/ 下运行 build（见 ui/tailwind/README.md），产物是静态文件，不依赖外网 #}
+{# 样式由 Tailwind 编译而来：见 ui/tailwind/README.md。产物是静态文件，不依赖外网 #}
 <link rel="stylesheet" href="/static/tw/overview.css?v={{ static_v('tw/overview.css') }}">
 </head>
-<body class="min-h-screen bg-ink-950 font-sans text-slate-300 antialiased">
+<body class="min-h-screen bg-ink-950 font-sans text-[14px] leading-5 text-neutral-200 antialiased">
 
-<header class="sticky top-0 z-30 border-b border-white/5 bg-ink-950/90 backdrop-blur">
-  <div class="mx-auto flex min-h-16 max-w-[1240px] flex-wrap items-center gap-x-7 gap-y-2 px-6 py-3 lg:px-8">
-    <a href="/overview" class="flex items-center gap-2.5 text-slate-100">
-      <span class="grid h-7 w-7 place-items-center rounded-lg bg-slate-100 font-mono text-[11px] font-semibold text-ink-950">EM</span>
-      <span class="text-[15px] font-semibold tracking-tight">EM Image QC</span>
+<header class="border-b border-line bg-ink-950">
+  <div class="mx-auto flex min-h-14 max-w-[1200px] flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2.5">
+    <a href="/overview" class="flex items-center gap-2 text-white">
+      <span class="grid h-6 w-6 place-items-center rounded-md bg-white text-[10px] font-bold text-ink-950">EM</span>
+      <span class="text-[14px] font-semibold">EM Image QC</span>
     </a>
-    <nav aria-label="主导航" class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-      <a href="/overview" aria-current="page" class="font-semibold text-slate-100">总览</a>
+    <nav aria-label="主导航" class="flex flex-wrap gap-x-5 gap-y-1">
+      <a href="/overview" aria-current="page" class="text-white">总览</a>
       <a href="/pipeline" class="ov-link">流水线</a>
       <a href="/" class="ov-link">数据集</a>
       <a href="/training" class="ov-link">训练数据</a>
       <a href="/delivery" class="ov-link">交付</a>
     </nav>
     <div class="flex-1"></div>
-    <a href="/overview/classic" class="ov-link text-sm">详细仪表盘</a>
-    <a href="/report" class="ov-link text-sm">汇报</a>
-    {% if user %}<a href="/account" class="ov-link text-sm">{{ user.display_name or user.username }}</a>{% endif %}
-    <a href="/pipeline" class="ov-btn-primary">新建运行</a>
+    <a href="/report" class="ov-link">汇报</a>
+    {% if user %}<a href="/account" class="ov-link">{{ user.display_name or user.username }}</a>{% endif %}
   </div>
 </header>
 
-<main>
-  <section class="mx-auto max-w-[1240px] px-6 pb-10 pt-16 lg:px-8 lg:pt-20">
-    <p class="font-mono text-xs uppercase tracking-[0.12em] text-sky-300">数据清洗 · 总览</p>
-    <h1 class="mt-4 max-w-4xl text-[clamp(34px,4.6vw,58px)] font-bold leading-[1.08] tracking-tight text-slate-50">进训练之前，<br>每一张切片都被检查过。</h1>
-    <p class="mt-5 max-w-xl text-[17px] leading-relaxed text-slate-400">每次运行都是一条可追溯的流程：左边是 LangGraph 的每一步，右边是这一步做了什么、产出了什么。</p>
-    <div class="mt-7 flex flex-wrap gap-3">
-      <a href="#run" class="ov-btn-primary h-11 px-5 text-[15px]">查看最新运行</a>
-      <a href="/pipeline" class="ov-btn h-11 px-5 text-[15px]">打开流水线</a>
+<main class="mx-auto max-w-[1200px] px-6 pb-16 pt-8">
+
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <h1 class="text-[24px] font-semibold leading-8 text-white">总览</h1>
+      <p class="mt-1 max-w-3xl text-[15px] leading-6 text-neutral-400">{{ finding or "还没有完成的运行。到流水线选一个数据集开始质量检查。" }}</p>
     </div>
-
-    <dl class="mt-12 grid grid-cols-2 gap-3 md:grid-cols-5">
-      {% set k = kpi %}
-      {% for label, value, note in [
-          ("数据集", k.n_datasets, "已登记"),
-          ("切片", (k.n_sections or 0)|int, "已检查"),
-          ("可用比例", pct(k.retention), "全部切片"),
-          ("问题记录", k.n_problems or 0, "高 / 严重"),
-          ("吞吐", "%.1f"|format(k.sections_per_s) if k.sections_per_s else "–", "张 / 秒")] %}
-      <div class="ov-panel rounded-2xl px-5 py-4">
-        <dt class="text-[13px] text-slate-400">{{ label }}</dt>
-        <dd class="mt-1.5 font-mono text-[28px] font-semibold tracking-tight text-slate-50">{{ value }}</dd>
-        <dd class="text-xs text-slate-500">{{ note }}</dd>
-      </div>
-      {% endfor %}
-    </dl>
-  </section>
-
-  <section id="run" class="mx-auto max-w-[1240px] scroll-mt-20 px-6 lg:px-8">
-    <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-      <h2 class="text-[26px] font-semibold tracking-tight text-slate-50">最新运行</h2>
-      <span class="text-sm text-slate-400">移到右边任意一步，左边流程图同步高亮。</span>
+    <div class="flex gap-2">
+      <a href="/overview/classic" class="ov-btn">详细仪表盘</a>
+      <a href="/pipeline" class="ov-btn-primary">新建运行</a>
     </div>
+  </div>
 
-    <div class="ov-panel mt-5 overflow-hidden rounded-2xl">
+  {% set k = kpi %}
+  <dl class="ov-card mt-6 grid grid-cols-2 md:grid-cols-5">
+    {% set cells = [
+        ("可用比例", pct(k.retention), "", True),
+        ("数据集", k.n_datasets, "", False),
+        ("已检查切片", (k.n_sections or 0)|int, "", False),
+        ("问题记录", k.n_problems or 0, "条", False),
+        ("吞吐", "%.1f"|format(k.sections_per_s) if k.sections_per_s else "–", "张/秒", False)] %}
+    {% for label, value, unit, lead in cells %}
+    {# 手机两列：第一格占满一行；桌面五列：竖线分隔。所有分隔线都是同一个颜色 #}
+    <div class="border-line px-5 py-4 {{ 'col-span-2 border-b md:col-span-1 md:border-b-0' if lead else '' }} {{ 'border-r' if (not lead and loop.index is even) else '' }} {{ 'border-b md:border-b-0' if loop.index in (2, 3) else '' }} {{ 'md:border-r' if loop.index < 5 else 'md:border-r-0' }}">
+      <dt class="text-[13px] text-neutral-400">{{ label }}</dt>
+      <dd class="mt-1 {{ 'text-[30px]' if lead else 'text-[24px]' }} font-semibold leading-9 tabular-nums text-white">{{ value }}{% if unit %}<span class="ml-1 text-[13px] font-normal text-neutral-400">{{ unit }}</span>{% endif %}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+
+  <section id="run" aria-labelledby="run-h" class="mt-12 scroll-mt-6">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <h2 id="run-h" class="text-[18px] font-semibold text-white">最新运行</h2>
       {% if latest %}
-      <div class="flex flex-wrap items-center gap-3 border-b border-white/5 bg-white/[0.015] px-5 py-3 text-[13px]">
-        <span class="text-slate-500">项目</span><span class="text-slate-700">/</span>
-        <a href="/datasets/{{ latest.dataset_id }}" class="ov-link">{{ latest.dataset_id }}</a><span class="text-slate-700">/</span>
-        <a href="/runs/{{ latest.run_id }}" class="font-mono font-semibold text-slate-100 hover:text-sky-300">运行 #{{ latest.run_id }}</a>
-        <span class="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-0.5 text-xs text-emerald-300"><span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>完成</span>
-        <span class="flex-1"></span>
-        <span class="font-mono text-xs text-slate-500">{{ (latest.finished_at or '')|replace('T', ' ') }}</span>
-        <span class="ov-chip">{{ secs(latest.wall_s) }}</span>
-        <span class="ov-chip">{{ latest.n_sections|int }} 切片</span>
-        <a href="/runs/{{ latest.run_id }}" class="ov-btn h-8 px-3 text-[13px]">打开运行</a>
-      </div>
+      <a href="/runs/{{ latest.run_id }}" class="font-mono text-[13px] text-neutral-300 hover:text-white">#{{ latest.run_id }}</a>
+      <a href="/datasets/{{ latest.dataset_id }}" class="text-neutral-300 hover:text-white">{{ latest.dataset_id }}</a>
+      <span class="ov-pill-ok">完成</span>
+      <span class="flex-1"></span>
+      <span class="tabular-nums text-neutral-400">{{ (latest.finished_at or '')|replace('T', ' ') }} · {{ secs(latest.wall_s) }} · {{ latest.n_sections|int }} 张切片</span>
+      <a href="/runs/{{ latest.run_id }}" class="ov-btn">打开运行</a>
+      {% endif %}
+    </div>
 
+    <div class="ov-card mt-4">
+      {% if latest %}
       <div id="ov-split" class="relative grid lg:grid-cols-[minmax(0,640px)_minmax(0,1fr)]">
-        <div class="relative bg-white/[0.01]">
-          <span aria-hidden="true" class="pointer-events-none absolute inset-y-0 -right-px z-10 hidden w-0.5 bg-slate-800 lg:block"></span>
+        <div class="relative">
+          <span aria-hidden="true" class="pointer-events-none absolute inset-y-0 -right-px z-10 hidden w-0.5 bg-line lg:block"></span>
           <span id="ov-progress" aria-hidden="true" class="pointer-events-none absolute inset-y-0 -right-px z-20 hidden w-0.5 origin-top scale-y-0 bg-[#B8A4E8] will-change-transform lg:block"></span>
-          <div class="flex items-center justify-between border-b border-white/5 px-5 py-2.5">
-            <span class="font-mono text-[11px] tracking-[0.1em] text-slate-500">WORKFLOW · LANGGRAPH</span>
-            <span class="text-xs text-slate-500">点节点，右边展开对应的一步</span>
-          </div>
-          <div class="overflow-x-auto py-5">
+          <h3 class="px-6 pt-5 text-[14px] font-medium text-neutral-300">流程</h3>
+          <div class="overflow-x-auto pb-6 pt-2">
             {% include "_overview_graph.html" %}
           </div>
         </div>
 
-        <div id="ov-acc" class="border-t border-white/5 lg:border-t-0">
-          <div class="flex items-center justify-between border-b border-white/5 px-6 py-2.5">
-            <span class="font-mono text-[11px] tracking-[0.1em] text-slate-500">STAGE OUTPUTS</span>
-            <span class="text-xs text-slate-500">鼠标移到一行上展开</span>
-          </div>
-          <ul class="divide-y divide-white/[0.04] p-3">
+        <div id="ov-acc" class="border-t border-line lg:sticky lg:top-0 lg:self-start lg:border-t-0">
+          <h3 class="px-6 pt-5 text-[14px] font-medium text-neutral-300">每一步的产出</h3>
+          <ul class="mt-2 px-2 pb-3">
             {% for st in steps %}
             <li class="ov-step" data-step="{{ st.id }}">
               <span aria-hidden="true" class="ov-dot"></span>
@@ -106,13 +96,13 @@
               <div class="ov-step-body" id="ov-panel-{{ st.id }}" role="region" aria-labelledby="ov-head-{{ st.id }}">
                 <div class="min-h-0 overflow-hidden">
                   <div class="ov-step-inner">
-                    <p class="max-w-lg text-[14.5px] leading-relaxed text-slate-400">{{ st.desc }}</p>
-                    <ul class="mt-4 space-y-2">
+                    <p class="max-w-lg text-[14px] leading-6 text-neutral-300">{{ st.desc }}</p>
+                    <dl class="mt-3 divide-y divide-line-soft">
                       {% for k2, v2 in st.rows %}
-                      <li class="flex items-baseline gap-2.5 rounded-lg bg-white/[0.02] px-3 py-2 text-sm text-slate-300"><span aria-hidden="true" class="h-1.5 w-1.5 shrink-0 -translate-y-0.5 rounded-full bg-sky-400"></span>{{ k2 }}<span class="ml-auto font-mono text-[13px] text-slate-100">{{ v2 }}</span></li>
+                      <div class="flex items-baseline justify-between gap-4 py-2"><dt class="text-neutral-400">{{ k2 }}</dt><dd class="tabular-nums text-white">{{ v2 }}</dd></div>
                       {% endfor %}
-                    </ul>
-                    <a href="/runs/{{ latest.run_id }}" class="ov-btn mt-4 h-9 px-3.5 text-[13px]">Learn more <span aria-hidden="true">→</span></a>
+                    </dl>
+                    <a href="/runs/{{ latest.run_id }}" class="ov-btn mt-3">Learn more <span aria-hidden="true">→</span></a>
                   </div>
                 </div>
               </div>
@@ -122,75 +112,80 @@
         </div>
       </div>
       {% else %}
-      <div class="px-6 py-16 text-center">
-        <p class="text-lg font-semibold text-slate-100">还没有完成的运行</p>
-        <p class="mt-2 text-sm text-slate-400">到流水线选一个数据集开始质量检查，跑完以后这里会显示完整流程和每一步的产出。</p>
-        <a href="/pipeline" class="ov-btn-primary mt-6 h-10 px-4">去流水线</a>
+      <div class="px-6 py-14">
+        <p class="text-[16px] font-medium text-white">还没有完成的运行</p>
+        <p class="mt-1 text-neutral-400">跑完一次质量检查，这里会显示它的流程和每一步的产出。</p>
+        <a href="/pipeline" class="ov-btn-primary mt-5">去流水线</a>
       </div>
       {% endif %}
     </div>
   </section>
 
-  <section class="mx-auto max-w-[1240px] px-6 pt-16 lg:px-8">
-    <div class="flex flex-wrap items-baseline justify-between gap-4">
-      <h2 class="text-[26px] font-semibold tracking-tight text-slate-50">运行记录</h2>
-      <a href="/pipeline" class="text-sm text-sky-300 hover:text-sky-200">全部运行 →</a>
-    </div>
-    <div class="ov-panel mt-4 overflow-x-auto rounded-2xl">
-      <table class="w-full min-w-[760px] text-sm">
-        <thead class="bg-white/[0.02] text-left text-xs text-slate-500">
-          <tr>
-            <th class="px-5 py-3 font-medium">运行</th><th class="px-5 py-3 font-medium">数据集</th><th class="px-5 py-3 font-medium">完成时间</th>
-            <th class="px-5 py-3 text-right font-medium">切片</th><th class="px-5 py-3 text-right font-medium">问题</th>
-            <th class="px-5 py-3 text-right font-medium">可用比例</th><th class="px-5 py-3 text-right font-medium">耗时</th><th class="px-5 py-3 font-medium">等级分布</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/[0.04] font-mono text-[13px]">
-          {% for r in runs %}
-          <tr class="transition-colors hover:bg-white/[0.02]">
-            <td class="px-5 py-3"><a href="/runs/{{ r.run_id }}" class="text-slate-100 hover:text-sky-300">#{{ r.run_id }}</a></td>
-            <td class="px-5 py-3 font-sans text-slate-300">{{ r.dataset_id }}</td>
-            <td class="px-5 py-3 text-slate-500">{{ (r.finished_at or '')|replace('T', ' ') }}</td>
-            <td class="px-5 py-3 text-right">{{ (r.n_sections or 0)|int }}</td>
-            <td class="px-5 py-3 text-right">{{ (r.n_findings or 0)|int }}</td>
-            <td class="px-5 py-3 text-right">{{ pct(r.retention) }}</td>
-            <td class="px-5 py-3 text-right">{{ secs(r.wall_s) }}</td>
-            <td class="px-5 py-3">{% for g, n in (r.grades or {})|dictsort %}<span class="mr-1.5 inline-block rounded-md border border-white/10 px-1.5 py-px text-xs text-slate-200">{{ g }} {{ n }}</span>{% endfor %}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="8" class="px-5 py-10 text-center font-sans text-slate-500">还没有运行记录</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </section>
+  <div class="mt-12 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+    <section aria-labelledby="runs-h" class="min-w-0">
+      <div class="flex items-center justify-between">
+        <h2 id="runs-h" class="text-[18px] font-semibold text-white">运行记录</h2>
+        <a href="/pipeline" class="ov-link">全部运行 →</a>
+      </div>
+      <div class="ov-card mt-4 overflow-x-auto">
+        <table class="w-full min-w-[620px]">
+          <thead>
+            <tr class="text-left text-[12px] text-neutral-400">
+              <th class="px-5 pb-2 pt-3 font-normal">运行</th><th class="px-3 pb-2 pt-3 font-normal">数据集</th>
+              <th class="px-3 pb-2 pt-3 text-right font-normal">切片</th><th class="px-3 pb-2 pt-3 text-right font-normal">问题</th>
+              <th class="px-3 pb-2 pt-3 text-right font-normal">可用</th><th class="px-3 pb-2 pt-3 text-right font-normal">用时</th><th class="px-5 pb-2 pt-3 text-right font-normal">完成时间</th>
+            </tr>
+          </thead>
+          <tbody class="tabular-nums">
+            {% for r in runs[:5] %}
+            <tr class="border-t border-line-soft transition-colors hover:bg-white/[0.03]">
+              <td class="px-5 py-3"><a href="/runs/{{ r.run_id }}" class="font-mono text-[13px] text-white hover:underline">#{{ r.run_id }}</a></td>
+              <td class="px-3 py-3 text-neutral-300">{{ r.dataset_id }}</td>
+              <td class="px-3 py-3 text-right text-neutral-200">{{ (r.n_sections or 0)|int }}</td>
+              <td class="px-3 py-3 text-right text-neutral-200">{{ (r.n_findings or 0)|int }}</td>
+              <td class="px-3 py-3 text-right text-white">{{ pct(r.retention) }}</td>
+              <td class="px-3 py-3 text-right text-neutral-200">{{ secs(r.wall_s) }}</td>
+              <td class="px-5 py-3 text-right text-neutral-400">{{ (r.finished_at or '')[5:]|replace('T', ' ') }}</td>
+            </tr>
+            {% else %}
+            <tr class="border-t border-line-soft"><td colspan="7" class="px-5 py-8 text-neutral-400">还没有运行记录。</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <section class="mx-auto grid max-w-[1240px] gap-3 px-6 pb-20 pt-16 md:grid-cols-2 lg:px-8">
-    {% set dv = delivery %}
-    <div class="ov-panel rounded-2xl p-6">
-      <p class="font-mono text-[11px] tracking-[0.1em] text-slate-500">交付 · 导出</p>
-      <p class="mt-2.5 text-[22px] font-semibold tracking-tight text-slate-50">{{ dv.n_exports }} 次导出，{{ dv.export_sections }} 张切片</p>
-      <p class="mt-1.5 text-slate-400">合计 {{ fmt_mb(dv.export_bytes) }}，只包含通过检查的切片。</p>
-      <a href="/delivery" class="mt-4 inline-block text-sm text-sky-300 hover:text-sky-200">去交付 →</a>
-    </div>
-    <div class="ov-panel rounded-2xl p-6">
-      <p class="font-mono text-[11px] tracking-[0.1em] text-slate-500">交付 · 数据流</p>
-      <p class="mt-2.5 text-[22px] font-semibold tracking-tight text-slate-50">{{ dv.n_streams }} 个数据流，{{ dv.stream_chunks }} 个数据块</p>
-      <p class="mt-1.5 text-slate-400">合计 {{ fmt_mb(dv.stream_bytes) }}{% if dv.n_streams_open %}，其中 {{ dv.n_streams_open }} 个正在传输{% endif %}。</p>
-      <a href="/delivery" class="mt-4 inline-block text-sm text-sky-300 hover:text-sky-200">去交付 →</a>
-    </div>
-  </section>
+    <section aria-labelledby="dv-h" class="flex min-w-0 flex-col">
+      <div class="flex items-center justify-between">
+        <h2 id="dv-h" class="text-[18px] font-semibold text-white">交付</h2>
+        <a href="/delivery" class="ov-link">去交付 →</a>
+      </div>
+      {% set dv = delivery %}
+      <dl class="ov-card mt-4 flex flex-1 flex-col">
+        <div class="flex-1 border-b border-line px-5 py-4">
+          <dt class="text-[13px] text-neutral-400">训练导出</dt>
+          <dd class="mt-1 text-[24px] font-semibold leading-8 tabular-nums text-white">{{ dv.export_sections }}<span class="ml-1 text-[13px] font-normal text-neutral-400">张切片</span></dd>
+          <dd class="mt-0.5 tabular-nums text-neutral-400">{{ dv.n_exports }} 次导出，{{ fmt_mb(dv.export_bytes) }}</dd>
+        </div>
+        <div class="flex-1 px-5 py-4">
+          <dt class="text-[13px] text-neutral-400">推理数据流</dt>
+          <dd class="mt-1 text-[24px] font-semibold leading-8 tabular-nums text-white">{{ dv.stream_chunks }}<span class="ml-1 text-[13px] font-normal text-neutral-400">个数据块</span></dd>
+          <dd class="mt-0.5 tabular-nums text-neutral-400">{{ dv.n_streams }} 个数据流，{{ fmt_mb(dv.stream_bytes) }}{% if dv.n_streams_open %}，{{ dv.n_streams_open }} 个正在传输{% endif %}</dd>
+        </div>
+      </dl>
+    </section>
+  </div>
 </main>
 
-<footer class="border-t border-white/5 bg-ink-900">
-  <div class="mx-auto grid max-w-[1240px] gap-8 px-6 py-12 sm:grid-cols-2 lg:grid-cols-4 lg:px-8">
-    <div>
-      <div class="flex items-center gap-2.5"><span class="grid h-6 w-6 place-items-center rounded-md bg-slate-100 font-mono text-[10px] font-semibold text-ink-950">EM</span><span class="font-semibold text-slate-100">EM Image QC</span></div>
-      <p class="mt-2.5 text-[13px] text-slate-500">电镜图像质量检查与训练数据清洗。版本 {{ settings.pipeline_version }}</p>
-    </div>
-    <div class="flex flex-col gap-2 text-sm"><span class="text-xs font-medium text-slate-500">平台</span><a class="ov-link" href="/overview">总览</a><a class="ov-link" href="/pipeline">流水线</a><a class="ov-link" href="/">数据集</a><a class="ov-link" href="/crawl">数据采集</a></div>
-    <div class="flex flex-col gap-2 text-sm"><span class="text-xs font-medium text-slate-500">数据</span><a class="ov-link" href="/training">训练数据</a><a class="ov-link" href="/patches">Patch Factory</a><a class="ov-link" href="/delivery">交付</a></div>
-    <div class="flex flex-col gap-2 text-sm"><span class="text-xs font-medium text-slate-500">更多</span><a class="ov-link" href="/overview/classic">详细仪表盘</a><a class="ov-link" href="/report">汇报</a><a class="ov-link" href="/account">账号</a></div>
+<footer class="border-t border-line">
+  <div class="mx-auto flex max-w-[1200px] flex-wrap items-center gap-x-5 gap-y-2 px-6 py-6 text-neutral-400">
+    <span class="font-semibold text-neutral-200">EM Image QC</span>
+    <span>{{ settings.pipeline_version }}</span>
+    <span class="flex-1"></span>
+    <a class="ov-link" href="/overview/classic">详细仪表盘</a>
+    <a class="ov-link" href="/patches">Patch Factory</a>
+    <a class="ov-link" href="/crawl">数据采集</a>
+    <a class="ov-link" href="/account">账号</a>
   </div>
 </footer>
 

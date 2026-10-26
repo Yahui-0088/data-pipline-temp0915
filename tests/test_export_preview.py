@@ -153,7 +153,7 @@ def test_pipeline_dashboard(registered, qc_run):
     page = c.get("/overview/classic").text
     assert 'id="dashboard"' in page and "dashboard.js" in page and 'href="/overview"' in page
     new = c.get("/overview").text
-    assert "WORKFLOW · LANGGRAPH" in new and 'data-node="slice_qc"' in new and 'data-step="slice_qc"' in new
+    assert "每一步的产出" in new and "<h1" in new and 'data-node="slice_qc"' in new and 'data-step="slice_qc"' in new
     assert "/static/tw/overview.css" in new and 'href="/overview/classic"' in new and "id=\"ov-progress\"" in new
     assert c.get("/static/tw/overview.css").status_code == 200 and c.get("/static/overview.js").status_code == 200
     assert 'id="dashboard"' not in c.get("/pipeline").text
