@@ -212,7 +212,7 @@
 </section>
 {% endif %}
 
-<div class="mx-auto max-w-[1200px] px-6 pb-16">
+<div class="mx-auto max-w-[1200px] px-6">
   <section aria-labelledby="runs-h" class="mt-24 min-w-0">
     <div class="flex items-end justify-between">
       <h2 id="runs-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">运行记录</h2>
@@ -237,14 +237,23 @@
       {% endif %}
     </div>
   </section>
+</div>
 
-  <section aria-labelledby="dv-h" class="mt-16 min-w-0">
+{# 交付：背后一层淡紫色装饰线（横线 + 节点 + 流动光点），只是装饰，不挡鼠标 #}
+<div class="dv-zone">
+  <div class="dv-deco" aria-hidden="true">
+    <div class="dv-ln dv-ln-a"><i class="dv-n-l"></i><i class="dv-n-r"></i></div>
+    <div class="dv-ln dv-ln-b"><i style="left:14%"></i><i style="left:36%"></i><i style="left:64%"></i><i style="left:86%"></i><span class="dv-flow"></span></div>
+    <div class="dv-ln dv-ln-c is-far"><i style="left:28%"></i><i style="left:72%"></i><span class="dv-flow is-rev"></span></div>
+  </div>
+<div class="relative mx-auto max-w-[1200px] px-6 pb-16">
+  <section aria-labelledby="dv-h" class="pt-16 min-w-0">
     <div class="flex items-end justify-between">
       <h2 id="dv-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">交付</h2>
       <a href="/delivery" class="ov-link">去交付 →</a>
     </div>
     {% set dv = delivery %}
-    <dl class="ov-card mt-5 grid grid-cols-1 sm:grid-cols-2">
+    <dl class="ov-card dv-card mt-5 grid grid-cols-1 sm:grid-cols-2">
       <div class="border-b border-line px-6 py-5 sm:border-b-0 sm:border-r">
         <dt class="text-[13px] text-neutral-400">训练导出</dt>
         <dd class="mt-1 text-[28px] font-semibold leading-9 tabular-nums text-white">{{ dv.export_sections }}<span class="ml-1 text-[13px] font-normal text-neutral-400">张切片</span></dd>
@@ -257,6 +266,7 @@
       </div>
     </dl>
   </section>
+</div>
 </div>
 
 <footer class="border-t border-line">

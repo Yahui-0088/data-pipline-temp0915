@@ -354,3 +354,31 @@
 .rc-play-time { font: 500 12.5px/1 theme("fontFamily.mono"); color: #a3a3a3; white-space: nowrap; font-variant-numeric: tabular-nums; }
 @media (max-width: 560px) { .rc-play-label { display: none; } }
 @media (prefers-reduced-motion: reduce) { .rc-tip, .rc-play-fill, .rc-play-head, .rc-dot { transition: none !important; } }
+
+/* ---------- 交付背后的装饰线：低饱和淡紫，若隐若现；只是背景层，不影响内容 ---------- */
+.dv-zone { position: relative; overflow: hidden; }
+.dv-deco { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.dv-zone > .relative { z-index: 1; }
+.dv-ln { position: absolute; left: 0; right: 0; height: 1px; background: rgba(167, 139, 250, 0.55); }
+.dv-ln.is-far { background: rgba(109, 90, 150, 0.45); }
+.dv-ln i { position: absolute; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: #C4B5FD;
+  box-shadow: 0 0 6px rgba(196, 181, 253, 0.55); }
+.dv-ln.is-far i { width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; background: #6D5A96; box-shadow: none; opacity: 0.8; }
+/* 标题那一行：线只在两侧留白里，不穿过文字 */
+.dv-ln-a { top: 78px; background: none; }
+.dv-ln-a::before, .dv-ln-a::after { content: ""; position: absolute; top: 0; height: 1px; width: max(0px, calc(50% - 600px - 8px)); background: rgba(167, 139, 250, 0.55); }
+.dv-ln-a::before { left: 0; } .dv-ln-a::after { right: 0; }
+.dv-n-l { left: calc(50% - 600px - 8px); } .dv-n-r { left: calc(50% + 600px + 8px); }
+@media (max-width: 1232px) { .dv-ln-a { display: none; } }
+/* 卡片中间那条：从卡片背后穿过（卡片是磨砂半透明，线若隐若现） */
+.dv-ln-b { top: 168px; }
+.dv-ln-c { top: 266px; }
+.dv-card { background: rgba(17, 17, 17, 0.62); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+/* 流动光点：沿线匀速走 */
+.dv-flow { position: absolute; left: 0; top: 0; width: 100%; height: 1px; animation: dv-flow 9s linear infinite; }
+.dv-flow::before { content: ""; position: absolute; left: 0; top: -2px; width: 46px; height: 5px; border-radius: 5px; margin-left: -46px;
+  background: linear-gradient(90deg, rgba(196, 181, 253, 0), rgba(196, 181, 253, 0.9)); box-shadow: 0 0 8px rgba(196, 181, 253, 0.45); }
+.dv-flow.is-rev { animation-duration: 13s; animation-direction: reverse; }
+.dv-flow.is-rev::before { background: linear-gradient(90deg, rgba(196, 181, 253, 0.55), rgba(196, 181, 253, 0)); margin-left: 0; box-shadow: none; opacity: 0.7; }
+@keyframes dv-flow { from { transform: translateX(-4%); } to { transform: translateX(104%); } }
+@media (prefers-reduced-motion: reduce) { .dv-flow { animation: none; display: none; } }
