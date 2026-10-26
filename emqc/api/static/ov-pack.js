@@ -171,7 +171,7 @@
     layers.forEach((l, i) => {
       const pickSlice = st.view === "slice" && i === N - 1, pickSeg = st.view === "segment" && i >= 3 && i <= 9;
       l.classList.toggle("is-pick", pickSlice || pickSeg);
-      l.style.transform = `translateZ(${i * GAP + (pickSlice ? 40 : 0)}px)`;
+      l.style.transform = `translateZ(${i * GAP + (pickSlice ? 30 : 0)}px)`;
     });
     if (st.view === "patch") {  // 立方体滑进来的这段时间里虚线跟着走
       const t0 = performance.now();

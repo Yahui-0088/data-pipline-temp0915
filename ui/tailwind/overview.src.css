@@ -202,15 +202,15 @@
 .pk-more { border-radius: 14px; }
 .pk-more[hidden], .pk-list[hidden] { display: none; }
 .pk-split { position: absolute; right: 24px; top: 74px; z-index: 2; }
-.pk-hero { position: relative; height: 380px; }
-.pk-big { position: absolute; left: 48px; top: 70px; z-index: 1; max-width: 260px; }
+.pk-hero { position: relative; height: 430px; }
+.pk-big { position: absolute; left: 48px; top: 110px; z-index: 1; max-width: 260px; }
 .pk-big .k { color: #a3a3a3; font-size: 15px; }
 .pk-big .n { margin-top: 2px; font-size: 76px; line-height: 1; font-weight: 800; letter-spacing: -0.04em; color: #fff; font-variant-numeric: tabular-nums; }
 .pk-big .n small { font-size: 30px; font-weight: 600; margin-left: 4px; }
 .pk-big .t { margin-top: 8px; font-size: 20px; font-weight: 600; color: #e5e5e5; }
 .pk-big .m { margin-top: 6px; color: #8a8a8a; font-size: 13.5px; line-height: 1.5; }
 
-.pk-scene { position: absolute; left: 50%; top: 18px; width: 560px; height: 360px; margin-left: -250px; perspective: 1400px; }
+.pk-scene { position: absolute; left: 50%; top: 66px; width: 560px; height: 360px; margin-left: -250px; perspective: 1400px; }
 .pk-world { position: absolute; inset: 0; transform-style: preserve-3d; transform-origin: 300px 190px; cursor: grab; touch-action: pan-y;
   transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); }
 .pk-world.is-drag { cursor: grabbing; }
