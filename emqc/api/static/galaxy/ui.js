@@ -7,6 +7,13 @@ export class UI {
   constructor() {
     this.info = $("gx-info");
     this._infoId = null;
+    // 手机没有「鼠标划过」：点小三角展开 / 收起，点别处收起
+    const pull = $("gx-pull"), tab = $("gx-tab");
+    const setOpen = (on) => { pull.classList.toggle("open", on); tab.setAttribute("aria-expanded", on ? "true" : "false"); };
+    tab.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!pull.classList.contains("open")); });
+    document.addEventListener("pointerdown", (e) => { if (!pull.contains(e.target)) setOpen(false); });
+    pull.addEventListener("mouseenter", () => tab.setAttribute("aria-expanded", "true"));
+    pull.addEventListener("mouseleave", () => tab.setAttribute("aria-expanded", pull.classList.contains("open") ? "true" : "false"));
   }
 
   toggleFullscreen() {
