@@ -153,7 +153,7 @@
 
   if (acts.length) {
     show(0);
-    addEventListener("load", setupScroll);
+    if (document.readyState === "complete") setupScroll(); else addEventListener("load", setupScroll);   // 转场时脚本可能在 load 之后才跑
     desktop.addEventListener("change", setupScroll);
     addEventListener("resize", () => { fitGraph(); });
   }

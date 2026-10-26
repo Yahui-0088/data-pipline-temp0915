@@ -61,9 +61,9 @@ void main() {
   // 转场：每个粒子沿「从中心往外 + 自己的随机方向」瞬间炸开（快出慢停），之后慢慢漂浮
   float burstE = 0.0;
   if (uBurst > 0.0) {
-    burstE = 1.0 - pow(1.0 - clamp(uBurst, 0.0, 1.0), 4.0);
+    burstE = 1.0 - pow(1.0 - clamp(uBurst, 0.0, 1.0), 2.6);
     vec3 rd = normalize(p + aDir * 0.65 + vec3(1e-4));
-    p += rd * (0.7 + aSeed * 2.6) * burstE;
+    p += rd * (0.7 + aSeed * 2.6) * (burstE + uBurst * 0.12);   // 叠一个匀速往外的分量：散开后速度不会降到 0，一直慢慢往外飘到跳转
     p += vec3(sin(t * 0.9 + aSeed * 21.0), cos(t * 0.7 + aSeed * 13.0), sin(t * 0.6 + aSeed * 7.0)) * 0.25 * burstE;
   }
 
