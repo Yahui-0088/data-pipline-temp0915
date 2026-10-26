@@ -56,6 +56,11 @@
     .ov-act:hover .ov-act-desc { opacity: 1; transform: translate(-50%, -50%); }
   }
   .ov-bar, .ov-bar-meta { @apply hidden; }
+  /* 每一步的结果：列表模式下一直显示在最后；固定舞台里每完成一步就打在横线下面 */
+  .ov-results { @apply mt-8 grid gap-x-10 gap-y-4 border-t border-line-soft pt-6 sm:grid-cols-2; }
+  .ov-result-name { @apply m-0 text-[13px] font-semibold text-mint; }
+  .ov-result-vals { @apply m-0 mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[13px] leading-5 text-neutral-400; }
+  .ov-result-vals b { @apply font-medium tabular-nums text-white; }
 }
 
 /* 桌面：这一屏被 ScrollTrigger 固定，舞台中心只放当前这一步，上方清空 */
@@ -71,17 +76,29 @@
     transition-duration: 480ms; }
   .ov-theater:not(.is-static) .ov-act.is-past { transform: translateY(calc(-50% - 28px)); }
 
-  /* 大字下方：白色带辉光的进度条（跑到哪一步填到哪里，全部跑完填满） */
+  /* 大字下方：进度条。轨道看得见；白色辉光的填充按「第几步 / 共几步」增长，头上一颗发光的点（只动 clip-path / transform） */
   .ov-theater:not(.is-static) .ov-bar { display: block; position: absolute; left: 3rem; right: 3rem; top: calc(50% + clamp(56px, 5.2vw, 84px));
-    height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
-  .ov-bar-fill { display: block; height: 100%; border-radius: inherit; background: #fff; transform-origin: left; transform: scaleX(0);
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.9), 0 0 18px rgba(217, 242, 207, 0.45); transition: transform 480ms var(--ease-out); }
+    height: 3px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); }
+  .ov-bar-fill { position: absolute; inset: 0; border-radius: inherit; background: #fff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.95), 0 0 16px rgba(255, 255, 255, 0.55), 0 0 28px rgba(217, 242, 207, 0.35);
+    clip-path: inset(-14px calc((1 - var(--p)) * 100%) -14px -14px); transition: clip-path 520ms var(--ease-out); }
+  .ov-bar-headwrap { position: absolute; inset: 0; pointer-events: none; transform: translateX(calc(var(--p) * 100%)); transition: transform 520ms var(--ease-out); }
+  .ov-bar-head { position: absolute; left: -5px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 8px 2px rgba(255, 255, 255, 0.9), 0 0 22px 6px rgba(217, 242, 207, 0.45); }
+  /* 横线下面：每完成一步，这一步的结果就打出来（淡入、上移 8px），一步一步累积；往回滚时很快收起 */
+  .ov-theater:not(.is-static) .ov-results { position: absolute; left: 3rem; right: 3rem; margin: 0; border: 0; padding: 0;
+    top: calc(50% + clamp(56px, 5.2vw, 84px) + 44px); }
+  .ov-theater:not(.is-static) .ov-result { opacity: 0; transform: translateY(8px); filter: blur(4px);
+    transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out), filter 150ms var(--ease-out); }
+  .ov-theater:not(.is-static) .ov-result[data-shown] { opacity: 1; transform: none; filter: blur(0); transition-duration: 380ms; }
+  /* 大字、进度条和结果整体放在中线偏上，给下面的结果留位置 */
+  .ov-theater:not(.is-static) .ov-stage-inner { position: absolute; inset: 0; transform: translateY(-96px); }
   .ov-theater:not(.is-static) .ov-bar-meta { display: flex; justify-content: space-between; position: absolute; left: 3rem; right: 3rem;
     top: calc(50% + clamp(56px, 5.2vw, 84px) + 14px); font: 500 12px/1 theme("fontFamily.mono"); letter-spacing: 0.06em; color: #8a8a8a;
     font-variant-numeric: tabular-nums; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ov-act, .ov-act-title, .ov-act-desc, .ov-bar-fill, .ov-node, .ov-btn-run { transition-property: opacity !important; transition-duration: 150ms !important; }
+  .ov-act, .ov-act-title, .ov-act-desc, .ov-bar-fill, .ov-bar-headwrap, .ov-result, .ov-node, .ov-btn-run { transition-property: opacity !important; transition-duration: 150ms !important; }
   .ov-act { filter: none !important; }
 }

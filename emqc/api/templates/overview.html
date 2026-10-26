@@ -86,6 +86,7 @@
         </div>
 
         <div id="ov-theater" class="ov-theater" data-total="{{ stage[-1].at if stage else 0 }}">
+          <div class="ov-stage-inner">
           {% for st in stage %}
           <article class="ov-act" data-step="{{ st.id }}" data-at="{{ st.at }}" data-p="{{ st.p }}" tabindex="0" aria-label="{{ st.title }}：{{ st.desc }}">
             <div class="ov-act-line">
@@ -95,8 +96,18 @@
             <p class="ov-act-desc">{{ st.desc }}</p>
           </article>
           {% endfor %}
-          <div class="ov-bar" aria-hidden="true"><span id="ov-bar-fill" class="ov-bar-fill"></span></div>
+          <div id="ov-bar" class="ov-bar" aria-hidden="true" style="--p: 0"><span class="ov-bar-fill"></span><span class="ov-bar-headwrap"><span class="ov-bar-head"></span></span></div>
           <div class="ov-bar-meta" aria-hidden="true"><span id="ov-bar-step">0 / {{ stage|length }}</span><span id="ov-bar-total">{{ "%.2f"|format(stage[-1].at) if stage else '0.00' }} s</span></div>
+          {# 每完成一步，这一步的结果就打在横线下面（一步一步累积，全部跑完时都在） #}
+          <section class="ov-results" aria-label="每一步的结果">
+            {% for st in stage %}
+            <div class="ov-result" data-step="{{ st.id }}">
+              <h4 class="ov-result-name">{{ st.title }}</h4>
+              <p class="ov-result-vals">{% for k2, v2 in st.rows %}<span>{{ k2 }} <b>{{ v2 }}</b></span>{% endfor %}</p>
+            </div>
+            {% endfor %}
+          </section>
+          </div>
         </div>
       </div>
       {% else %}

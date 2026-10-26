@@ -413,7 +413,8 @@ def _overview_ctx(s: Session) -> dict:
         acc = 0.0
         for nid, kind, title, desc in OVERVIEW_STEPS:
             acc += secs_of[nid]
-            stage.append({"id": nid, "title": title, "desc": desc, "s": round(secs_of[nid], 2), "at": round(acc, 2), "p": round(acc / total, 4)})
+            stage.append({"id": nid, "title": title, "desc": desc, "s": round(secs_of[nid], 2), "at": round(acc, 2), "p": round(acc / total, 4),
+                          "rows": items[nid]})  # 这一步的结果：跑完以后列在进度条下面
     datasets = [x for (x,) in s.execute(select(Dataset.dataset_id).order_by(Dataset.dataset_id)).all()]
     return {
         "stage": stage, "datasets": datasets,
