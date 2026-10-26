@@ -19,7 +19,7 @@ from emqc.qc import catalog
 
 from ..serializers import block_to_dict, dataset_to_dict, export_job_to_dict, finding_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict, stream_to_dict, trace_to_dict
 from .auth import current_user, page_user, safe_next
-from .qc import pipeline_dashboard, pipeline_status, run_graph, run_summary
+from .qc import get_run_workflow, pipeline_dashboard, pipeline_status, run_graph, run_summary
 
 router = APIRouter(tags=["dashboard"], include_in_schema=False)
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
@@ -401,7 +401,22 @@ def _overview_ctx(s: Session) -> dict:
             finding.append(f"数据集等级 {ds_grade}")
         finding.append(f"{int(latest['n_findings'])} 条问题" + (f"，最多的是{top}" if top else ""))
     node_time = {k: secs(v) for k, v in st.items()}
+    # 舞台：7 步按顺序，每步的累计秒数（来自这次运行的 LangGraph 节点记录）和跑到这一步为止的进度
+    stage = []
+    if latest:
+        try:
+            wf = get_run_workflow(latest["run_id"], after_id=0, limit=0, s=s)["nodes"]
+        except Exception:  # 老的运行没有节点记录：用阶段耗时
+            wf = {}
+        secs_of = {nid: (wf.get(nid) or {}).get("total_s", st.get(nid)) or 0.0 for nid, *_ in OVERVIEW_STEPS}
+        total = sum(secs_of.values()) or 1.0
+        acc = 0.0
+        for nid, kind, title, desc in OVERVIEW_STEPS:
+            acc += secs_of[nid]
+            stage.append({"id": nid, "title": title, "desc": desc, "s": round(secs_of[nid], 2), "at": round(acc, 2), "p": round(acc / total, 4)})
+    datasets = [x for (x,) in s.execute(select(Dataset.dataset_id).order_by(Dataset.dataset_id)).all()]
     return {
+        "stage": stage, "datasets": datasets,
         "kpi": kpi, "latest": latest, "steps": steps, "finding": finding, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
         "runs": sorted(runs, key=lambda r: r["run_id"], reverse=True)[:8], "delivery": d["delivery"],
         "pct": pct, "secs": secs, "fmt_mb": lambda b: f"{(b or 0) / 1e6:.1f} MB",

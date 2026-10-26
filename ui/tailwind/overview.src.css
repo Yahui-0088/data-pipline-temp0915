@@ -2,40 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 总览页：中性深色、一个圆角（卡片 16px / 嵌套 10px / 控件全圆）、颜色只用在当前选中的那一步和数据上 */
+/* 总览页。动效按 Emil Kowalski 的原则：自定义 ease-out、只动 transform / opacity / filter、模糊 < 20px、
+   悬停只在有鼠标的设备上、按下 scale(0.97)、离开比进入快、尊重「减少动画」。 */
+:root { --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1); }
+
 @layer components {
   .ov-card { @apply rounded-2xl border border-line bg-ink-900; }
   .ov-link { @apply text-neutral-400 transition-colors duration-200 hover:text-white; }
-  .ov-btn { @apply inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-[#3a3a3a] px-4 text-neutral-100 transition-colors duration-200 hover:border-neutral-500 hover:bg-white/5; }
-  .ov-btn-primary { @apply inline-flex h-9 cursor-pointer items-center rounded-full bg-white px-4 font-medium text-ink-950 transition-colors duration-200 hover:bg-neutral-200; }
   .ov-pill-ok { @apply inline-flex h-6 items-center rounded-full bg-[#172a1d] px-2.5 text-[12px] text-[#3fc07a]; }
-  :is(a, button):focus-visible { @apply rounded-md outline-none ring-2 ring-[#7DB8FF] ring-offset-2 ring-offset-ink-950; }
+  :is(a, button, select, [tabindex]):focus-visible { @apply rounded-md outline-none ring-2 ring-mint/70 ring-offset-2 ring-offset-ink-950; }
 
-  /* 流程图节点：卡片 / 菱形（条件分支）；data-on = 当前展开的那一步 */
-  .ov-node { @apply absolute flex cursor-pointer flex-col items-center justify-center text-center text-white transition duration-200; }
-  .ov-box { @apply rounded-[10px] border border-[#2e2e2e] bg-ink-850 hover:border-neutral-500; }
-  .ov-diamond { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); @apply bg-[#222222] hover:bg-[#2a2a2a]; }
-  .ov-box[data-on] { @apply border-[#7DB8FF]; }
-  .ov-diamond[data-on] { @apply bg-[#1d3350]; }
+  /* 选数据集 + 运行 */
+  .ov-select { @apply h-10 cursor-pointer appearance-none rounded-full border border-[#333] bg-ink-900 bg-no-repeat pl-4 pr-9 text-[14px] text-neutral-100 transition-colors duration-200 hover:border-neutral-500;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23a3a3a3' stroke-width='1.6'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E"); background-position: right 14px center; }
+  .ov-btn-run { @apply inline-flex h-10 cursor-pointer items-center gap-2 rounded-full bg-run px-5 font-mono text-[13px] font-medium uppercase tracking-[0.06em] text-mint disabled:cursor-not-allowed disabled:opacity-40;
+    transition: transform 160ms var(--ease-out), background-color 200ms ease, opacity 200ms ease; }
+  .ov-btn-run:not(:disabled):active { transform: scale(0.97); }
+  @media (hover: hover) and (pointer: fine) { .ov-btn-run:not(:disabled):hover { @apply bg-[#36905c]; } }
 
-  /* 右侧手风琴：默认折叠暗态；data-open = 展开（高度 450ms，颜色 / 透明度 300ms，ease-out） */
-  .ov-step { @apply relative rounded-[10px] px-4 py-4 transition-colors duration-300 ease-out; }
-  .ov-step + .ov-step { @apply border-t border-line-soft; }
-  .ov-step[data-open] { @apply border-transparent bg-white/[0.035]; }
-  .ov-step[data-open] + .ov-step { @apply border-transparent; }
-  .ov-step-head { @apply block w-full cursor-pointer text-left; }
-  .ov-step-tag { @apply block text-[12px] tabular-nums text-[#808080] transition-colors duration-300 ease-out; }
-  .ov-step-title { @apply mt-1 block text-[20px] font-semibold leading-7 text-[#8a8a8a] transition-colors duration-300 ease-out; }
-  .ov-step[data-open] .ov-step-tag { @apply text-[#7DB8FF]; }
-  .ov-step[data-open] .ov-step-title { @apply text-white; }
-  .ov-step-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 450ms cubic-bezier(0.22, 1, 0.36, 1); }
-  .ov-step[data-open] .ov-step-body { grid-template-rows: 1fr; }
-  .ov-step-inner { @apply translate-y-2 pt-3 opacity-0; visibility: hidden; transition: opacity 300ms ease-out, transform 300ms ease-out, visibility 300ms; }
-  .ov-step[data-open] .ov-step-inner { @apply translate-y-0 opacity-100; visibility: visible; }
-  .ov-dot { @apply absolute -right-2 top-[26px] h-[7px] w-[7px] scale-50 rounded-full bg-[#7DB8FF] opacity-0 transition duration-300 ease-out; }
-  .ov-step[data-open] .ov-dot { @apply scale-100 opacity-100; }
+  /* 流程图节点：卡片 / 菱形；data-on = 舞台上正在显示的那一步，data-done = 已经走过 */
+  .ov-node { @apply absolute flex flex-col items-center justify-center text-center text-white; transition: border-color 300ms ease, background-color 300ms ease, opacity 300ms ease; }
+  .ov-box { @apply rounded-[10px] border border-[#2e2e2e] bg-ink-850; }
+  .ov-diamond { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); @apply bg-[#222222]; }
+  .ov-box[data-done] { @apply border-[#3a4a3a]; }
+  .ov-box[data-on] { @apply border-mint bg-[#18201a]; }
+  .ov-diamond[data-on] { @apply bg-[#2a3b2c]; }
+
+  /* ---------- 舞台 ---------- */
+  .ov-stage-section { @apply relative; }
+  .ov-theater { @apply relative px-6 py-6 lg:px-12; }
+  .ov-act { @apply relative border-t border-line-soft py-6 first:border-t-0; }
+  .ov-act-line { @apply flex items-baseline justify-between gap-6; }
+  .ov-act-title { @apply m-0 font-extrabold leading-[0.95] tracking-[-0.04em] text-mint; font-size: clamp(30px, 4.3vw, 76px);
+    transition: filter 300ms var(--ease-out), opacity 300ms var(--ease-out), transform 300ms var(--ease-out); }
+  .ov-act-secs { @apply shrink-0 font-mono text-[15px] tabular-nums text-neutral-300; }
+  .ov-act-secs small { @apply ml-0.5 text-[12px] text-neutral-500; }
+  .ov-act-desc { @apply mt-3 max-w-xl text-[16px] leading-7 text-neutral-300; }
+  .ov-bar, .ov-bar-meta { @apply hidden; }
+}
+
+/* 桌面：这一屏被 ScrollTrigger 固定，舞台中心只放当前这一步，上方清空 */
+@media (min-width: 1024px) {
+  .ov-stage-pin { height: 100vh; height: 100svh; }
+  .ov-theater:not(.is-static) { @apply overflow-hidden; }
+  .ov-theater:not(.is-static) .ov-act { position: absolute; left: 3rem; right: 3rem; top: 50%; border: 0; padding: 0;
+    opacity: 0; pointer-events: none; filter: blur(12px); transform: translateY(calc(-50% + 28px));
+    transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out), filter 220ms var(--ease-out); }
+  .ov-theater:not(.is-static) .ov-act-title { white-space: nowrap; }
+  /* 进来比出去慢一点（离开要快） */
+  .ov-theater:not(.is-static) .ov-act.is-current { opacity: 1; pointer-events: auto; filter: blur(0); transform: translateY(-50%);
+    transition-duration: 480ms; }
+  .ov-theater:not(.is-static) .ov-act.is-past { transform: translateY(calc(-50% - 28px)); }
+
+  /* 景深切换：悬停 / 聚焦时大字退到后面（模糊 + 变淡），说明从后面来到前面 */
+  .ov-theater:not(.is-static) .ov-act-desc { position: absolute; left: 0; right: 9rem; top: 50%; margin: 0; max-width: 40rem;
+    font-size: clamp(20px, 1.9vw, 28px); line-height: 1.4; font-weight: 600; color: #fff;
+    opacity: 0; filter: blur(10px); transform: translateY(-50%) scale(1.04);
+    transition: opacity 260ms var(--ease-out), filter 260ms var(--ease-out), transform 260ms var(--ease-out); }
+  .ov-act.is-current:focus-visible .ov-act-title { filter: blur(10px); opacity: 0.22; transform: scale(0.97); }
+  .ov-act.is-current:focus-visible .ov-act-desc { opacity: 1; filter: blur(0); transform: translateY(-50%) scale(1); }
+  @media (hover: hover) and (pointer: fine) {
+    .ov-act.is-current:hover .ov-act-title { filter: blur(10px); opacity: 0.22; transform: scale(0.97); }
+    .ov-act.is-current:hover .ov-act-desc { opacity: 1; filter: blur(0); transform: translateY(-50%) scale(1); }
+  }
+
+  /* 大字下方：白色带辉光的进度条（跑到哪一步填到哪里，全部跑完填满） */
+  .ov-theater:not(.is-static) .ov-bar { display: block; position: absolute; left: 3rem; right: 3rem; top: calc(50% + clamp(56px, 5.2vw, 84px));
+    height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
+  .ov-bar-fill { display: block; height: 100%; border-radius: inherit; background: #fff; transform-origin: left; transform: scaleX(0);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.9), 0 0 18px rgba(217, 242, 207, 0.45); transition: transform 480ms var(--ease-out); }
+  .ov-theater:not(.is-static) .ov-bar-meta { display: flex; justify-content: space-between; position: absolute; left: 3rem; right: 3rem;
+    top: calc(50% + clamp(56px, 5.2vw, 84px) + 14px); font: 500 12px/1 theme("fontFamily.mono"); letter-spacing: 0.06em; color: #8a8a8a;
+    font-variant-numeric: tabular-nums; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ov-step-body, .ov-step-inner, .ov-dot, .ov-node, .ov-step-tag, .ov-step-title, .ov-step { transition: none !important; }
+  .ov-act, .ov-act-title, .ov-act-desc, .ov-bar-fill, .ov-node, .ov-btn-run { transition-property: opacity !important; transition-duration: 150ms !important; }
+  .ov-act { filter: none !important; }
 }

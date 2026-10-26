@@ -41,7 +41,7 @@ lab = lambda left, t, w, txt, cls="text-neutral-400": f'<div class="absolute tex
 tm = lambda k, extra="": "{{ node_time.get('%s', '') }}%s" % (k, extra)
 loop = "{% if n_tiles %} · ×{{ n_tiles }}{% endif %}"
 
-out = [f'<div class="relative mx-auto" style="width:{W}px;height:{HH}px">',
+out = [f'<div class="relative" style="width:{W}px;height:{HH}px">',
        f'<svg class="absolute inset-0" width="{W}" height="{HH}" viewBox="0 0 {W} {HH}" aria-hidden="true">'
        '<defs><marker id="ov-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
        '<path d="M0 0 L8 4 L0 8 Z" fill="currentColor"/></marker></defs>', *paths, "</svg>",
