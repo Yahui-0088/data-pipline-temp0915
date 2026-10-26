@@ -21,13 +21,22 @@
   <div class="gx-badge todo" id="gx-mock" hidden title="没连上平台的汇报接口，显示的是示例数据">示例数据</div>
 </header>
 
+{% if not (user and user.role == 'reporter') %}
+<div class="gx-side" id="gx-side">
+<button type="button" class="gx-sidetab" id="gx-sidetab" aria-label="展开导航" aria-expanded="false" aria-controls="gx-nav"></button>
+<nav class="gx-nav gx-glass" id="gx-nav" aria-label="平台导航">
+  <div class="gx-nav-brand"><span class="gx-nav-logo">EM</span><b>EM Image QC</b></div>
+  <a class="gx-nav-item" href="/overview"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="10" rx="1"/><rect x="13" y="3" width="8" height="6" rx="1"/><rect x="3" y="15" width="8" height="6" rx="1"/><rect x="13" y="11" width="8" height="10" rx="1"/></svg>总览<span aria-hidden="true">→</span></a>
+</nav>
+</div>
+{% endif %}
+
 <div class="gx-pull" id="gx-pull">
 <button type="button" class="gx-tab" id="gx-tab" aria-label="展开数据集统计" aria-expanded="false" aria-controls="gx-stats"></button>
 <section class="gx-tr gx-glass" id="gx-stats" aria-label="数据集统计">
   <div><span class="gx-k"><i class="gx-sw ok"></i>已处理</span><b id="gx-processed">–</b></div>
   <div><span class="gx-k"><i class="gx-sw todo"></i>未处理</span><b id="gx-unprocessed">–</b></div>
   <div><span class="gx-k">完成率</span><b id="gx-completion">–</b></div>
-  {% if user and user.role != 'reporter' %}<div class="gx-links"><a href="/overview">回到平台 →</a></div>{% endif %}
   <div class="gx-note" id="gx-overflow"></div>
 </section>
 </div>

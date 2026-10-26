@@ -7,13 +7,16 @@ export class UI {
   constructor() {
     this.info = $("gx-info");
     this._infoId = null;
-    // 手机没有「鼠标划过」：点小三角展开 / 收起，点别处收起
-    const pull = $("gx-pull"), tab = $("gx-tab");
-    const setOpen = (on) => { pull.classList.toggle("open", on); tab.setAttribute("aria-expanded", on ? "true" : "false"); };
-    tab.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!pull.classList.contains("open")); });
-    document.addEventListener("pointerdown", (e) => { if (!pull.contains(e.target)) setOpen(false); });
-    pull.addEventListener("mouseenter", () => tab.setAttribute("aria-expanded", "true"));
-    pull.addEventListener("mouseleave", () => tab.setAttribute("aria-expanded", pull.classList.contains("open") ? "true" : "false"));
+    // 右上统计面板、左侧导航：鼠标划过小三角就展开（CSS）；手机没有「划过」，改成点小三角展开 / 收起，点别处收起
+    for (const [boxId, tabId] of [["gx-pull", "gx-tab"], ["gx-side", "gx-sidetab"]]) {
+      const box = $(boxId), tab = $(tabId);
+      if (!box || !tab) continue;                          // 汇报账号没有左侧导航
+      const setOpen = (on) => { box.classList.toggle("open", on); tab.setAttribute("aria-expanded", on ? "true" : "false"); };
+      tab.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!box.classList.contains("open")); });
+      document.addEventListener("pointerdown", (e) => { if (!box.contains(e.target)) setOpen(false); });
+      box.addEventListener("mouseenter", () => tab.setAttribute("aria-expanded", "true"));
+      box.addEventListener("mouseleave", () => tab.setAttribute("aria-expanded", box.classList.contains("open") ? "true" : "false"));
+    }
   }
 
   toggleFullscreen() {

@@ -24,7 +24,9 @@ def test_galaxy_routes(registered):
     assert "拖动旋转" not in page.text and "鼠标滑过" not in page.text and "汇报详情 →</a>" not in page.text.split('id="gx-fatal"')[0] and "gx-logout" not in page.text
     assert "gx-dock" not in page.text
     # 统计面板默认收起：有小三角按钮控制展开
-    assert 'id="gx-tab"' in page.text and 'aria-controls="gx-stats"' in page.text and 'id="gx-reset"' not in page.text and 'id="gx-fs"' not in page.text
+    assert 'id="gx-tab"' in page.text and 'aria-controls="gx-stats"' in page.text
+    # 左侧小三角 → 导航栏 → 总览；统计面板里不再有「回到平台」
+    assert 'id="gx-sidetab"' in page.text and 'class="gx-nav-item" href="/overview"' in page.text and "回到平台" not in page.text and 'id="gx-reset"' not in page.text and 'id="gx-fs"' not in page.text
     assert 'id="gx-shapes"' not in page.text and 'type="range"' not in page.text and 'type="color"' not in page.text
     for f in ("app.js", "config.js", "scene.js", "shapes.js", "particleSculpture.js", "datasetManager.js", "cameraRig.js", "ui.js", "galaxy.css"):
         assert c.get(f"/static/galaxy/{f}").status_code == 200, f
