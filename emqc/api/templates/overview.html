@@ -65,7 +65,7 @@
 {# ---------------------------------------------------------------- 舞台：滚动驱动（ScrollTrigger 固定这一屏），点「运行」后跟着真实进度走 #}
 <section id="run" aria-labelledby="run-h" class="ov-stage-section">
   <div class="ov-stage-pin">
-    <div class="mx-auto flex h-full max-w-[1200px] flex-col px-6">
+    <div class="flex h-full flex-col px-4 lg:px-6">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 pt-6">
         <h2 id="run-h" class="text-[18px] font-semibold text-white">最新运行</h2>
         {% if latest %}
@@ -76,7 +76,7 @@
       </div>
 
       {% if latest %}
-      <div id="ov-split" class="ov-card relative grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+      <div id="ov-split" class="ov-card relative grid min-h-0 flex-1 lg:grid-cols-2">
         <div id="ov-graph-wrap" class="relative min-h-0 overflow-hidden">
           <span aria-hidden="true" class="pointer-events-none absolute inset-y-0 -right-px z-10 hidden w-0.5 bg-line lg:block"></span>
           <span id="ov-progress" aria-hidden="true" class="pointer-events-none absolute inset-y-0 -right-px z-20 hidden w-0.5 origin-top scale-y-0 bg-[#B8A4E8] will-change-transform lg:block"></span>
