@@ -82,14 +82,16 @@
   function fitGraph() {
     if (!wrap || !fit) return;
     const g = fit.firstElementChild; if (!g) return;
-    const gw = g.offsetWidth, gh = g.offsetHeight, w = wrap.clientWidth - 32;
+    const gw = g.offsetWidth, gh = g.offsetHeight, w = wrap.clientWidth - 24;
     const pinned = desktop.matches && theater && !theater.classList.contains("is-static");
-    const k = pinned ? Math.min(1, w / gw, (wrap.clientHeight - 32) / gh) : Math.min(1, w / gw);
-    const x = Math.max(16, (wrap.clientWidth - gw * k) / 2);
+    // 尽量放大：最多放到 1.3 倍，受这一屏的宽和高限制
+    const k = pinned ? Math.min(1.3, w / gw, (wrap.clientHeight - 24) / gh) : Math.min(1.3, w / gw);
+    const x = Math.max(12, (wrap.clientWidth - gw * k) / 2);
+    const y = pinned ? Math.max(12, (wrap.clientHeight - gh * k) / 2) : 12;
     fit.style.transformOrigin = "0 0";
-    fit.style.transform = `translate(${x}px, 16px) scale(${k})`;
+    fit.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
     fit.style.width = `${gw}px`;
-    fit.style.height = pinned ? "" : `${gh * k + 32}px`;
+    fit.style.height = pinned ? "" : `${gh * k + 24}px`;
   }
 
   // 滚动回放：固定这一屏，往下滚一段换一步
