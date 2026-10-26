@@ -139,7 +139,7 @@
     root.querySelectorAll(".pk-card").forEach((card) => {
       const lv = card.dataset.level, c = cell(st.task, lv), q = count(c);
       const box = card.querySelector("input");
-      card.classList.toggle("on", lv === st.view);
+      card.classList.toggle("on", st.sel.has(key(st.task, lv)));  // 勾选了的都描紫边
       card.setAttribute("aria-pressed", String(st.sel.has(key(st.task, lv))));
       card.classList.toggle("is-off", !q);
       box.disabled = !q;
