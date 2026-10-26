@@ -91,9 +91,12 @@ async function main() {
     const pre = document.createElement("link"); pre.rel = "prefetch"; pre.href = href; document.head.append(pre);
     document.body.classList.add("gx-leaving");
     leaving = { t0: performance.now(), dur: REDUCE ? 350 : 2300, href };
+    // 跳转不依赖渲染循环：就算某一帧出错、或者标签页在后台不画了，到点也一定进总览
+    setTimeout(() => { if (leaving && !leaving.gone) { leaving.gone = true; location.href = href; } }, leaving.dur + 150);
     if (!REDUCE) rig.setDistance(rig.target.dist * 0.82);            // 镜头轻轻往前推一点，散开更有纵深
   }
   function leaveStep(now) {
+    if (typeof sculpture.setBurst !== "function") return;            // 万一拿到的是旧版脚本：只做淡出，照样跳转
     const s = (now - leaving.t0) / leaving.dur;
     if (REDUCE) { sculpture.setBurst(0, Math.min(1, s)); }
     else {

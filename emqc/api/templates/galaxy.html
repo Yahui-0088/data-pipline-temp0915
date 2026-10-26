@@ -8,7 +8,8 @@
 <script type="importmap">
 { "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"{% for m in ["cameraRig", "config", "datasetManager", "particleSculpture", "scene", "shapes", "ui"] %},
+    "/static/galaxy/{{ m }}.js": "/static/galaxy/{{ m }}.js?v={{ static_v('galaxy/' ~ m ~ '.js') }}"{% endfor %}
 } }
 </script>
 </head>
