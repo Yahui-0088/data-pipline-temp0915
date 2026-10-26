@@ -30,6 +30,9 @@
   .ov-box[data-done] { @apply border-[#3a4a3a]; }
   .ov-box[data-on] { @apply border-mint bg-[#18201a]; }
   .ov-diamond[data-on] { @apply bg-[#2a3b2c]; }
+  /* 运行中走过分支节点时亮一下（取下一个 z 段、本段完成都只停几毫秒） */
+  .ov-diamond[data-flash] { @apply bg-[#3d5a40]; transition-duration: 120ms; }
+  .ov-box[data-flash] { @apply border-mint bg-[#1d2a1f]; transition-duration: 120ms; }
 
   /* ---------- 舞台 ---------- */
   .ov-stage-section { @apply relative; }

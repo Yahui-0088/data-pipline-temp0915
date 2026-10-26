@@ -36,7 +36,15 @@
   const steps = acts.map((a) => a.dataset.step);
   const nodes = [...document.querySelectorAll(".ov-node[data-node]")];
   const bar = $("ov-bar"), results = theater ? [...theater.querySelectorAll(".ov-result")] : [], stepLbl = $("ov-bar-step"), totalLbl = $("ov-bar-total"), line = $("ov-progress");
-  let current = -1, live = false;
+  let current = -1, live = false, zLabel = "";
+  // 运行中一闪而过的分支节点（取下一个 z 段 / 本段完成只要几毫秒），在流程图上亮一下
+  function flash(id) {
+    const el = nodes.find((x) => x.dataset.node === id);
+    if (!el) return;
+    el.setAttribute("data-flash", "");
+    clearTimeout(el._fl);
+    el._fl = setTimeout(() => el.removeAttribute("data-flash"), 900);
+  }
 
   function show(i, p, secs, shown) {
     if (!acts.length) return;
@@ -66,7 +74,7 @@
     // 横线下面：只放当前这一步自己的结果；到最后一步「结果汇总」时，前面每一步的结果一起列出来
     const last = i === acts.length - 1;
     results.forEach((r) => r.toggleAttribute("data-shown", last || r.dataset.step === steps[i]));
-    if (stepLbl) stepLbl.textContent = `${i + 1} / ${acts.length}`;
+    if (stepLbl) stepLbl.textContent = `${i + 1} / ${acts.length}` + (zLabel ? ` · ${zLabel}` : "");
   }
 
   // 左边流程图缩放到正好放进这一屏
@@ -195,11 +203,18 @@
     current = -1;
     show(0, 1 / steps.length, 0);
     const t0 = performance.now();
-    let lastP = 0;
+    let lastP = 0, lastId = 0;
     for (;;) {
       await new Promise((r) => setTimeout(r, 1000));
       let w;
-      try { w = await (await fetch(`/api/v1/qc/runs/${runId}/workflow?limit=0`)).json(); } catch { continue; }
+      try { w = await (await fetch(`/api/v1/qc/runs/${runId}/workflow?after_id=${lastId}&limit=500`)).json(); } catch { continue; }
+      // 两次轮询之间走过的节点：分支节点亮一下；记下现在在第几个 z 段
+      const tr = w.trace || [];
+      if (w.last_id) lastId = w.last_id;
+      for (const ev of tr) {
+        if (ev.phase === "enter" && (ev.node === "next_group" || ev.node === "group_done")) flash(ev.node);
+        if (ev.n_groups && ev.group != null && ev.group >= 0) zLabel = `z 段 ${ev.group + 1} / ${ev.n_groups}`;
+      }
       const n = w.nodes || {};
       // 舞台显示「现在正在跑的那一步」：tile 在 切片检查 → 落库 之间循环时，舞台跟着循环
       const ALIAS_LIVE = { next_group: "ingest", group_done: "persist" };
