@@ -156,7 +156,6 @@
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
       <h2 id="pk-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">导出数据包</h2>
-      <p class="mt-2 text-[15px] text-neutral-400">选择用途与形态，即可生成。</p>
     </div>
     <label class="sr-only" for="pk-ds">数据集</label>
     <select id="pk-ds" class="ov-select">{% for d in datasets %}<option value="{{ d }}"{% if (latest and d == latest.dataset_id) %} selected{% endif %}>{{ d }}</option>{% endfor %}</select>

@@ -125,7 +125,6 @@
     const n = bp[st.split] || 0;
     return { n, bytes: c.n ? (c.est_bytes * n) / c.n : 0, split: true };
   }
-  const labelOf = (t) => ((st.plan && st.plan.tasks.find((x) => x.task === t)) || {}).label;
 
   function render() {
     const p = st.plan;
@@ -163,8 +162,8 @@
     $("pk-big-n").textContent = q ? q.n.toLocaleString("zh-CN") : "—";
     $("pk-big-u").textContent = q ? UNIT[st.view] : "";
     $("pk-big-t").textContent = LEVEL_ZH[st.view];
-    const lab = labelOf(st.task);
-    $("pk-big-m").textContent = !p ? "" : q ? `${lab ? `标签：${lab}` : "无需标签"} · 约 ${mb(q.bytes)}` : (c ? (c.applicable ? c.reason : "这个用途没有这种形态") : "");
+    // 大数字下面只在做不了的时候写原因
+    $("pk-big-m").textContent = !p || q ? "" : (c ? (c.applicable ? c.reason : "这个用途没有这种形态") : "");
     $("pk-hint-r").textContent = st.view === "patch" ? "patch 数量为上限估计" : "";
     // 体块
     scene.dataset.view = st.view;
