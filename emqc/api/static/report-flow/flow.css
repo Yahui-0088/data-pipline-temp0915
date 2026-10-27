@@ -263,9 +263,9 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .box h4 .dl:hover { background: rgba(255,154,60,.14); }
 
 /* 紧凑的一行数字：名字和数字并排 */
-.kps.mini { grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.kps.mini div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 14px; font-size: 13px; }
-.kps.mini b { display: inline; font-size: 20px; margin-top: 0; }
+.kps.mini { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.kps.mini div { display: flex; flex-wrap: nowrap; align-items: baseline; justify-content: space-between; gap: 6px; padding: 8px 12px; font-size: 12px; white-space: nowrap; min-width: 0; }
+.kps.mini b { display: inline; font-size: 16px; margin-top: 0; white-space: nowrap; }
 
 /* 数据集可用比例：横向条形图 + 坐标轴 */
 .dsc { position: relative; }
