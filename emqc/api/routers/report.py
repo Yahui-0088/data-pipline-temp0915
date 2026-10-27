@@ -218,13 +218,14 @@ def report_flow(request: Request, s: Session = Depends(get_session)):
     streams = list(s.scalars(select(StreamSession).where(StreamSession.dataset_id.in_(ids)).order_by(StreamSession.id.desc()).limit(12)))
     iso = lambda t: t.isoformat(timespec="minutes") if t else None
     crawl_jobs = list(s.scalars(select(CrawlJob).where(CrawlJob.dataset_id.in_(ids)).order_by(CrawlJob.id.desc()).limit(8)))
-    checks = [{"name": c["name"], "level": c["level"], "zh": FAILURE_ZH.get(c["failure_type"], c["failure_type"]), "description": c["description"]} for c in catalog()]
+    checks = [{"name": c["name"], "level": c["level"], "zh": FAILURE_ZH.get(c["failure_type"], c["failure_type"]), "description": c["description"], "implemented": c["implemented"]} for c in catalog()]
     n_err = s.scalar(select(func.count()).select_from(QCRun).where(QCRun.dataset_id.in_(ids), QCRun.status == "error")) or 0
     return {
         "kpi": base["kpi"], "datasets": base["datasets"], "failures": base["failures"], "examples": base["examples"], "delivery": base["delivery"],
         "latest": latest, "plan": plan, "checks": checks,
         "runs": [{"run_id": r["run_id"], "dataset_id": r["dataset_id"], "finished_at": r.get("finished_at"), "retention": r.get("retention"),
-                  "n_findings": r.get("n_findings"), "wall_s": r.get("wall_s")} for r in sorted(runs_all, key=lambda r: r["run_id"], reverse=True)[:10]],
+                  "n_findings": r.get("n_findings"), "wall_s": r.get("wall_s"), "n_sections": r.get("n_sections"), "grades": r.get("grades") or {}}
+                 for r in sorted(runs_all, key=lambda r: r["run_id"], reverse=True)[:300]],
         "n_runs": len(runs_all), "n_runs_error": n_err,
         "crawl": {"presets": [{"key": k, "label": v["label"], "url": v["em"]["url"], "mip": v["em"]["mip"], "note": v["em"].get("note"),
                                "seg_url": (v.get("seg") or {}).get("url"), "seg_mip": (v.get("seg") or {}).get("mip", 0), "mask_url": (v.get("mask") or {}).get("url"),

@@ -289,29 +289,25 @@
         + `<div class="box"><table class="tb"><tr><th>数据集</th><th>切片</th><th>可用</th><th>等级</th><th>最近</th></tr>${D.datasets.map((x) =>
           `<tr ${CAN ? `data-ds="${esc(x.dataset_id)}" style="cursor:pointer${x.dataset_id === selDs ? ";background:rgba(201,184,240,.08)" : ""}"` : ""}><td>${esc(x.dataset_id)}</td><td class="m">${num(x.n_sections)}</td><td class="m">${pct(x.retention)}</td><td class="m">${esc(x.grade || "–")}</td><td class="m">${when(x.last_run)}</td></tr>`).join("")}</table></div>`;
     },
-    clean(tab = 0) {
-      const L = D.latest;
-      if (!L) return head("数据清洗", "清洗结果") + noRun;
-      const top = head("数据清洗 / <b>结果详情</b>", "清洗结果") + tabs(["总览", "问题明细", "运行记录"], tab);
-      let main = "";
-      if (tab === 0) {
-        main = kps([["总切片", num(L.n_slices)], ["合格", num(L.n_passed), "g"], ["不合格", num(L.n_failed), "y"]]) + rateBox("可用率", L.retention)
-          + `<div class="box"><h4>问题分类<small>high / critical</small></h4>${L.failures.length ? bars(L.failures.slice(0, 5).map((f) => [f.zh, f.n])) : "<p class='note'>没有高等级问题。</p>"}</div>`
-          + `<div class="box"><h4>处理结果</h4>${okRow(`检查结果已落库 · ${num(L.n_findings)} 条问题记录`)}${okRow(`问题截图已归档 · ${num(L.n_shots)} 张`)}${L.n_unreadable ? okRow(`有 ${num(L.n_unreadable)} 张切片读不出或缺失`, true) : ""}</div>`;
-      } else if (tab === 1) {
-        const st = L.stages || {};
-        main = `<div class="box"><h4>每类问题<small>high / critical · 不含标为误报的</small></h4><table class="tb"><tr><th>问题</th><th>哪一步查出</th><th>条数</th></tr>${L.failures.map((f) =>
-          `<tr><td>${esc(f.zh)}</td><td>${f.step === "serial_qc" ? "序列检查" : "切片检查"}</td><td class="m">${num(f.n)}</td></tr>`).join("")}</table></div>`
-          + `<div class="box"><h4>每一步用时</h4>${bars([["读取 · 统计", st.ingest || 0, secs(st.ingest)], ["切片检查", st.slice_qc || 0, secs(st.slice_qc)], ["序列检查", st.serial_qc || 0, secs(st.serial_qc)],
-                                                      ["汇总 · 分级", st.aggregate || 0, secs(st.aggregate)], ["落库", st.persist || 0, secs(st.persist)]], "l")}</div>`
-          + `<div class="box"><h4>检查项<small>${D.checks.length} 项</small></h4><p class="note">切片级 ${D.checks.filter((c) => c.level === "slice").length} 项：${esc(D.checks.filter((c) => c.level === "slice").map((c) => c.zh).join("、"))}<br>
-             序列级 ${D.checks.filter((c) => c.level !== "slice").length} 项：${esc(D.checks.filter((c) => c.level !== "slice").map((c) => c.zh).join("、"))}</p></div>`;
-      } else {
-        main = `<div class="box"><h4>最近的运行</h4><table class="tb"><tr><th>#</th><th>数据集</th><th>可用</th><th>问题</th><th>用时</th><th>完成</th></tr>${D.runs.map((r) =>
-          `<tr><td class="m">${r.run_id}</td><td>${esc(r.dataset_id)}</td><td class="m">${pct(r.retention)}</td><td class="m">${num(r.n_findings)}</td><td class="m">${secs(r.wall_s)}</td><td class="m">${when(r.finished_at)}</td></tr>`).join("")}</table></div>`;
-      }
-      return top + main + `<div class="acts"><button type="button" class="p" data-go="issues">▣ 查看问题图片 →</button>${CAN ? `<button type="button" data-act="rerun">↻ 重新清洗</button>` : `<span aria-hidden="true"></span>`}</div><div id="cl-msg"></div>`
-        + link("/overview", "打开总览，看每一步的结果");
+    clean() {
+      const top = head("", "数据清洗", `${D.checks.length} 项检查`);
+      if (!D.datasets.length) return top + `<p class="empty">这个账号能看的项目里还没有数据集，先在「数据采集」里注册一个。</p>`;
+      if (!D.datasets.some((x) => x.dataset_id === selDs)) selDs = D.datasets[0].dataset_id;
+      const sel = `<select id="cl-ds" aria-label="数据集">${D.datasets.map((x) => `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>`;
+      // 清洗设置：数据集 + block 范围 + 检查项（全不选 = 全部）
+      const cfg = CAN ? `<div class="box form"><h4>清洗设置</h4>
+          <label>数据集</label>${sel}
+          <label>block 范围 <small>留空 = 全部；填 block id，逗号分隔</small></label><input id="cl-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
+          <label>检查项 <small>全不选 = 全部</small> · <a href="#" data-chk="1">全选</a> · <a href="#" data-chk="0">清空</a></label>
+          <div class="chks">${D.checks.map((c) => `<label class="${c.implemented === false ? "stub" : ""}"><input type="checkbox" name="cl-chk" value="${esc(c.name)}"><code>${esc(c.name)}</code><span>${esc(c.zh)}</span><em>${c.level === "slice" ? "切片" : "序列"}${c.implemented === false ? " · 未实现" : ""}</em></label>`).join("")}</div>
+          <div class="acts one"><button type="button" class="p" data-act="run-cl">运行清洗 →</button></div><div id="cl-msg"></div></div>` : `<div class="box form"><label>数据集</label>${sel}</div>`;
+      // 清洗记录：所选数据集的每一次运行
+      const rs = D.runs.filter((r) => r.dataset_id === selDs);
+      const grades = (g) => Object.entries(g || {}).sort().map(([k, n]) => `${esc(k)}×${n}`).join(" ") || "–";
+      const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small></h4>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
+          `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">${r.run_id}</a>` : r.run_id}</td><td class="m">${num(r.n_sections)}</td><td class="m">${pct(r.retention)}</td><td class="m">${grades(r.grades)}</td><td class="m">${num(r.n_findings)}</td><td class="m">${secs(r.wall_s)}</td><td class="m">${when(r.finished_at)}</td></tr>`).join("")}</table>`
+          : `<p class="note">这个数据集还没清洗过。</p>`}</div>`;
+      return top + cfg + rec + `<div class="acts one"><button type="button" data-go="issues">▣ 查看问题图片 →</button></div>` + link("/pipeline", "打开完整的「运行」页");
     },
     issues() {
       const shots = D.examples.flatMap((e) => e.shots.map((s) => ({ ...s, zh: e.zh })));
@@ -387,10 +383,9 @@
             : `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="w" colspan="2"><span class="st">${esc(c.reason || "不能做")}</span></td></tr>`; }).join("")}</table></div>`
       + link("/training", "去生成数据包");
   }
-  let cleanTab = 0, selDs = null;
+  let selDs = null;
   function render(id) {
-    if (id !== "clean") cleanTab = 0;
-    body.innerHTML = id === "clean" ? R.clean(cleanTab) : R[id]();
+    body.innerHTML = R[id]();
     body.scrollTop = 0;
   }
 
@@ -404,8 +399,8 @@
   }
   const say = (id, txt, err) => { const el = $(id); if (el) el.innerHTML = `<div class="res ${err ? "err" : ""}">${esc(txt)}</div>`; };
   body.addEventListener("click", async (e) => {
-    const tab = e.target.closest("[data-tab]");
-    if (tab) { cleanTab = +tab.dataset.tab; render("clean"); return; }
+    const ck = e.target.closest("[data-chk]");
+    if (ck) { e.preventDefault(); body.querySelectorAll("input[name=cl-chk]").forEach((c) => { c.checked = ck.dataset.chk === "1"; }); return; }
     const row = e.target.closest("[data-ds]");
     if (row) { selDs = row.dataset.ds; render("dataset"); return; }
     const go = e.target.closest("[data-go]");
@@ -437,10 +432,15 @@
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(r.status === 403 ? "需要审核员权限" : typeof d.detail === "string" ? d.detail : `读不到这个卷（${r.status}）`);
         say("cw-res", `大小 ${d.size_xyz.join(" × ")}（x × y × z）\n分辨率 ${d.resolution_nm.join(" × ")} nm · ${d.encoding}${d.lossy ? "（有损）" : ""}\n块 ${d.chunk_xyz.join(" × ")} · ${d.dtype} · 共 ${d.n_mips} 级 mip`);
-      } else if (act === "rerun" || act === "run-ds") {
-        const ds = act === "run-ds" ? selDs : D.latest.dataset_id;
-        const d = await post("/api/v1/qc/runs", { dataset_id: ds });
-        say(act === "run-ds" ? "ds-msg" : "cl-msg", `运行 #${d.run_id} 已开始（${ds}），流程线上会有流光，跑完数字自动更新。`);
+      } else if (act === "run-cl" || act === "run-ds") {
+        const ds = selDs, bd = { dataset_id: ds };
+        if (act === "run-cl") {
+          const blocks = $("cl-blocks").value.split(",").map((x) => x.trim()).filter(Boolean);
+          const chks = [...body.querySelectorAll("input[name=cl-chk]:checked")].map((c) => c.value);
+          if (blocks.length) bd.block_ids = blocks; if (chks.length) bd.config = { checks_enabled: chks };
+        }
+        const d = await post("/api/v1/qc/runs", bd);
+        say(act === "run-cl" ? "cl-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", `运行 #${d.run_id} 已开始（${ds}），流程线上会有流光，跑完数字自动更新。`);
         poll();
       } else if (act === "pack") {
         const cells = ["slice", "segment", "patch"].filter((lv) => rawN(lv)).map((lv) => ["raw", lv]);
@@ -453,6 +453,7 @@
   });
   body.addEventListener("change", (e) => {
     if (e.target.id === "ds-sel") { selDs = e.target.value; render("dataset"); return; }
+    if (e.target.id === "cl-ds") { selDs = e.target.value; render("clean"); return; }
     if (e.target.id === "cw-preset") { const p = D.crawl.presets[+e.target.value];
       $("cw-url").value = p.url; $("cw-mip").value = p.mip; $("cw-mask").value = p.mask_url || ""; $("cw-seg").value = p.seg_url || "";
       $("cw-sp").value = p.species || ""; $("cw-br").value = p.brain_region || ""; $("cw-segmip").value = p.seg_mip ?? 0; }
