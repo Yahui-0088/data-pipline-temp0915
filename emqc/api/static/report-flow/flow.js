@@ -160,22 +160,21 @@
     // 交付：右上角 API 文档（点开 = 数据交付操作台），下面训练导出、推理流
     const api = add("div", "n apidoc", DX, 300, `<i class="holes" aria-hidden="true"></i><b>API 文档</b><code>POST /api/v1/exports</code><code>POST /api/v1/streams</code><code>GET&nbsp; /api/v1/packs</code>`, nodeAttrs("delivery", "API 文档"));
     const A2 = box(api);
-    const T = node("export", DX, 560, 240, "训练数据交付", "teal", "训练数据交付");
-    path([[DX, A2.b + 6], [DX, T.t - 4]], { r: 0, stage: 7 });
-    const nOpen = D.streams.filter((x) => x.status === "open").length;
-    const R = node("stream", DX, 820, 240, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
+    const T = node("export", DX, 560, 240, "数据交付", "teal", "数据交付");
+    path([[DX, A2.b + 6], [DX, T.t - 4]], { r: 0 });
     path([[tip + 2, bm], [T.l - 6, bm]], { r: 0, stage: 6 });
-    path([[tip + 2, bm], [1552, bm], [1552, 820], [R.l - 6, 820]], { r: 30, stage: 6 }); label(DX, 760, "逐块读取 · 不落地", "top");
-    add("div", "factory", DX, 128, `Patch Factory Backup<span>运行 ${num(D.n_runs)} 次 · 检查 ${D.checks.length} 项 · API 文档</span>`, nodeAttrs("factory", "Patch Factory Backup"));
-    path([[DX, 156], [DX, A2.t - 4]], { r: 0, c: "#9a9da6", m: "ahw" });
     makeComets();
     if (openId) mark(openId);
     showLive();
   }
 
   // ------------------------------------------------------------------ 流光：按数据流的先后一段接一段走到底
-  let comets = [], playing = false, raf = 0, t0 = 0, introLeft = 0;   // 打开页面不放流光，只在清洗运行时放
-  const SEG_MS = 900, N_STAGE = 8, GAP = 2;      // 一段 0.9 s，走完 8 段停一下再来
+  let comets = [], playing = false, raf = 0, t0 = 0, stopAt = 0;   // 打开页面不放流光，只在清洗运行时放
+  // 清洗是从数据集读切片开始的：流光从第 1 段（数据集 → 数据清洗）起步，一段 0.9 s，走到最后一段（→ 数据交付）停一下再来
+  const SEG_MS = 900, S0 = 1, N_STAGE = 7, GAP = 2, END = N_STAGE + 0.15;
+  const cycT = (now) => S0 + ((now - t0) / SEG_MS) % (N_STAGE - S0 + GAP);
+  // 跑完后流光还要多久走完这一轮（进度条按这个时间补满，两个一起结束）
+  const cometRemain = (now) => { if (!playing || !t0) return 0; const T = cycT(now); return T < END ? (END - T) * SEG_MS : 0; };
   function makeComets() {
     comets = FLOWS.map(({ p, c, stage }) => {
       const q = p.cloneNode(); q.removeAttribute("marker-end"); q.removeAttribute("stroke-dasharray");
@@ -187,17 +186,16 @@
   }
   function frame(now) {
     if (!t0) t0 = now;
-    const T = ((now - t0) / SEG_MS) % (N_STAGE + GAP);
+    const T = cycT(now);
     for (const c of comets) {
       const u = T - c.stage;
-      c.q.style.opacity = u < 0 || u > 1.15 ? 0 : 1;
+      c.q.style.opacity = c.stage < S0 || u < 0 || u > 1.15 ? 0 : 1;
       c.q.setAttribute("stroke-dashoffset", 46 - Math.max(0, Math.min(1.15, u)) * (c.L + 46));
     }
-    if ((now - t0) / SEG_MS >= N_STAGE + GAP) { t0 = now; if (introLeft > 0) introLeft--; }
-    if (!active.length && introLeft <= 0) { playing = false; for (const c of comets) c.q.style.opacity = 0; return; }
+    if (!active.length && stopAt && now >= stopAt) { playing = false; stopAt = 0; for (const c of comets) c.q.style.opacity = 0; return; }
     raf = requestAnimationFrame(frame);
   }
-  function play() { if (reduce || playing) return; playing = true; t0 = 0; raf = requestAnimationFrame(frame); }
+  function play() { if (reduce || playing) return; playing = true; stopAt = 0; t0 = 0; raf = requestAnimationFrame(frame); }
 
   // ------------------------------------------------------------------ 视图：按视口等比缩放；画布模式下再叠一层用户的缩放 / 平移
   let V = { s: 1, x: 0, y: 0 };
@@ -223,9 +221,9 @@
   addEventListener("resize", apply);
 
   // ------------------------------------------------------------------ 操作台
-  const ORDER = ["crawl", "dataset", "clean", "issues", "passed", "grade", "slice", "segment", "patch", "delivery", "export", "stream", "factory"];
+  const ORDER = ["crawl", "dataset", "clean", "issues", "passed", "grade", "slice", "segment", "patch", "delivery", "export"];
   const NAME = { crawl: "数据采集", dataset: "数据集", clean: "数据清洗", issues: "问题图片", passed: "合格", grade: "汇总 · 分级", slice: "2D 切片", segment: "3D 连续段",
-                 patch: "3D patch", pack: "数据包", delivery: "API 文档", export: "训练数据交付", stream: "推理流", factory: "Patch Factory Backup" };
+                 patch: "3D patch", pack: "数据包", delivery: "API 文档", export: "数据交付", stream: "推理流", factory: "Patch Factory Backup" };
   function mark(id) { host.querySelectorAll("[data-node]").forEach((x) => x.classList.toggle("on", x.dataset.node === id)); }
   function openNode(id) {
     if (!D || !ORDER.includes(id)) return;
@@ -410,7 +408,7 @@
             <div class="row3e"><div><label>每个子块张数</label><input id="dv-zchunk" type="number" min="1" value="16"></div><div><label>顺序</label><select id="dv-order"><option value="z">空间顺序</option><option value="grade">等级好的先</option></select></div><div><label>客户端名</label><input id="dv-client" placeholder="unet-infer" spellcheck="false"></div></div>
             <label class="chk"><input type="checkbox" id="dv-skip"> 跳过含未通过切片的子块</label>
             <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>`;
-      return head("", "训练数据交付")
+      return head("", "数据交付")
         + kps([["训练导出", `${num(d.n_shard_jobs)} 次`], ["导出切片", num(d.shard_sections), "g"], ["推理流", `${num(d.n_streams)} 个`]])
         + forms
         + `<div class="box"><h4>本次交付量</h4>${okRow(`训练分片 ${num(d.shard_sections)} 张 · ${mb(d.shard_bytes)}`)}${okRow(`数据包 ${num(d.n_packs)} 个 · ${num(d.pack_samples)} 个样本 · ${mb(d.pack_bytes)}`)}${okRow(`推理流 ${num(d.stream_chunks)} 块 · ${mb(d.stream_bytes)}`)}</div>`
@@ -668,17 +666,22 @@
   function pgFrame(now) {
     const bar = $("rf-run"), i = bar.querySelector(".pg i"); if (!i) return;
     let f;
-    if (PG.fin) f = 1;
+    if (PG.fin) f = PG.f0 + (1 - PG.f0) * Math.min(1, (now - PG.fin) / Math.max(1, PG.end - PG.fin));
     else { const u = (now - PG.t0) / PG.est; f = Math.max(PG.real, 0.95 * (1 - Math.exp(-2.2 * u))); }
     i.style.width = (Math.max(0.02, f) * 100).toFixed(2) + "%";
     bar.querySelector(".pg").setAttribute("aria-valuenow", Math.round(f * 100));
-    if (PG.fin && now - PG.fin > 700) { bar.hidden = true; bar.innerHTML = ""; PG.run = null; PG.fin = 0; return; }
+    if (!PG.fin) PG.cur = f;
+    if (PG.fin && now >= PG.end + 80) { bar.hidden = true; bar.innerHTML = ""; PG.run = null; PG.fin = 0; return; }
     PG.raf = requestAnimationFrame(pgFrame);
   }
   function showLive() {
     const bar = $("rf-run"), r = active[0];
     if (!r) {                                  // 跑完了：补满再淡出
-      if (PG.run && !PG.fin) PG.fin = performance.now();
+      if (PG.run && !PG.fin) {
+        const now = performance.now(), rem = cometRemain(now);
+        PG.fin = now; PG.f0 = PG.cur || 0; PG.end = now + Math.max(400, rem);
+        if (playing) stopAt = PG.end;           // 流光在同一时刻停
+      }
       return;
     }
     const ST = ["ingest", "slice_qc", "serial_qc", "aggregate", "persist"], st = (r.stage || "").split(" · ")[0];
@@ -702,7 +705,7 @@
         active = (await r.json()).runs || [];
         showLive();
         if (active.length) play();
-        if (was && !active.length) { introLeft = 1; await load(); }   // 跑完了：数字刷新，流光把这一轮走到底再停
+        if (was && !active.length) await load();   // 跑完了：数字刷新（流光和进度条在 showLive 里一起收尾）
       }
     } catch { /* 网络抖一下：下次再试 */ }
     pollT = setTimeout(poll, document.hidden ? 15000 : 4000);
