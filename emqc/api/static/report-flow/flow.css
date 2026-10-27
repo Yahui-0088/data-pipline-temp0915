@@ -385,3 +385,4 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tscroll .tb { min-width: 100%; font-size: 14.5px; }
 .rf.open .diamond { opacity: .32; filter: blur(1.2px); }
 .diamond:not([data-node]) { cursor: default; }
+.recsel { margin: 4px 0 12px; }

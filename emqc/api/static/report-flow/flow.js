@@ -283,7 +283,7 @@
       [0, .25, .5, .75, 1].map((f) => [f, f * 100 + "%"])) + `</div>`;
   }
   // 分成几块、点击切换：上面一排分开的小卡片，下面只显示选中的那一块（其余隐藏，输入内容保留）
-  const PT = { cw: 0, dv: 0 };
+  const PT = { cw: 0, dv: 0, ds: 0 };
   const paneTabs = (g, names) => `<div class="ptabs" role="tablist">${names.map((n, i) =>
     `<button type="button" role="tab" data-pt="${g}" data-i="${i}" aria-selected="${PT[g] === i}"><span class="stepn">${i + 1}</span>${n}</button>`).join("")}</div>`;
   const pane = (g, i) => `data-pane="${g}" data-i="${i}" ${PT[g] === i ? "" : "hidden"}`;
@@ -334,11 +334,13 @@
       const runs = (D.recent_runs || []).length ? `<div class="box"><h4>最近运行</h4><div class="tscroll"><table class="tb"><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th>quality</th><th>留存率</th><th>开始</th></tr>${D.recent_runs.map((r) =>
           `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">#${r.run_id}</a>` : "#" + r.run_id}</td><td>${esc(r.dataset_id)}</td><td><span class="st ${r.status === "done" ? "ok2" : r.status === "error" ? "bad" : ""}">${esc(r.status)}</span></td>
            <td class="m">${Object.entries(r.grades || {}).sort().map(([g, n]) => `${g}×${n}`).join(" ") || "–"}</td><td class="m">${r.quality == null ? "–" : r.quality.toFixed(3)}</td><td class="m">${r.retention == null ? "–" : Math.round(r.retention * 100) + "%"}</td><td class="m">${esc((r.started_at || "").replace("T", " "))}</td></tr>`).join("")}</table></div></div>` : "";
-      return top + stats + R.clean() + runs;
+      const [cfg, rec] = R.clean();
+      return top + paneTabs("ds", ["数据集详情", "清洗设置", "清洗记录"])
+        + `<div ${pane("ds", 0)}>${stats}${runs}</div><div ${pane("ds", 1)}>${cfg}</div><div ${pane("ds", 2)}>${rec}</div>`;
     },
     clean() {
       const top = "";
-      if (!D.datasets.length) return top + `<p class="empty">这个账号能看的项目里还没有数据集，先在「数据采集」里注册一个。</p>`;
+      if (!D.datasets.length) return ["", ""];
       if (!D.datasets.some((x) => x.dataset_id === selDs)) selDs = D.datasets[0].dataset_id;
       const sel = `<select id="cl-ds" aria-label="数据集">${D.datasets.map((x) => `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>`;
       // 清洗设置：数据集 + block 范围 + 检查项（全不选 = 全部）
@@ -351,10 +353,10 @@
       // 清洗记录：所选数据集的每一次运行
       const rs = D.runs.filter((r) => r.dataset_id === selDs);
       const grades = (g) => Object.entries(g || {}).sort().map(([k, n]) => `${esc(k)}×${n}`).join(" ") || "–";
-      const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small>${rs.length ? `<button type="button" class="dl" data-csv="1" aria-label="导出清洗记录 CSV"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</button>` : ""}</h4>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
+      const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small>${rs.length ? `<button type="button" class="dl" data-csv="1" aria-label="导出清洗记录 CSV"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</button>` : ""}</h4><div class="form recsel">${sel.replace('id="cl-ds"', 'id="cl-ds2"')}</div>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
           `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">${r.run_id}</a>` : r.run_id}</td><td class="m">${num(r.n_sections)}</td><td class="m">${pct(r.retention)}</td><td class="m">${grades(r.grades)}</td><td class="m">${num(r.n_findings)}</td><td class="m">${secs(r.wall_s)}</td><td class="m">${when(r.finished_at)}</td></tr>`).join("")}</table>`
           : `<p class="note">这个数据集还没清洗过。</p>`}</div>`;
-      return cfg + rec;
+      return [cfg, rec];
     },
     issues() {
       const A = D.albums || [];
@@ -617,7 +619,7 @@
   body.addEventListener("pointerleave", () => body.querySelectorAll(".dsc .tip").forEach((x) => { x.hidden = true; }));
   body.addEventListener("change", (e) => {
     if (e.target.id === "ds-sel") { selDs = e.target.value; render("dataset"); return; }
-    if (e.target.id === "cl-ds") { selDs = e.target.value; render("dataset"); return; }
+    if (e.target.id === "cl-ds" || e.target.id === "cl-ds2") { selDs = e.target.value; render("dataset"); return; }
     if (e.target.id === "cw-preset") { const p = D.crawl.presets[+e.target.value];
       $("cw-url").value = p.url; $("cw-mip").value = p.mip; $("cw-mask").value = p.mask_url || ""; $("cw-seg").value = p.seg_url || "";
       $("cw-sp").value = p.species || ""; $("cw-br").value = p.brain_region || ""; $("cw-segmip").value = p.seg_mip ?? 0; }
