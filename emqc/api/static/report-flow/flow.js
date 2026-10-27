@@ -161,7 +161,7 @@
   }
 
   // ------------------------------------------------------------------ 流光：按数据流的先后一段接一段走到底
-  let comets = [], playing = false, raf = 0, t0 = 0, introLeft = 1;
+  let comets = [], playing = false, raf = 0, t0 = 0, introLeft = 0;   // 打开页面不放流光，只在清洗运行时放
   const SEG_MS = 900, N_STAGE = 9, GAP = 2;      // 一段 0.9 s，走完 9 段停一下再来
   function makeComets() {
     comets = FLOWS.map(({ p, c, stage }) => {
@@ -600,5 +600,5 @@
     }
   }
   apply();
-  load().then(() => { play(); poll(); });
+  load().then(() => poll());
 })();
