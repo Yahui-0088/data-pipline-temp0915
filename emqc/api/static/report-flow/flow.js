@@ -158,9 +158,9 @@
     br.setAttribute("class", "brace"); svg.append(br);
     const tip = bx + 2 * bw;
     // 交付：右上角 API 文档（点开 = 数据交付操作台），下面训练导出、推理流
-    const api = add("div", "n apidoc", DX, 300, `<i class="holes" aria-hidden="true"></i><b>API 文档</b><code>POST /api/v1/exports</code><code>POST /api/v1/streams</code><code>GET&nbsp; /api/v1/packs</code>`, nodeAttrs("delivery", "数据交付 · API 文档"));
+    const api = add("div", "n apidoc", DX, 300, `<i class="holes" aria-hidden="true"></i><b>API 文档</b><code>POST /api/v1/exports</code><code>POST /api/v1/streams</code><code>GET&nbsp; /api/v1/packs</code>`, nodeAttrs("delivery", "API 文档"));
     const A2 = box(api);
-    const T = node("export", DX, 560, 240, `训练导出<small>${num(dl.n_shard_jobs)} 次 · ${num(dl.shard_sections)} 张 · ${mb(dl.shard_bytes)}</small>`, "teal", "训练导出");
+    const T = node("export", DX, 560, 240, "训练数据交付", "teal", "训练数据交付");
     path([[DX, A2.b + 6], [DX, T.t - 4]], { r: 0, stage: 7 });
     const nOpen = D.streams.filter((x) => x.status === "open").length;
     const R = node("stream", DX, 820, 240, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
@@ -225,7 +225,7 @@
   // ------------------------------------------------------------------ 操作台
   const ORDER = ["crawl", "dataset", "clean", "issues", "passed", "grade", "slice", "segment", "patch", "delivery", "export", "stream", "factory"];
   const NAME = { crawl: "数据采集", dataset: "数据集", clean: "数据清洗", issues: "问题图片", passed: "合格", grade: "汇总 · 分级", slice: "2D 切片", segment: "3D 连续段",
-                 patch: "3D patch", pack: "数据包", delivery: "数据交付", export: "训练导出", stream: "推理流", factory: "Patch Factory Backup" };
+                 patch: "3D patch", pack: "数据包", delivery: "API 文档", export: "训练数据交付", stream: "推理流", factory: "Patch Factory Backup" };
   function mark(id) { host.querySelectorAll("[data-node]").forEach((x) => x.classList.toggle("on", x.dataset.node === id)); }
   function openNode(id) {
     if (!D || !ORDER.includes(id)) return;
@@ -388,8 +388,13 @@
         + `<div class="box"><h4>最近生成的数据包<small>横轴：大小 · 右边：大小 · 样本数</small></h4>${packs.length ? jobChart(packs, "个样本") : "<p class='note'>还没有生成过数据包。</p>"}</div>`
         + `<div id="pk-msg"></div>`;
     },
-    delivery() {
-      const d = D.delivery;
+    delivery() {     // API 文档：平台自带的接口文档页（/docs）直接嵌在操作台里
+      if (!CAN) return head("", "API 文档") + `<p class="empty">API 文档需要审核员或管理员账号。</p>`;
+      return head("", "API 文档").replace("</h3>", `</h3><a class="dl hd" href="/docs" target="_blank" rel="noopener">新窗口打开 ↗</a>`)
+        + `<iframe class="apiframe" src="/docs" title="API 文档"></iframe>`;
+    },
+    export() {
+      const d = D.delivery, xs = D.exports.filter((x) => x.kind === "shards");
       if (!D.datasets.some((x) => x.dataset_id === selDs) && D.datasets.length) selDs = D.datasets[0].dataset_id;
       const opts = (withGrade) => D.datasets.map((x) => `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)} · ${num(x.n_blocks)} blocks${withGrade && x.grade ? " · " + esc(x.grade) : ""}</option>`).join("");
       const hint = (lt, ht) => `<label class="hint"><span class="lt">${lt}</span><span class="ht">${ht}</span></label>`;
@@ -405,17 +410,11 @@
             <div class="row3e"><div><label>每个子块张数</label><input id="dv-zchunk" type="number" min="1" value="16"></div><div><label>顺序</label><select id="dv-order"><option value="z">空间顺序</option><option value="grade">等级好的先</option></select></div><div><label>客户端名</label><input id="dv-client" placeholder="unet-infer" spellcheck="false"></div></div>
             <label class="chk"><input type="checkbox" id="dv-skip"> 跳过含未通过切片的子块</label>
             <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>`;
-      return head("", "数据交付")
+      return head("", "训练数据交付")
         + kps([["训练导出", `${num(d.n_shard_jobs)} 次`], ["导出切片", num(d.shard_sections), "g"], ["推理流", `${num(d.n_streams)} 个`]])
         + forms
-        + `<div class="box"><h4>本次交付量</h4>${okRow(`训练分片 ${num(d.shard_sections)} 张 · ${mb(d.shard_bytes)}`)}${okRow(`数据包 ${num(d.n_packs)} 个 · ${num(d.pack_samples)} 个样本 · ${mb(d.pack_bytes)}`)}${okRow(`推理流 ${num(d.stream_chunks)} 块 · ${mb(d.stream_bytes)}`)}</div>`;
-    },
-    export() {
-      const xs = D.exports.filter((x) => x.kind === "shards");
-      return head("数据交付 / <b>训练导出</b>", "训练导出", `${num(D.delivery.n_shard_jobs)} 次`)
-        + kps([["切片", num(D.delivery.shard_sections), "g"], ["大小", mb(D.delivery.shard_bytes)]])
-        + `<div class="box"><h4>最近的导出<small>横轴：大小 · 右边：大小 · 切片数</small></h4>${xs.length ? jobChart(xs, "张切片") : "<p class='note'>还没有导出过。</p>"}</div>`
-        + link("/delivery", "去导出");
+        + `<div class="box"><h4>本次交付量</h4>${okRow(`训练分片 ${num(d.shard_sections)} 张 · ${mb(d.shard_bytes)}`)}${okRow(`数据包 ${num(d.n_packs)} 个 · ${num(d.pack_samples)} 个样本 · ${mb(d.pack_bytes)}`)}${okRow(`推理流 ${num(d.stream_chunks)} 块 · ${mb(d.stream_bytes)}`)}</div>`
+        + `<div class="box"><h4>最近的导出</h4>${xs.length ? jobChart(xs, "张切片") : "<p class='note'>还没有导出过。</p>"}</div>`;
     },
     stream() {
       return head("数据交付 / <b>推理流</b>", "推理流", `${num(D.delivery.n_streams)} 个`, "推理侧按块拉数据：每块读完确认一次，数据不在本地生成副本。")

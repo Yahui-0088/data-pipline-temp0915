@@ -370,3 +370,7 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .n.apidoc[data-node]:hover { box-shadow: 0 14px 30px rgba(0,0,0,.55), 0 0 22px rgba(255,255,255,.25); }
 .rf.open .n.apidoc.on { box-shadow: 0 30px 80px rgba(0,0,0,.75), 0 0 40px rgba(255,255,255,.25); }
 .rf.open .holo.pk { opacity: .32; filter: blur(1.2px); }
+
+/* API 文档：/docs 嵌在操作台里，占满剩下的高度 */
+.apiframe { display: block; width: 100%; height: calc(100vh - 230px); min-height: 420px; margin-top: 20px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: #fff; }
+.ph a.dl.hd { text-decoration: none; }
