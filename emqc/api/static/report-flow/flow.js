@@ -395,14 +395,13 @@
   };
   function levelPanel(lv) {
     const cells = cellsOf(lv), ready = cells.filter((c) => c.ready);
-    return head(`数据包 / <b>${LEVEL_ZH[lv]}</b>`, LEVEL_ZH[lv], D.plan ? esc(D.plan.dataset_id) : "",
-      { slice: "每张合格切片裁成所在 tile 大小的 2D 图（PNG + 同尺寸标签）。", segment: "块里连续合格的切片段，切成 (n, H, W) 的 3D 数组。", patch: "固定大小的 3D 小体块，带采样与验收规则。" }[lv])
-      + kps([["能做的用途", `${ready.length} / ${cells.length}`], ["原图样本", num(rawN(lv))], ["原图大小", mb((cells.find((c) => c.task === "raw" && c.ready) || {}).est_bytes)]])
+    return head("", LEVEL_ZH[lv])
+      + kps([["能做的用途", `${ready.length} / ${cells.length}`], ["原图样本", num(rawN(lv))], ["原图大小", mb((cells.find((c) => c.task === "raw" && c.ready) || {}).est_bytes)]]).replace('class="kps"', 'class="kps mini"')
       + `<div class="box"><h4>每种用途</h4><table class="tb"><tr><th>用途</th><th>样本</th><th>大小</th></tr>${cells.map((c) => {
           const t = (D.plan.tasks || []).find((x) => x.task === c.task);
           return c.ready ? `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="m">${num(c.n)}</td><td class="m">${mb(c.est_bytes)}</td></tr>`
             : `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="w" colspan="2"><span class="st">${esc(c.reason || "不能做")}</span></td></tr>`; }).join("")}</table></div>`
-      + link("/training", "去生成数据包");
+      + (CAN && ready.length ? `<div class="acts one"><button type="button" class="p" data-act="pack-lv" data-lv="${lv}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出 ${LEVEL_ZH[lv]}数据包</button></div><div id="pk-msg"></div>` : "");
   }
   let selDs = null;
   function render(id) {
@@ -522,13 +521,17 @@
         closePanel();   // 只留左下角的运行条（带进度），不再另弹提示
         active = [{ run_id: d.run_id, dataset_id: ds, stage: "", n_blocks: 0, n_blocks_done: 0 }]; showLive(); play();
         poll();
+      } else if (act === "pack-lv") {     // 导出这一种形态：所有能做的用途一起生成一个数据包
+        const lv = b.dataset.lv, cells = cellsOf(lv).filter((c) => c.ready).map((c) => [c.task, lv]);
+        const d = await post("/api/v1/packs", { dataset_id: D.plan.dataset_id, cells });
+        done(`${LEVEL_ZH[lv]}数据包导出已开始 · 任务 #${d.job_id ?? d.id}`);
       } else if (act === "pack") {
         const cells = ["slice", "segment", "patch"].filter((lv) => rawN(lv)).map((lv) => ["raw", lv]);
         const d = await post("/api/v1/packs", { dataset_id: D.plan.dataset_id, cells });
         done(`数据包生成已开始 · 任务 #${d.job_id ?? d.id}`);
       }
     } catch (err) {
-      say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" ? "pk-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
+      say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" || act === "pack-lv" ? "pk-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
     } finally { b.disabled = false; }
   });
   body.addEventListener("pointermove", (e) => {
