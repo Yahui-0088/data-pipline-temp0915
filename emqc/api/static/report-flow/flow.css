@@ -369,3 +369,4 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .n.apidoc code { display: block; align-self: stretch; font: 11.5px "JetBrains Mono", monospace; color: #3d4a6a; line-height: 21px; border-bottom: 1px solid rgba(60,90,160,.2); }
 .n.apidoc[data-node]:hover { box-shadow: 0 14px 30px rgba(0,0,0,.55), 0 0 22px rgba(255,255,255,.25); }
 .rf.open .n.apidoc.on { box-shadow: 0 30px 80px rgba(0,0,0,.75), 0 0 40px rgba(255,255,255,.25); }
+.rf.open .holo.pk { opacity: .32; filter: blur(1.2px); }

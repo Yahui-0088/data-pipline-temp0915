@@ -134,9 +134,9 @@
     const S = node("grade", 800, 560, 200, `汇总 · 分级<small>${L ? gradeTxt(L.grades) : "–"}</small>`, "dark", "汇总分级");
     path([[G.r + 2, 820], [640, 820], [640, 560], [S.l - 6, 560]], { stage: 3 });
     const FX = 1090, DX = 1720;
-    // 数据包：三种形态各一张图（2D 切片叠 / 3D 连续段 / 3D patch），点哪张都打开「训练数据包」操作台
+    // 数据包：三种形态各一张图（2D 切片叠 / 3D 连续段 / 3D patch），只是示意，不能点
     // 三张图的「主体」（那一叠切片）一样宽：按每张图里主体占的比例反推整张图的宽度；主体左边对齐到同一条竖线
-    const BODY = 176, L0 = 1222;
+    const BODY = 176, L0 = 1262;
     const PK = { slice: ["pack_slice.png", 428 / 520, 5 / 520, 514 / 520], segment: ["pack_segment.png", 330 / 520, 12 / 520, 441 / 520], patch: ["pack_patch.png", 394 / 600, 0, 486 / 600] };
     for (const [lv, y] of [["slice", 300], ["segment", 560], ["patch", 820]]) {
       path(y === 560 ? [[S.r + 2, 560], [FX - 106, 560]] : [[S.r + 2, 560], [945, 560], [945, y], [FX - 106, y]], { stage: 4 });
@@ -146,14 +146,13 @@
       const [src, ratio, f0, fw] = PK[lv], w = BODY / fw, h = w * ratio, left = L0 - w * f0;
       const im = document.createElement("img");
       im.src = "/static/report-flow/" + src; im.alt = ""; im.className = "holo pk"; im.draggable = false;
-      for (const [a, v] of Object.entries(nodeAttrs("pack", "数据包"))) im.setAttribute(a, v);
       Object.assign(im.style, { left: left + "px", top: y - h / 2 + "px", width: w + "px", height: h + "px" });
       host.append(im);
       path([[FX + 102, y], [L0 - 4, y]], { r: 0, stage: 5 });
     }
     label(L0 + BODY / 2, 170, "数据包 · train / val / test", "top");
     // 大括号把三种数据包括起来，尖端 → 训练导出 / 推理流
-    const bx = 1446, bw = 14, bt = 300, bb = 820, bm = 560;   // 和左边那条分叉竖线一样高：从第一行到第三行
+    const bx = 1484, bw = 14, bt = 300, bb = 820, bm = 560;   // 和左边那条分叉竖线一样高：从第一行到第三行
     const br = document.createElementNS(NS, "path");
     br.setAttribute("d", `M ${bx} ${bt} Q ${bx + bw} ${bt} ${bx + bw} ${bt + bw} L ${bx + bw} ${bm - bw} Q ${bx + bw} ${bm} ${bx + 2 * bw} ${bm} Q ${bx + bw} ${bm} ${bx + bw} ${bm + bw} L ${bx + bw} ${bb - bw} Q ${bx + bw} ${bb} ${bx} ${bb}`);
     br.setAttribute("class", "brace"); svg.append(br);
@@ -166,7 +165,7 @@
     const nOpen = D.streams.filter((x) => x.status === "open").length;
     const R = node("stream", DX, 820, 240, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
     path([[tip + 2, bm], [T.l - 6, bm]], { r: 0, stage: 6 });
-    path([[tip + 2, bm], [1530, bm], [1530, 820], [R.l - 6, 820]], { r: 30, stage: 6 }); label(DX, 760, "逐块读取 · 不落地", "top");
+    path([[tip + 2, bm], [1552, bm], [1552, 820], [R.l - 6, 820]], { r: 30, stage: 6 }); label(DX, 760, "逐块读取 · 不落地", "top");
     add("div", "factory", DX, 128, `Patch Factory Backup<span>运行 ${num(D.n_runs)} 次 · 检查 ${D.checks.length} 项 · API 文档</span>`, nodeAttrs("factory", "Patch Factory Backup"));
     path([[DX, 156], [DX, A2.t - 4]], { r: 0, c: "#9a9da6", m: "ahw" });
     makeComets();
@@ -224,7 +223,7 @@
   addEventListener("resize", apply);
 
   // ------------------------------------------------------------------ 操作台
-  const ORDER = ["crawl", "dataset", "clean", "issues", "passed", "grade", "slice", "segment", "patch", "pack", "delivery", "export", "stream", "factory"];
+  const ORDER = ["crawl", "dataset", "clean", "issues", "passed", "grade", "slice", "segment", "patch", "delivery", "export", "stream", "factory"];
   const NAME = { crawl: "数据采集", dataset: "数据集", clean: "数据清洗", issues: "问题图片", passed: "合格", grade: "汇总 · 分级", slice: "2D 切片", segment: "3D 连续段",
                  patch: "3D patch", pack: "数据包", delivery: "数据交付", export: "训练导出", stream: "推理流", factory: "Patch Factory Backup" };
   function mark(id) { host.querySelectorAll("[data-node]").forEach((x) => x.classList.toggle("on", x.dataset.node === id)); }
