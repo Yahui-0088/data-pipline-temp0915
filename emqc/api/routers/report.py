@@ -279,10 +279,31 @@ def report_flow(request: Request, s: Session = Depends(get_session)):
             if len(shots) >= 40:
                 break
         albums.append({"type": t_, "zh": _ZH.get(t_, t_), "n": n_, "shots": shots})
+    # 数据集模块的汇总（和首页那排数字同一算法，只算这个账号能看的数据集）+ 最近 6 次运行
+    from collections import Counter
+
+    from emqc.db.models import ServeLog
+
+    dk = {"n_datasets": len(dss), "size": Counter(), "n_sections": 0, "n_blocks": 0, "passed": 0.0, "evaluated": 0.0, "grades": Counter()}
+    for d in dss:
+        dk["size"][d.size_class] += 1
+        dk["n_sections"] += d.size_z or 0
+        dk["n_blocks"] += len(d.blocks)
+        dk["grades"].update(b.latest_grade for b in d.blocks if b.latest_grade)
+        if d.latest_run_id:
+            m = {x.metric_name: x.metric_value for x in s.scalars(select(ETLMetric).where(ETLMetric.run_id == d.latest_run_id, ETLMetric.block_id.is_(None)))}
+            dk["passed"] += m.get("n_slices_passed") or 0
+            dk["evaluated"] += m.get("n_slices_input") or 0
+    ds_kpi = {"n_datasets": dk["n_datasets"], "small": dk["size"].get("small", 0), "large": dk["size"].get("large", 0), "n_sections": dk["n_sections"], "n_blocks": dk["n_blocks"],
+              "passed": int(dk["passed"]), "evaluated": int(dk["evaluated"]), "retention": (dk["passed"] / dk["evaluated"]) if dk["evaluated"] else None,
+              "grades": dict(sorted(dk["grades"].items())), "n_served": s.scalar(select(func.count()).select_from(ServeLog).where(ServeLog.dataset_id.in_(ids))) or 0}
+    recent_runs = [{"run_id": r.id, "dataset_id": r.dataset_id, "status": r.status, "grades": r.grade_counts_json or {}, "quality": r.quality_score, "retention": r.retention_rate,
+                    "started_at": r.started_at.isoformat(sep=" ", timespec="seconds") if r.started_at else None}
+                   for r in s.scalars(select(QCRun).where(QCRun.dataset_id.in_(ids)).order_by(QCRun.id.desc()).limit(6))]
     n_err = s.scalar(select(func.count()).select_from(QCRun).where(QCRun.dataset_id.in_(ids), QCRun.status == "error")) or 0
     return {
         "kpi": base["kpi"], "datasets": base["datasets"], "failures": base["failures"], "examples": base["examples"], "delivery": base["delivery"],
-        "latest": latest, "plan": plan, "checks": checks, "albums": albums,
+        "latest": latest, "plan": plan, "checks": checks, "albums": albums, "ds_kpi": ds_kpi, "recent_runs": recent_runs,
         "runs": [{"run_id": r["run_id"], "dataset_id": r["dataset_id"], "finished_at": r.get("finished_at"), "retention": r.get("retention"),
                   "n_findings": r.get("n_findings"), "wall_s": r.get("wall_s"), "n_sections": r.get("n_sections"), "grades": r.get("grades") or {}}
                  for r in sorted(runs_all, key=lambda r: r["run_id"], reverse=True)[:300]],

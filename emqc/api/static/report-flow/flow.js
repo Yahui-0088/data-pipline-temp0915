@@ -250,7 +250,7 @@
 
   // 小块 HTML
   const head = (crumb, title, tag, desc) => `${crumb ? `<div class="pc">${crumb}</div>` : ""}<div class="ph"><h3>${title}</h3>${tag ? `<span class="tag">${tag}</span>` : ""}</div>${desc ? `<p class="desc">${desc}</p>` : ""}`;
-  const kps = (items) => `<div class="kps">${items.map(([k, v, c]) => `<div>${k}<b class="${c || ""}">${v}</b></div>`).join("")}</div>`;
+  const kps = (items) => `<div class="kps">${items.map(([k, v, c, sub]) => `<div>${k}<b class="${c || ""}">${v}</b>${sub ? `<em>${sub}</em>` : ""}</div>`).join("")}</div>`;
   const bars = (rows, cls) => { const m = Math.max(1, ...rows.map((r) => r[1])); return rows.map(([k, v, txt]) => `<div class="cat">${esc(k)}<div class="t ${cls || ""}"><span style="width:${(v / m) * 100}%"></span></div><b>${txt ?? num(v)}</b></div>`).join(""); };
   const okRow = (txt, warn) => `<div class="ok ${warn ? "warn" : ""}"><i>${warn ? "!" : "✓"}</i>${txt}</div>`;
   const link = (href, txt) => (CAN ? `<a class="lk" href="${href}">${txt} ↗</a>` : "");
@@ -327,7 +327,14 @@
       const pick = CAN ? `<div class="box form"><h4>选择数据集</h4><select id="ds-sel" aria-label="数据集">${D.datasets.map((x) =>
             `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>
           <div class="acts one"><button type="button" class="p" data-act="run-ds">运行清洗 →</button></div><div id="ds-msg"></div></div>` : "";
-      return top + pick + dsChart();
+      const K = D.ds_kpi || {}, gtxt = Object.entries(K.grades || {}).map(([g, n]) => `${g}×${n}`).join(" ") || "–";
+      const stats = `<div class="kps k5">${[["数据集", num(K.n_datasets), "", `${num(K.small)} small · ${num(K.large)} large`], ["切片", num(K.n_sections), "", `${num(K.n_blocks)} 个 block`],
+          ["总留存率", pct(K.retention), "g", `${num(K.passed)} / ${num(K.evaluated)} tile-sections 通过`], ["block 等级", gtxt, "sm", ""], ["取数请求", num(K.n_served), "", "算法侧已取切片 / 子块次数"]]
+          .map(([k, v, c, sub]) => `<div>${k}<b class="${c}">${v}</b>${sub ? `<em>${sub}</em>` : ""}</div>`).join("")}</div>`;
+      const runs = (D.recent_runs || []).length ? `<div class="box"><h4>最近运行</h4><div class="tscroll"><table class="tb"><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th>quality</th><th>留存率</th><th>开始</th></tr>${D.recent_runs.map((r) =>
+          `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">#${r.run_id}</a>` : "#" + r.run_id}</td><td>${esc(r.dataset_id)}</td><td><span class="st ${r.status === "done" ? "ok2" : r.status === "error" ? "bad" : ""}">${esc(r.status)}</span></td>
+           <td class="m">${Object.entries(r.grades || {}).sort().map(([g, n]) => `${g}×${n}`).join(" ") || "–"}</td><td class="m">${r.quality == null ? "–" : r.quality.toFixed(3)}</td><td class="m">${r.retention == null ? "–" : Math.round(r.retention * 100) + "%"}</td><td class="m">${esc((r.started_at || "").replace("T", " "))}</td></tr>`).join("")}</table></div></div>` : "";
+      return top + stats + pick + runs;
     },
     clean() {
       const top = head("", "数据清洗", `${D.checks.length} 项检查`);
