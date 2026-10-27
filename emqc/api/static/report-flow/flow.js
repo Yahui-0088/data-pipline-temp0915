@@ -250,30 +250,30 @@
       const p = D.crawl.presets[0] || { url: "", mip: 0 };
       const jobs = D.crawl.jobs.length ? `<table class="tb"><tr><th>#</th><th>数据集</th><th>状态</th><th>进度</th><th>时间</th></tr>${D.crawl.jobs.map((j) =>
         `<tr><td class="m">${j.id}</td><td>${esc(j.dataset_id)}</td><td><span class="st ${j.status === "done" ? "ok2" : j.status === "error" ? "bad" : ""}">${esc(j.status)}</span></td><td class="m">${num(j.n_done)} / ${num(j.n_sections)}</td><td class="m">${when(j.at)}</td></tr>`).join("")}</table>`
-        : `<p class="note">还没有从公开数据采集过；现有的 ${num(D.datasets.length)} 个数据集都是本地登记的。</p>`;
+        : "";
       const top = head("", "数据采集与注册", `${D.crawl.presets.length} 个预设`)
         + kps([["已登记数据集", num(D.datasets.length)], ["采集任务", num(D.crawl.jobs.length)], ["公开数据预设", num(D.crawl.presets.length)]]);
-      if (!CAN) return top + `<div class="box"><h4>最近的采集任务</h4>${jobs}</div>`;
-      const step = (n, t, sub) => `<h4><span class="stepn">${n}</span>${t}<small>${sub}</small></h4>`;
+      const jobBox = jobs ? `<div class="box"><h4>最近的采集任务</h4>${jobs}</div>` : "";
+      if (!CAN) return top + jobBox;
+      const step = (n, t) => `<h4><span class="stepn">${n}</span>${t}</h4>`;
       return top
         // 1 · 卷信息：看分辨率、尺寸、编码，不下载体素
-        + `<div class="box form">${step(1, "URL", "卷信息，不下载体素")}
+        + `<div class="box form">${step(1, "URL")}
             <label>预设</label><select id="cw-preset">${D.crawl.presets.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join("")}</select>
             <div class="row2r"><div><label>卷 URL</label><input id="cw-url" value="${esc(p.url)}" spellcheck="false"></div><div><label>mip</label><input id="cw-mip" type="number" min="0" value="${p.mip}"></div></div>
             <div class="acts one"><button type="button" class="p" data-act="volume">查看</button></div><div id="cw-res"></div></div>`
         // 2 · ROI 预判：用组织类型图几秒判断这块值不值得爬
-        + `<div class="box form">${step(2, "ROI", "预判几秒，先别爬")}
-            <label>ROI <small>x0-x1, y0-y1, z0-z1，所选 mip 的体素单位</small></label><input id="cw-roi" value="260000-260512,210000-210512,2600-2632" spellcheck="false">
+        + `<div class="box form">${step(2, "ROI")}
+            <label>ROI</label><input id="cw-roi" value="260000-260512,210000-210512,2600-2632" spellcheck="false">
             <label>组织类型图 URL</label><input id="cw-mask" value="${esc(p.mask_url || "")}" spellcheck="false">
-            <div class="row2e"><div><label>neuropil 下限</label><input id="cw-minw" type="number" step="0.05" value="0.5"></div><div><label>fissure 上限</label><input id="cw-maxd" type="number" step="0.01" value="0.02"></div></div>
             <div class="acts one"><button type="button" class="p" data-act="precheck">预判</button></div><div id="cw-pre"></div></div>`
         // 3 · 注册 / 下载
-        + `<div class="box form">${step(3, "数据集注册", "注册不复制体素；下载落盘可断点续传")}
-            <div class="row2e"><div><label>dataset_id</label><input id="cw-dsid" placeholder="h01_roi_x260k" spellcheck="false"></div><div><label>分割卷 <small>同 ROI，可空</small></label><input id="cw-seg" value="${esc(p.seg_url || "")}" spellcheck="false"></div></div>
+        + `<div class="box form">${step(3, "数据集注册")}
+            <div class="row2e"><div><label>dataset_id</label><input id="cw-dsid" placeholder="h01_roi_x260k" spellcheck="false"></div><div><label>分割卷</label><input id="cw-seg" value="${esc(p.seg_url || "")}" spellcheck="false"></div></div>
             <div class="row3"><div><label>物种</label><input id="cw-sp" value="${esc(p.species || "")}"></div><div><label>脑区</label><input id="cw-br" value="${esc(p.brain_region || "")}"></div><div><label>分割 mip</label><input id="cw-segmip" type="number" min="0" value="${p.seg_mip ?? 0}"></div></div>
             <label class="chk"><input type="checkbox" id="cw-req"> 预判不合格则拒绝</label>
             <div class="acts"><button type="button" class="p" data-act="register">注册（不下载）</button><button type="button" data-act="fetch">下载落盘</button></div><div id="cw-reg"></div></div>`
-        + `<div class="box"><h4>最近的采集任务</h4>${jobs}</div>` + link("/crawl", "打开完整的「数据采集」页");
+        + jobBox + link("/crawl", "打开完整的「数据采集」页");
     },
     dataset() {
       const k = D.kpi;
@@ -416,7 +416,7 @@
       const cwBody = () => { const id = $("cw-dsid").value.trim(); if (!id) throw new Error("请填 dataset_id");
         return { dataset_id: id, url: $("cw-url").value.trim(), roi: cwRoi(), mip: +$("cw-mip").value || 0 }; };
       if (act === "precheck") {
-        const d = await post("/api/v1/crawl/precheck", { roi: cwRoi(), mask_url: $("cw-mask").value.trim(), min_wanted: +$("cw-minw").value, max_defect: +$("cw-maxd").value });
+        const d = await post("/api/v1/crawl/precheck", { roi: cwRoi(), mask_url: $("cw-mask").value.trim(), min_wanted: 0.5, max_defect: 0.02 });
         $("cw-pre").innerHTML = `<div class="res">${d.verdict === "ok" ? "✓ 值得爬" : "✕ 建议换一块"}\n组成：${Object.entries(d.composition || {}).map(([k, v]) => `${esc(k)} ${(v * 100).toFixed(1)}%`).join(" · ")}\nneuropil ${(d.wanted_frac * 100).toFixed(1)}% · fissure ${(d.defect_frac * 100).toFixed(2)}% · ${d.seconds}s${(d.reasons || []).length ? "\n" + d.reasons.map(esc).join("\n") : ""}</div>`;
       } else if (act === "register") {
         const bd = cwBody(); bd.species = $("cw-sp").value || null; bd.brain_region = $("cw-br").value || null; bd.require_precheck_ok = $("cw-req").checked;
