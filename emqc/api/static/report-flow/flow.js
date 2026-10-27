@@ -245,41 +245,31 @@
   const link = (href, txt) => (CAN ? `<a class="lk" href="${href}">${txt} ↗</a>` : "");
   const tabs = (names, sel) => `<div class="tabs" role="tablist">${names.map((n, i) => `<button type="button" role="tab" data-tab="${i}" aria-selected="${i === sel}">${n}</button>`).join("")}</div>`;
   const rateBox = (label, r) => `<div class="box"><div class="rate">${label}<b>${pct(r)}</b></div><div class="rbar"><span style="width:${(r || 0) * 100}%"></span></div></div>`;
-  // 导出 / 数据包任务：横向条形图，横轴 = 大小（MB，整齐的刻度）；条右边写大小和数量，悬停看状态和时间
+  // 横向条形图（HTML 画，字号不随面板缩放）：左边名字，中间条 + 竖向网格，右边数值；下面一行刻度。
+  // rows: [{name, frac(0..1), right, sub, tip, cls, ds, on}]；ticks: [[frac, text]]
+  function hbars(rows, ticks, cls) {
+    const grid = ticks.filter(([f]) => f > 0 && f < 1).map(([f]) => `<i style="left:${f * 100}%"></i>`).join("");
+    return `<div class="dsc hb ${cls || ""}">${rows.map((r) => `<div class="hr dsb ${r.on ? "on" : ""}" ${r.ds && CAN ? `data-ds="${esc(r.ds)}"` : ""} data-tip="${r.tip}">
+        <span class="nm" title="${esc(r.name)}">${esc(r.name)}</span>
+        <span class="trk">${grid}<b class="br${r.cls || ""}" style="width:${Math.max(r.frac > 0 ? 0.6 : 0, r.frac * 100)}%"></b></span>
+        <span class="vl">${r.right}${r.sub ? `<small> ${r.sub}</small>` : ""}</span></div>`).join("")}
+      <div class="hr ax"><span class="trk">${ticks.map(([f, s]) => `<em style="left:${f * 100}%">${s}</em>`).join("")}</span></div>
+      <div class="tip" hidden></div></div>`;
+  }
   function jobChart(xs, unit) {
-    const W = 520, L = 176, R = 418, row = 38, top = 10, H = top + xs.length * row + 34;
     const mbv = (x) => (x.n_bytes || 0) / 1048576, mx = Math.max(1, ...xs.map(mbv));
     const p10 = 10 ** Math.floor(Math.log10(mx / 4)), step = [1, 2, 5, 10].map((k) => k * p10).find((s) => mx / s <= 5) || 10 * p10;
-    const tmax = Math.ceil(mx / step) * step, X = (v) => L + (R - L) * (v / tmax);
-    const ticks = Array.from({ length: Math.round(tmax / step) + 1 }, (_, k) => k * step).map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 4}" y2="${top + xs.length * row}" class="gd"/>
-      <text x="${X(v)}" y="${top + xs.length * row + 20}" text-anchor="middle" class="ax">${v >= 1000 ? (v / 1024).toFixed(1) + " GB" : +v.toFixed(1) + (v ? " MB" : "")}</text>`).join("");
-    const bars = xs.map((x, i) => {
-      const y = top + i * row + row / 2, st = x.status === "done" ? "" : x.status === "error" || x.status === "aborted" ? " bad" : " run";
-      return `<g class="dsb" data-tip="#${x.id} · ${esc(x.dataset_id)}|${num(x.n_sections)} ${unit}|${mb(x.n_bytes)}|${esc(x.status)}|${when(x.at)}">
-        <rect x="0" y="${y - row / 2}" width="${W}" height="${row}" class="hit"/>
-        <text x="${L - 12}" y="${y + 4}" text-anchor="end" class="nm">#${x.id} ${esc(x.dataset_id)}</text>
-        <rect x="${L}" y="${y - 7}" width="${R - L}" height="14" rx="4" class="tr"/>
-        <rect x="${L}" y="${y - 7}" width="${Math.max(2, X(mbv(x)) - L)}" height="14" rx="4" class="br${st}"/>
-        <text x="${R + 10}" y="${y + 4}" class="vl">${mb(x.n_bytes)}<tspan class="gr"> · ${num(x.n_sections)}</tspan></text></g>`;
-    }).join("");
-    return `<div class="dsc jc"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="各次任务的大小">${ticks}${bars}</svg><div class="tip" hidden></div></div>`;
+    const tmax = Math.ceil(mx / step) * step, n = Math.round(tmax / step);
+    const ticks = Array.from({ length: n + 1 }, (_, k) => [k / n, k ? (k * step >= 1000 ? (k * step / 1024).toFixed(1) + " GB" : +(k * step).toFixed(1) + " MB") : "0"]);
+    return hbars(xs.map((x) => ({ name: `#${x.id} ${x.dataset_id}`, frac: mbv(x) / tmax, right: mb(x.n_bytes), sub: `· ${num(x.n_sections)}`,
+      cls: x.status === "done" ? "" : x.status === "error" || x.status === "aborted" ? " bad" : " run",
+      tip: `#${x.id} · ${esc(x.dataset_id)}|${num(x.n_sections)} ${unit}|${mb(x.n_bytes)}|${esc(x.status)}|${when(x.at)}` })), ticks, "jc");
   }
-  // 数据集可用比例：横向条形图 + 0–100% 坐标轴；点一根条 = 选中这个数据集；悬停看切片数 / 等级 / 最近一次清洗
+  // 数据集可用比例：0–100% 坐标轴；点一行 = 选中这个数据集；悬停看切片数 / 等级 / 最近一次清洗
   function dsChart() {
-    const ds = D.datasets, W = 520, L = 176, R = 446, row = 38, top = 10, H = top + ds.length * row + 34;
-    const X = (v) => L + (R - L) * Math.max(0, Math.min(1, v || 0));
-    const ticks = [0, .25, .5, .75, 1].map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 4}" y2="${top + ds.length * row}" class="gd"/>
-      <text x="${X(v)}" y="${top + ds.length * row + 20}" text-anchor="middle" class="ax">${v * 100}%</text>`).join("");
-    const bars = ds.map((x, i) => {
-      const y = top + i * row + row / 2, v = x.retention, on = x.dataset_id === selDs, w = Math.max(0, X(v) - L);
-      return `<g class="dsb ${on ? "on" : ""}" ${CAN ? `data-ds="${esc(x.dataset_id)}"` : ""} data-tip="${esc(x.dataset_id)}|${num(x.n_sections)}|${pct(v)}|${esc(x.grade || "–")}|${when(x.last_run)}">
-        <rect x="0" y="${y - row / 2}" width="${W}" height="${row}" class="hit"/>
-        <text x="${L - 12}" y="${y + 4}" text-anchor="end" class="nm">${esc(x.dataset_id)}</text>
-        <rect x="${L}" y="${y - 7}" width="${R - L}" height="14" rx="4" class="tr"/>
-        ${v == null ? "" : `<rect x="${L}" y="${y - 7}" width="${w}" height="14" rx="4" class="br"/>`}
-        <text x="${R + 10}" y="${y + 4}" class="vl">${v == null ? "未清洗" : pct(v)}<tspan class="gr"> ${esc(x.grade || "")}</tspan></text></g>`;
-    }).join("");
-    return `<div class="box dsc"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="各数据集可用比例">${ticks}${bars}</svg><div class="tip" hidden></div></div>`;
+    return `<div class="box hbx">` + hbars(D.datasets.map((x) => ({ name: x.dataset_id, frac: x.retention || 0, right: x.retention == null ? "未清洗" : pct(x.retention), sub: esc(x.grade || ""),
+      ds: x.dataset_id, on: x.dataset_id === selDs, tip: `${esc(x.dataset_id)}|${num(x.n_sections)}|${pct(x.retention)}|${esc(x.grade || "–")}|${when(x.last_run)}` })),
+      [0, .25, .5, .75, 1].map((f) => [f, f * 100 + "%"])) + `</div>`;
   }
   // 分成几块、点击切换：上面一排分开的小卡片，下面只显示选中的那一块（其余隐藏，输入内容保留）
   const PT = { cw: 0, dv: 0 };
@@ -325,7 +315,7 @@
       // 选择数据集 → 运行清洗；下面是每个数据集的清洗记录（点一行也能选中）
       const pick = CAN ? `<div class="box form"><h4>选择数据集</h4><select id="ds-sel" aria-label="数据集">${D.datasets.map((x) =>
             `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>
-          <div class="acts"><button type="button" class="p" data-act="run-ds">运行清洗 →</button><a href="/datasets/${encodeURIComponent(selDs)}">查看数据集 →</a></div><div id="ds-msg"></div></div>` : "";
+          <div class="acts one"><button type="button" class="p" data-act="run-ds">运行清洗 →</button></div><div id="ds-msg"></div></div>` : "";
       return top + pick + dsChart();
     },
     clean() {
@@ -382,7 +372,7 @@
       return head("", "训练数据包", P ? esc(P.dataset_id) : "")
         + kps([["能做的格子", num(ready.length)], ["已生成", num(D.delivery.n_packs)], ["样本", num(D.delivery.pack_samples)]])
         + (P && P.error ? `<div class="res err">${esc(P.error)}</div>` : `<div class="box"><h4>原图 · 三种形态${CAN && ready.length ? `<button type="button" class="dl" data-act="pack-all" aria-label="全部导出"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>全部导出</button>` : ""}</h4>${bars(["slice", "segment", "patch"].map((lv) => [LEVEL_ZH[lv], rawN(lv) || 0]), "l")}</div>`)
-        + `<div class="box"><h4>最近生成的数据包<small>横轴：大小 · 条右边：大小 · 样本数</small></h4>${packs.length ? jobChart(packs, "个样本") : "<p class='note'>还没有生成过数据包。</p>"}</div>`
+        + `<div class="box"><h4>最近生成的数据包<small>横轴：大小 · 右边：大小 · 样本数</small></h4>${packs.length ? jobChart(packs, "个样本") : "<p class='note'>还没有生成过数据包。</p>"}</div>`
         + `<div id="pk-msg"></div>`;
     },
     delivery() {
@@ -411,7 +401,7 @@
       const xs = D.exports.filter((x) => x.kind === "shards");
       return head("数据交付 / <b>训练导出</b>", "训练导出", `${num(D.delivery.n_shard_jobs)} 次`)
         + kps([["切片", num(D.delivery.shard_sections), "g"], ["大小", mb(D.delivery.shard_bytes)]])
-        + `<div class="box"><h4>最近的导出<small>横轴：大小 · 条右边：大小 · 切片数</small></h4>${xs.length ? jobChart(xs, "张切片") : "<p class='note'>还没有导出过。</p>"}</div>`
+        + `<div class="box"><h4>最近的导出<small>横轴：大小 · 右边：大小 · 切片数</small></h4>${xs.length ? jobChart(xs, "张切片") : "<p class='note'>还没有导出过。</p>"}</div>`
         + link("/delivery", "去导出");
     },
     stream() {

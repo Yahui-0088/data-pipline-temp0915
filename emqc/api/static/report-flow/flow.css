@@ -2,7 +2,7 @@
 :root {
   --bg: #0b0b0d; --line: #3a3d46; --card: #1b1d23; --text: #f2f2f2; --muted: #9a9da6;
   --green: #3fdf93; --green-d: #3fbf5a; --orange: #ff9a3c; --lav: #c9b8f0; --amber: #f0b44c; --teal: #2fd4c4;
-  --panel-w: clamp(420px, 33.333vw, 680px);
+  --panel-w: clamp(480px, 38vw, 720px);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 * { box-sizing: border-box; }
@@ -274,11 +274,11 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .dsc { position: relative; }
 .dsc svg { display: block; overflow: visible; }
 .dsc .gd { stroke: rgba(255,255,255,.08); stroke-width: 1; }
-.dsc .ax { fill: #8a8a8a; font: 11.5px "JetBrains Mono", monospace; }
-.dsc .nm { fill: #cfcfcf; font: 12.5px "JetBrains Mono", monospace; }
+.dsc .ax { fill: #8a8a8a; font: 13px "JetBrains Mono", monospace; }
+.dsc .nm { fill: #d8d8d8; font: 15px "JetBrains Mono", monospace; }
 .dsc .tr { fill: rgba(255,255,255,.05); }
 .dsc .br { fill: var(--green-d); }
-.dsc .vl { fill: #e5e5e5; font: 600 12.5px "JetBrains Mono", monospace; }
+.dsc .vl { fill: #f0f0f0; font: 600 15px "JetBrains Mono", monospace; }
 .dsc .vl .gr { fill: #8a8a8a; font-weight: 400; }
 .dsc .hit { fill: transparent; }
 .dsc .dsb[data-ds] { cursor: pointer; }
@@ -287,7 +287,7 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .dsc .dsb.on .hit { fill: rgba(201,184,240,.08); }
 .dsc .dsb.on .nm { fill: #fff; font-weight: 600; }
 .dsc .tip { position: absolute; z-index: 3; pointer-events: none; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 8px;
-  background: rgba(14,15,20,.96); border: 1px solid rgba(255,255,255,.14); font-size: 12.5px; color: #cfcfcf; white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+  background: rgba(14,15,20,.96); border: 1px solid rgba(255,255,255,.14); font-size: 14px; color: #cfcfcf; white-space: nowrap; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
 .dsc .tip b { color: #fff; font-weight: 600; }
 .dsc .tip[hidden] { display: none; }
 
@@ -333,3 +333,24 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .kps:not(.mini) b { font-size: clamp(16px, 5.6cqi, 30px); }
 .dsc .br.run { fill: var(--amber); } .dsc .br.bad { fill: #ff6b7d; }
 .jc .br { fill: #9d86e0; } .jc .dsb:hover .br { fill: #b9a7f0; }
+
+/* HTML 条形图：每行上面是名字（左）和数值（右），下面一根整宽的条；最下面一行刻度。字号固定，不随面板缩放 */
+.hb { display: grid; gap: 2px; }
+.hb .hr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "nm vl" "trk trk"; align-items: baseline; column-gap: 12px; row-gap: 7px; padding: 9px 10px; border-radius: 8px; }
+.hb .nm { grid-area: nm; font: 14.5px "JetBrains Mono", monospace; color: #d8d8d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb .vl { grid-area: vl; font: 600 14.5px "JetBrains Mono", monospace; color: #f0f0f0; white-space: nowrap; }
+.hb .vl small { font-weight: 400; font-size: 13px; color: #8a8a8a; }
+.hb .trk { grid-area: trk; position: relative; height: 12px; border-radius: 4px; background: rgba(255,255,255,.05); }
+.hb .trk i { position: absolute; top: -4px; bottom: -4px; width: 1px; background: rgba(255,255,255,.1); }
+.hb .trk b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--green-d); }
+.hb.jc .trk b { background: #9d86e0; } .hb .trk b.run { background: var(--amber); } .hb .trk b.bad { background: #ff6b7d; }
+.hb .hr.dsb[data-ds] { cursor: pointer; }
+.hb .hr.dsb:hover { background: rgba(255,255,255,.035); }
+.hb .hr.dsb:hover .trk b { filter: brightness(1.15); }
+.hb .hr.dsb.on { background: rgba(201,184,240,.08); }
+.hb .hr.dsb.on .nm { color: #fff; font-weight: 600; }
+.hb .hr.ax { grid-template-areas: "trk trk"; padding-top: 0; }
+.hb .hr.ax .trk { background: none; height: 16px; }
+.hb .hr.ax em { position: absolute; transform: translateX(-50%); font: 12.5px "JetBrains Mono", monospace; font-style: normal; color: #8a8a8a; white-space: nowrap; }
+.hb .hr.ax em:first-child { transform: none; } .hb .hr.ax em:last-child { transform: translateX(-100%); }
+.box.hbx { padding: 12px 14px 10px; } .box .hb.jc { padding: 4px 0 0; }
