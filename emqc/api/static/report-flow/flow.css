@@ -312,3 +312,4 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tb.lg td { padding: 12px 10px; }
 .tb.lg td.m { font-size: 15px; }
 .tb.lg .st { font-size: 13.5px; }
+.row3e { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }

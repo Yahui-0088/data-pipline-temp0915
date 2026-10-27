@@ -365,8 +365,25 @@
     },
     delivery() {
       const d = D.delivery;
+      if (!D.datasets.some((x) => x.dataset_id === selDs) && D.datasets.length) selDs = D.datasets[0].dataset_id;
+      const opts = (withGrade) => D.datasets.map((x) => `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)} · ${num(x.n_blocks)} blocks${withGrade && x.grade ? " · " + esc(x.grade) : ""}</option>`).join("");
+      const hint = (lt, ht) => `<label class="hint"><span class="lt">${lt}</span><span class="ht">${ht}</span></label>`;
+      const step = (n, t) => `<h4><span class="stepn">${n}</span>${t}</h4>`;
+      const forms = CAN && D.datasets.length ? `<div class="box form">${step(1, "训练分片 · 新建导出")}
+            <label>数据集</label><select id="dv-ds">${opts(true)}</select>
+            <div class="row2e"><div><label>最短连续段</label><input id="dv-minrun" type="number" min="1" value="8"></div><div><label>每片最多张数</label><input id="dv-shardz" type="number" min="0" value="16"></div></div>
+            <div class="row2e"><div>${hint("最低综合分", "可空")}<input id="dv-minq" type="number" step="0.05" min="0" max="1" placeholder="0.8"></div><div>${hint("一并拷贝的资产", "同一批 z，原样复制")}<input id="dv-assets" placeholder="gt_segmentation" spellcheck="false"></div></div>
+            ${hint("block", "留空 = 全部；填 block id，逗号分隔")}<input id="dv-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
+            <label class="chk"><input type="checkbox" id="dv-resume" checked> 续传（已存在的分片跳过）</label>
+            <div class="acts one"><button type="button" class="p" data-act="dv-export">开始导出</button></div><div id="dv-msg1"></div></div>`
+        + `<div class="box form">${step(2, "推理流 · 新建会话")}
+            <label>数据集</label><select id="dv-ds2">${opts(false)}</select>
+            <div class="row3e"><div><label>每个子块张数</label><input id="dv-zchunk" type="number" min="1" value="16"></div><div><label>顺序</label><select id="dv-order"><option value="z">空间顺序</option><option value="grade">等级好的先</option></select></div><div><label>客户端名</label><input id="dv-client" placeholder="unet-infer" spellcheck="false"></div></div>
+            <label class="chk"><input type="checkbox" id="dv-skip"> 跳过含未通过切片的子块</label>
+            <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>` : "";
       return head("", "数据交付")
         + kps([["训练导出", `${num(d.n_shard_jobs)} 次`], ["导出切片", num(d.shard_sections), "g"], ["推理流", `${num(d.n_streams)} 个`]])
+        + forms
         + `<div class="box"><h4>本次交付量</h4>${okRow(`训练分片 ${num(d.shard_sections)} 张 · ${mb(d.shard_bytes)}`)}${okRow(`数据包 ${num(d.n_packs)} 个 · ${num(d.pack_samples)} 个样本 · ${mb(d.pack_bytes)}`)}${okRow(`推理流 ${num(d.stream_chunks)} 块 · ${mb(d.stream_bytes)}`)}</div>`;
     },
     export() {
@@ -521,6 +538,20 @@
         closePanel();   // 只留左下角的运行条（带进度），不再另弹提示
         active = [{ run_id: d.run_id, dataset_id: ds, stage: "", n_blocks: 0, n_blocks_done: 0 }]; showLive(); play();
         poll();
+      } else if (act === "dv-export") {     // 训练分片：新建导出
+        const list = (id) => $(id).value.split(",").map((x) => x.trim()).filter(Boolean);
+        const bd = { dataset_id: $("dv-ds").value, min_run: +$("dv-minrun").value || 1, shard_z: +$("dv-shardz").value || 0, resume: $("dv-resume").checked };
+        if ($("dv-minq").value !== "") bd.min_quality = +$("dv-minq").value;
+        if (list("dv-assets").length) bd.with_assets = list("dv-assets");
+        if (list("dv-blocks").length) bd.block_ids = list("dv-blocks");
+        const d = await post("/api/v1/exports", bd);
+        done(`训练导出 #${d.job_id} 已开始 · ${bd.dataset_id}`);
+      } else if (act === "dv-stream") {     // 推理流：新建会话
+        const bd = { dataset_id: $("dv-ds2").value, z_chunk: +$("dv-zchunk").value || 16, order: $("dv-order").value, skip_failed: $("dv-skip").checked };
+        if ($("dv-client").value.trim()) bd.client = $("dv-client").value.trim();
+        const d = await post("/api/v1/streams", bd);
+        await load();
+        done(`推理流会话 #${d.stream_id} 已创建 · ${num(d.n_items)} 个子块`);
       } else if (act === "pack-lv") {     // 导出这一种形态：所有能做的用途一起生成一个数据包
         const lv = b.dataset.lv, cells = cellsOf(lv).filter((c) => c.ready).map((c) => [c.task, lv]);
         const d = await post("/api/v1/packs", { dataset_id: D.plan.dataset_id, cells });
@@ -531,7 +562,7 @@
         done(`数据包生成已开始 · 任务 #${d.job_id ?? d.id}`);
       }
     } catch (err) {
-      say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" || act === "pack-lv" ? "pk-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
+      say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" || act === "pack-lv" ? "pk-msg" : act === "dv-export" ? "dv-msg1" : act === "dv-stream" ? "dv-msg2" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
     } finally { b.disabled = false; }
   });
   body.addEventListener("pointermove", (e) => {
