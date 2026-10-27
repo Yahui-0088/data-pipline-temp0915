@@ -201,3 +201,11 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .chks em { font-style: normal; font-size: 12px; color: #8a8a8a; }
 .chks label.stub { opacity: .5; }
 .form label a { color: #b9a7f0; text-decoration: none; }
+
+/* 悬停提示：鼠标放到字段名上，字段名变模糊，原位浮出说明 */
+.form label.hint { position: relative; display: flex; align-items: center; gap: 10px; }
+.form label.hint .lt { transition: filter .25s, opacity .25s; }
+.form label.hint .ht { position: absolute; left: 0; top: 50%; transform: translateY(-50%); white-space: nowrap; color: #e5e5e5; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.form label.hint:hover .lt { filter: blur(3px); opacity: .45; }
+.form label.hint:hover .ht { opacity: 1; }
+.form label.hint .hk { margin-left: auto; font-size: 13px; color: #8a8a8a; }

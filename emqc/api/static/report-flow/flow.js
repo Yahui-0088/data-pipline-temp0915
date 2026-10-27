@@ -299,8 +299,8 @@
       // 清洗设置：数据集 + block 范围 + 检查项（全不选 = 全部）
       const cfg = CAN ? `<div class="box form"><h4>清洗设置</h4>
           <label>数据集</label>${sel}
-          <label>block 范围 <small>留空 = 全部；填 block id，逗号分隔</small></label><input id="cl-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
-          <label>检查项 <small>全不选 = 全部</small> · <a href="#" data-chk="1">全选</a> · <a href="#" data-chk="0">清空</a></label>
+          <label class="hint"><span class="lt">block 范围</span><span class="ht">留空 = 全部；填 block id，逗号分隔</span></label><input id="cl-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
+          <label class="hint"><span class="lt">检查项</span><span class="ht">全不选 = 全部</span><span class="hk"><a href="#" data-chk="1">全选</a> · <a href="#" data-chk="0">清空</a></span></label>
           <div class="chks">${D.checks.map((c) => `<label class="${c.implemented === false ? "stub" : ""}"><input type="checkbox" name="cl-chk" value="${esc(c.name)}"><code>${esc(c.name)}</code><span>${esc(c.zh)}</span><em>${c.level === "slice" ? "切片" : "序列"}${c.implemented === false ? " · 未实现" : ""}</em></label>`).join("")}</div>
           <div class="acts one"><button type="button" class="p" data-act="run-cl">运行清洗 →</button></div><div id="cl-msg"></div></div>` : `<div class="box form"><label>数据集</label>${sel}</div>`;
       // 清洗记录：所选数据集的每一次运行
@@ -309,7 +309,7 @@
       const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small></h4>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
           `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">${r.run_id}</a>` : r.run_id}</td><td class="m">${num(r.n_sections)}</td><td class="m">${pct(r.retention)}</td><td class="m">${grades(r.grades)}</td><td class="m">${num(r.n_findings)}</td><td class="m">${secs(r.wall_s)}</td><td class="m">${when(r.finished_at)}</td></tr>`).join("")}</table>`
           : `<p class="note">这个数据集还没清洗过。</p>`}</div>`;
-      return top + cfg + rec + link("/pipeline", "打开完整的「运行」页");
+      return top + cfg + rec;
     },
     issues() {
       const shots = D.examples.flatMap((e) => e.shots.map((s) => ({ ...s, zh: e.zh })));
