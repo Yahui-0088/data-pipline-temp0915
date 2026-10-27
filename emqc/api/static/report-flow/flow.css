@@ -209,3 +209,8 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .form label.hint:hover .lt { filter: blur(3px); opacity: .45; }
 .form label.hint:hover .ht { opacity: 1; }
 .form label.hint .hk { margin-left: auto; font-size: 13px; color: #8a8a8a; }
+
+/* 启动操作后的短提示 */
+.rf-toast { position: absolute; left: 50%; bottom: 34px; transform: translate(-50%, 12px); z-index: 7; padding: 10px 18px; border-radius: 12px; background: rgba(20,24,22,.92);
+  border: 1px solid rgba(63,223,147,.45); color: #c9f5dc; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s; }
+.rf-toast.on { opacity: 1; transform: translate(-50%, 0); }

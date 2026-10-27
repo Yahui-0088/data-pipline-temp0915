@@ -399,6 +399,15 @@
     if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : (d.detail && d.detail.message) || `出错了（${r.status}）`);
     return d;
   }
+  // 启动类操作成功后：收起操作台，只留流程图，左下角短暂提示一句
+  let toastT = 0;
+  const done = (txt) => {
+    closePanel();
+    let el = $("rf-toast");
+    if (!el) { el = document.createElement("div"); el.id = "rf-toast"; el.className = "rf-toast"; el.setAttribute("role", "status"); view.append(el); }
+    el.textContent = txt; el.classList.add("on");
+    clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("on"), 5000);
+  };
   const say = (id, txt, err) => { const el = $(id); if (el) el.innerHTML = `<div class="res ${err ? "err" : ""}">${esc(txt)}</div>`; };
   body.addEventListener("click", async (e) => {
     const ck = e.target.closest("[data-chk]");
@@ -424,11 +433,11 @@
         const bd = cwBody(); bd.species = $("cw-sp").value || null; bd.brain_region = $("cw-br").value || null; bd.require_precheck_ok = $("cw-req").checked;
         if ($("cw-seg").value.trim()) bd.assets = [{ type: "gt_segmentation", url: $("cw-seg").value.trim(), mip: +$("cw-segmip").value || 0, format: "precomputed_cloud", label_encoding: "gray" }];
         const d = await post("/api/v1/crawl/register", bd);
-        say("cw-reg", `已注册 ${d.dataset_id}${d.shape ? `：${d.shape.z} × ${d.shape.y} × ${d.shape.x}` : ""}，可以在「数据集」里运行清洗。`);
         await load();
+        done(`已注册 ${d.dataset_id}${d.shape ? `：${d.shape.z} × ${d.shape.y} × ${d.shape.x}` : ""}`);
       } else if (act === "fetch") {
         const j = await post("/api/v1/crawl/jobs", cwBody());
-        say("cw-reg", `采集任务 #${j.job_id} 已开始，进度在「最近的采集任务」和「数据采集」页里看。`);
+        done(`采集任务 #${j.job_id} 已开始`);
       } else if (act === "volume") {
         const r = await fetch(`/api/v1/crawl/volume?url=${encodeURIComponent($("cw-url").value.trim())}&mip=${encodeURIComponent($("cw-mip").value || 0)}`);
         const d = await r.json().catch(() => ({}));
@@ -442,12 +451,12 @@
           if (blocks.length) bd.block_ids = blocks; if (chks.length) bd.config = { checks_enabled: chks };
         }
         const d = await post("/api/v1/qc/runs", bd);
-        say(act === "run-cl" ? "cl-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", `运行 #${d.run_id} 已开始（${ds}），流程线上会有流光，跑完数字自动更新。`);
+        done(`清洗 #${d.run_id} 已开始 · ${ds}`);
         poll();
       } else if (act === "pack") {
         const cells = ["slice", "segment", "patch"].filter((lv) => rawN(lv)).map((lv) => ["raw", lv]);
         const d = await post("/api/v1/packs", { dataset_id: D.plan.dataset_id, cells });
-        say("pk-msg", `已开始生成（任务 #${d.job_id ?? d.id}），在「训练数据包」页看进度。`);
+        done(`数据包生成已开始 · 任务 #${d.job_id ?? d.id}`);
       }
     } catch (err) {
       say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" ? "pk-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
