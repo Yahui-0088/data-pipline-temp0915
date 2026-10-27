@@ -262,21 +262,18 @@
         + form + `<div class="box"><h4>最近的采集任务</h4>${jobs}</div>` + link("/crawl", "打开完整的「数据采集」页");
     },
     dataset() {
-      if (!D.datasets.length) return head("", "数据集") + `<p class="empty">这个账号能看的项目里还没有数据集。</p>`;
-      const d = D.datasets.find((x) => x.dataset_id === selDs) || D.datasets[0];
-      selDs = d.dataset_id;
-      return head("", "数据集")
-        + `<div class="box form"><h4>选择数据集，运行清洗</h4><label for="ds-sel" style="margin-top:0">数据集</label><select id="ds-sel">${D.datasets.map((x) =>
-            `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select></div>`
-        + kps([["切片", num(d.n_sections)], ["可用比例", pct(d.retention), "g"], ["等级", esc(d.grade || "–"), "l"]])
-        + `<div class="box"><h4>${esc(d.dataset_id)}</h4><table class="tb">
-            <tr><td>项目</td><td class="m">${esc(d.project || "–")}</td></tr>
-            <tr><td>数据块</td><td class="m">${num(d.n_blocks)}</td></tr>
-            <tr><td>质量分</td><td class="m">${d.quality != null ? d.quality.toFixed(2) : "–"}</td></tr>
-            <tr><td>最近一次清洗</td><td class="m">${when(d.last_run)}</td></tr></table></div>`
-        + (CAN ? `<div class="acts"><button type="button" class="p" data-act="run-ds">运行清洗 →</button><a href="/datasets/${encodeURIComponent(d.dataset_id)}">查看数据集 →</a></div><div id="ds-msg"></div>` : "")
-        + `<div class="box"><h4>全部数据集</h4><table class="tb"><tr><th>数据集</th><th>切片</th><th>可用</th><th>等级</th><th>最近</th></tr>${D.datasets.map((x) =>
-          `<tr data-ds="${esc(x.dataset_id)}" style="cursor:pointer${x.dataset_id === selDs ? ";background:rgba(201,184,240,.08)" : ""}"><td>${esc(x.dataset_id)}</td><td class="m">${num(x.n_sections)}</td><td class="m">${pct(x.retention)}</td><td class="m">${esc(x.grade || "–")}</td><td class="m">${when(x.last_run)}</td></tr>`).join("")}</table></div>`;
+      const k = D.kpi;
+      const top = head("", "数据集", `${num(k.n_datasets)} 个`, "平台里登记的电镜体数据。清洗从这里按块读切片；数据包只取通过的切片；推理流直接从这里逐块读。")
+        + kps([["数据集", num(k.n_datasets)], ["已检查切片", num(k.n_sections)], ["可用比例", pct(k.retention), "g"]]);
+      if (!D.datasets.length) return top + `<p class="empty">这个账号能看的项目里还没有数据集。</p>`;
+      if (!D.datasets.some((x) => x.dataset_id === selDs)) selDs = D.datasets[0].dataset_id;
+      // 选择数据集 → 运行清洗；下面是每个数据集的清洗记录（点一行也能选中）
+      const pick = CAN ? `<div class="box form"><h4>选择数据集，运行清洗</h4><select id="ds-sel" aria-label="数据集">${D.datasets.map((x) =>
+            `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>
+          <div class="acts"><button type="button" class="p" data-act="run-ds">运行清洗 →</button><a href="/datasets/${encodeURIComponent(selDs)}">查看数据集 →</a></div><div id="ds-msg"></div></div>` : "";
+      return top + pick
+        + `<div class="box"><table class="tb"><tr><th>数据集</th><th>切片</th><th>可用</th><th>等级</th><th>最近</th></tr>${D.datasets.map((x) =>
+          `<tr ${CAN ? `data-ds="${esc(x.dataset_id)}" style="cursor:pointer${x.dataset_id === selDs ? ";background:rgba(201,184,240,.08)" : ""}"` : ""}><td>${esc(x.dataset_id)}</td><td class="m">${num(x.n_sections)}</td><td class="m">${pct(x.retention)}</td><td class="m">${esc(x.grade || "–")}</td><td class="m">${when(x.last_run)}</td></tr>`).join("")}</table></div>`;
     },
     clean(tab = 0) {
       const L = D.latest;
