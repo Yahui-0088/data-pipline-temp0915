@@ -493,7 +493,8 @@
           if (blocks.length) bd.block_ids = blocks; if (chks.length) bd.config = { checks_enabled: chks };
         }
         const d = await post("/api/v1/qc/runs", bd);
-        done(`清洗 #${d.run_id} 已开始 · ${ds}`);
+        closePanel();   // 只留左下角的运行条（带进度），不再另弹提示
+        active = [{ run_id: d.run_id, dataset_id: ds, stage: "", n_blocks: 0, n_blocks_done: 0 }]; showLive(); play();
         poll();
       } else if (act === "pack") {
         const cells = ["slice", "segment", "patch"].filter((lv) => rawN(lv)).map((lv) => ["raw", lv]);
@@ -560,7 +561,13 @@
     const live = $("rf-live"), bar = $("rf-run"), r = active[0];
     if (live) live.textContent = r ? `运行中 · ${r.n_blocks_done}/${r.n_blocks || "?"} 块` : "";
     bar.hidden = !r;
-    if (r) bar.textContent = `清洗运行中 · #${r.run_id} · ${r.dataset_id}${r.stage ? " · " + r.stage.split(" · ")[0] : ""} · ${r.n_blocks_done}/${r.n_blocks || "?"} 块`;
+    if (!r) return;
+    // 进度：已完成的块 + 当前块走到第几步（读取 → 切片检查 → 序列检查 → 汇总 → 落库）
+    const ST = ["ingest", "slice_qc", "serial_qc", "aggregate", "persist"], st = (r.stage || "").split(" · ")[0];
+    const k = ST.indexOf(st), nb = r.n_blocks || 0;
+    const frac = nb ? Math.min(1, (r.n_blocks_done + (k >= 0 ? (k + 0.5) / ST.length : 0)) / nb) : 0.03;
+    bar.innerHTML = `<span class="rt">清洗运行中 · #${r.run_id} · ${esc(r.dataset_id)}${st ? " · " + esc(st) : ""} · ${r.n_blocks_done}/${nb || "?"} 块</span>`
+      + `<span class="pg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}"><i style="width:${Math.max(3, frac * 100)}%"></i></span>`;
   }
   let pollT = 0;
   async function poll() {
