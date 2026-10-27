@@ -33,10 +33,10 @@
   const FLOWS = [];
   function defs() {
     svg.innerHTML = `<defs>
-      <marker id="ahg" viewBox="0 0 11 8" refX="1" refY="4" markerWidth="11" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L11 4 L0 8 Z" fill="#3fdf93"/></marker>
-      <marker id="aho" viewBox="0 0 11 8" refX="1" refY="4" markerWidth="11" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L11 4 L0 8 Z" fill="#ff9a3c"/></marker>
-      <marker id="ahw" viewBox="0 0 11 8" refX="1" refY="4" markerWidth="11" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L11 4 L0 8 Z" fill="#9a9da6"/></marker>
-      <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+      <marker id="ahg" viewBox="0 0 13 10" refX="1" refY="5" markerWidth="13" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L13 5 L0 10 Z" fill="#3fdf93"/></marker>
+      <marker id="aho" viewBox="0 0 13 10" refX="1" refY="5" markerWidth="13" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L13 5 L0 10 Z" fill="#ff9a3c"/></marker>
+      <marker id="ahw" viewBox="0 0 13 10" refX="1" refY="5" markerWidth="13" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L13 5 L0 10 Z" fill="#9a9da6"/></marker>
+      <filter id="glow2" filterUnits="userSpaceOnUse" x="0" y="0" width="1920" height="1080"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
   }
   // 直角折线 + 圆角转弯；stage = 这段线在数据流里的先后（流光一段接一段走）
   function path(pts, opt = {}) {
@@ -49,11 +49,11 @@
       d += ` L ${x1 - (x1 - x0) / d1 * rr} ${y1 - (y1 - y0) / d1 * rr} Q ${x1} ${y1} ${x1 + (x2 - x1) / d2 * rr} ${y1 + (y2 - y1) / d2 * rr}`;
     }
     // 线停在箭头底边，三角形尖头正好落在终点（细线 + 小实心三角）
-    const [ex, ey] = pts.at(-1), [px, py] = pts.at(-2), el = Math.hypot(ex - px, ey - py) || 1, AH = 10;
+    const [ex, ey] = pts.at(-1), [px, py] = pts.at(-2), el = Math.hypot(ex - px, ey - py) || 1, AH = 12;
     d += ` L ${ex - (ex - px) / el * AH} ${ey - (ey - py) / el * AH}`;
     const c = opt.c || "#3fdf93";
     const p = document.createElementNS(NS, "path");
-    p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", c); p.setAttribute("stroke-width", opt.w || 2); p.setAttribute("stroke-opacity", opt.o ?? 0.85);
+    p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", c); p.setAttribute("stroke-width", opt.w || 3); p.setAttribute("stroke-opacity", opt.o ?? 0.85);
     if (opt.dash) p.setAttribute("stroke-dasharray", opt.dash);
     p.setAttribute("marker-end", `url(#${opt.m || "ahg"})`);
     svg.append(p);
@@ -125,7 +125,7 @@
     const dm = add("div", "diamond", 470, 560, `<svg viewBox="0 0 230 150"><polygon points="115,2 228,75 115,148 2,75" fill="#0b0b08" stroke="#f3e27a" stroke-width="2" stroke-dasharray="7 6"/></svg>
       <span>数据清洗<small>${D.checks.length} 项检查 · ${L ? num(L.n_slices) + " 张" : "还没有结果"}</small><em class="live" id="rf-live"></em></span>`, nodeAttrs("clean", "数据清洗"));
     dm.id = "rf-clean";
-    path([[470, ds.b + 34 + 36], [470, 560 - 77]], { dash: "7 6", stage: 1 }); label(530, (ds.b + 70 + 483) / 2, "读取切片");
+    path([[470, ds.b + 34 + 36], [470, 560 - 77]], { stage: 1 }); label(530, (ds.b + 70 + 483) / 2, "读取切片");
     const G = node("passed", 470, 790, 210, L ? `合格 ${num(L.n_passed)} 张<small>可用率 ${pct(L.retention)}</small>` : "合格<small>–</small>", "green", "合格");
     path([[470, 560 + 77], [470, G.t - 4]], { stage: 2 }); label(505, 690, "通过");
     const Q = node("issues", 170, 790, 220, `问题图片<small>${num(problems())} 条 · 截图 ${num(L ? L.n_shots : 0)}</small>`, "org", "问题图片");
@@ -167,7 +167,7 @@
     comets = FLOWS.map(({ p, c, stage }) => {
       const q = p.cloneNode(); q.removeAttribute("marker-end"); q.removeAttribute("stroke-dasharray");
       const L = p.getTotalLength();
-      q.setAttribute("stroke", c === "#ff9a3c" ? "#ffd2a6" : "#c9ffe3"); q.setAttribute("stroke-width", 3.2); q.setAttribute("stroke-opacity", 1);
+      q.setAttribute("stroke", c === "#ff9a3c" ? "#ffd2a6" : "#c9ffe3"); q.setAttribute("stroke-width", 4.6); q.setAttribute("stroke-opacity", 1);
       q.setAttribute("stroke-dasharray", `46 ${L + 60}`); q.setAttribute("stroke-linecap", "round"); q.setAttribute("filter", "url(#glow2)");
       q.style.opacity = 0; svg.append(q); return { q, L, stage };
     });
@@ -579,7 +579,7 @@
         active = (await r.json()).runs || [];
         showLive();
         if (active.length) play();
-        if (was && !active.length) await load();   // 跑完了：数字刷新
+        if (was && !active.length) { introLeft = 1; await load(); }   // 跑完了：数字刷新，流光把这一轮走到底再停
       }
     } catch { /* 网络抖一下：下次再试 */ }
     pollT = setTimeout(poll, document.hidden ? 15000 : 4000);
