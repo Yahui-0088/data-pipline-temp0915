@@ -226,8 +226,9 @@ def report_flow(request: Request, s: Session = Depends(get_session)):
         "runs": [{"run_id": r["run_id"], "dataset_id": r["dataset_id"], "finished_at": r.get("finished_at"), "retention": r.get("retention"),
                   "n_findings": r.get("n_findings"), "wall_s": r.get("wall_s")} for r in sorted(runs_all, key=lambda r: r["run_id"], reverse=True)[:10]],
         "n_runs": len(runs_all), "n_runs_error": n_err,
-        "crawl": {"presets": [{"key": k, "label": v["label"], "url": v["em"]["url"], "mip": v["em"]["mip"], "note": v["em"].get("note"), "seg_url": (v.get("seg") or {}).get("url")}
-                              for k, v in PRESETS.items()],
+        "crawl": {"presets": [{"key": k, "label": v["label"], "url": v["em"]["url"], "mip": v["em"]["mip"], "note": v["em"].get("note"),
+                               "seg_url": (v.get("seg") or {}).get("url"), "seg_mip": (v.get("seg") or {}).get("mip", 0), "mask_url": (v.get("mask") or {}).get("url"),
+                               "species": v.get("species"), "brain_region": v.get("brain_region")} for k, v in PRESETS.items()],
                   "jobs": [{"id": j.id, "dataset_id": j.dataset_id, "status": j.status, "n_done": j.n_done, "n_sections": j.n_sections, "at": iso(j.finished_at or j.created_at)} for j in crawl_jobs]},
         "exports": [{"id": j.id, "dataset_id": j.dataset_id, "kind": "pack" if (j.params_json or {}).get("kind") == "pack" else "shards", "status": j.status,
                      "n_sections": j.n_sections, "n_bytes": j.n_bytes, "at": iso(j.finished_at or j.created_at)} for j in exports],

@@ -153,6 +153,12 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .form select { font-family: inherit; }
 .form input:focus, .form select:focus { outline: none; border-color: var(--lav); }
 .row2 { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+.row2r { display: grid; grid-template-columns: 1fr 96px; gap: 12px; align-items: end; }
+.row2e { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+.row3 { display: grid; grid-template-columns: 1fr 1fr 96px; gap: 12px; align-items: end; }
+.stepn { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-right: 10px; border-radius: 50%; background: rgba(201,184,240,.16); color: #d9ccff; font: 700 13px "JetBrains Mono", monospace; vertical-align: 1px; }
+.form label.chk { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: #cfcfcf; cursor: pointer; }
+.form label.chk input { width: 16px; height: 16px; accent-color: #3fdf93; }
 .res { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.1); font: 13px/1.7 "JetBrains Mono", monospace; color: #cfcfcf; white-space: pre-wrap; word-break: break-all; }
 .res.err { color: #ffb3bd; border-color: rgba(255,107,125,.35); }
 .acts { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-top: 18px; }
