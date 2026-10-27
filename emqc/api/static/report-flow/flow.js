@@ -565,8 +565,8 @@
     const ST = ["ingest", "slice_qc", "serial_qc", "aggregate", "persist"], st = (r.stage || "").split(" · ")[0];
     const k = ST.indexOf(st), nb = r.n_blocks || 0;
     const frac = nb ? Math.min(1, (r.n_blocks_done + (k >= 0 ? (k + 0.5) / ST.length : 0)) / nb) : 0.03;
-    bar.innerHTML = `<span class="rt">清洗运行中 · #${r.run_id} · ${esc(r.dataset_id)}${st ? " · " + esc(st) : ""} · ${r.n_blocks_done}/${nb || "?"} 块</span>`
-      + `<span class="pg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}"><i style="width:${Math.max(3, frac * 100)}%"></i></span>`;
+    // 只有一根进度条（页面中间下方），不写文字；读屏软件仍能读到是哪次清洗
+    bar.innerHTML = `<span class="pg" role="progressbar" aria-label="清洗 #${r.run_id} · ${esc(r.dataset_id)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}"><i style="width:${Math.max(3, frac * 100)}%"></i></span>`;
   }
   let pollT = 0;
   async function poll() {
