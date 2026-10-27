@@ -143,7 +143,7 @@
       path([[FX + 102, y], [CX2 - 64, y]], { r: 0, stage: 5 });
       path([[CX2 + 62, y], [BX - 4, y]], { r: 0, stage: 6 });
     }
-    const bar = add("div", "bar", BX, 240, `<div>数据包<small>原图<br>train / val / test<br>${esc(D.plan ? D.plan.dataset_id : "–")}<br>已生成 ${num(dl.n_packs)} 个</small></div>`, nodeAttrs("pack", "数据包"));
+    const bar = add("div", "bar", BX, 240, `<div>数据包<small>train / val / test</small></div>`, nodeAttrs("pack", "数据包"));
     Object.assign(bar.style, { width: "130px", height: "640px" });
     // 交付
     const dv = holo("delivery", 1720, 300, 240, "/static/report-flow/stack_block.png", 391 / 520, [[.0017, .5556], [.457, .9978], [.9975, .6656]], "DELIVERY", "数据交付", "#7ff0b8");
@@ -381,9 +381,9 @@
       const packs = D.exports.filter((x) => x.kind === "pack");
       return head("", "训练数据包", P ? esc(P.dataset_id) : "")
         + kps([["能做的格子", num(ready.length)], ["已生成", num(D.delivery.n_packs)], ["样本", num(D.delivery.pack_samples)]])
-        + (P && P.error ? `<div class="res err">${esc(P.error)}</div>` : `<div class="box"><h4>原图 · 三种形态</h4>${bars(["slice", "segment", "patch"].map((lv) => [LEVEL_ZH[lv], rawN(lv) || 0]), "l")}</div>`)
+        + (P && P.error ? `<div class="res err">${esc(P.error)}</div>` : `<div class="box"><h4>原图 · 三种形态${CAN && ready.length ? `<button type="button" class="dl" data-act="pack-all" aria-label="全部导出"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>全部导出</button>` : ""}</h4>${bars(["slice", "segment", "patch"].map((lv) => [LEVEL_ZH[lv], rawN(lv) || 0]), "l")}</div>`)
         + `<div class="box"><h4>最近生成的数据包<small>横轴：大小 · 条右边：大小 · 样本数</small></h4>${packs.length ? jobChart(packs, "个样本") : "<p class='note'>还没有生成过数据包。</p>"}</div>`
-        + (CAN && P && !P.error ? `<div class="acts one"><button type="button" class="p" data-act="pack">生成原图数据包</button></div><div id="pk-msg"></div>` : "");
+        + `<div id="pk-msg"></div>`;
     },
     delivery() {
       const d = D.delivery;
@@ -579,6 +579,10 @@
         const d = await post("/api/v1/streams", bd);
         await load();
         done(`推理流会话 #${d.stream_id} 已创建 · ${num(d.n_items)} 个子块`);
+      } else if (act === "pack-all") {    // 全部导出：所有能做的「用途 × 形态」一起生成一个数据包
+        const cells = (D.plan.cells || []).filter((c) => c.ready).map((c) => [c.task, c.level]);
+        const d = await post("/api/v1/packs", { dataset_id: D.plan.dataset_id, cells });
+        done(`数据包全部导出已开始 · ${cells.length} 格 · 任务 #${d.job_id ?? d.id}`);
       } else if (act === "pack-lv") {     // 导出这一种形态：所有能做的用途一起生成一个数据包
         const lv = b.dataset.lv, cells = cellsOf(lv).filter((c) => c.ready).map((c) => [c.task, lv]);
         const d = await post("/api/v1/packs", { dataset_id: D.plan.dataset_id, cells });
@@ -589,7 +593,7 @@
         done(`数据包生成已开始 · 任务 #${d.job_id ?? d.id}`);
       }
     } catch (err) {
-      say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" || act === "pack-lv" ? "pk-msg" : act === "dv-export" ? "dv-msg1" : act === "dv-stream" ? "dv-msg2" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
+      say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" || act === "pack-lv" || act === "pack-all" ? "pk-msg" : act === "dv-export" ? "dv-msg1" : act === "dv-stream" ? "dv-msg2" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
     } finally { b.disabled = false; }
   });
   body.addEventListener("pointermove", (e) => {
