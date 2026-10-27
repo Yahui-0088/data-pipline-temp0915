@@ -365,10 +365,9 @@
     },
     delivery() {
       const d = D.delivery;
-      return head("数据交付", "数据交付", "", "把数据交出去：离线的训练导出（写成分片文件），以及在线的推理流（逐块读，不落地）。")
+      return head("", "数据交付")
         + kps([["训练导出", `${num(d.n_shard_jobs)} 次`], ["导出切片", num(d.shard_sections), "g"], ["推理流", `${num(d.n_streams)} 个`]])
-        + `<div class="box"><h4>交付量</h4>${okRow(`训练分片 ${num(d.shard_sections)} 张 · ${mb(d.shard_bytes)}`)}${okRow(`数据包 ${num(d.n_packs)} 个 · ${num(d.pack_samples)} 个样本 · ${mb(d.pack_bytes)}`)}${okRow(`推理流 ${num(d.stream_chunks)} 块 · ${mb(d.stream_bytes)}`)}</div>`
-        + link("/delivery", "打开「数据交付」页");
+        + `<div class="box"><h4>本次交付量</h4>${okRow(`训练分片 ${num(d.shard_sections)} 张 · ${mb(d.shard_bytes)}`)}${okRow(`数据包 ${num(d.n_packs)} 个 · ${num(d.pack_samples)} 个样本 · ${mb(d.pack_bytes)}`)}${okRow(`推理流 ${num(d.stream_chunks)} 块 · ${mb(d.stream_bytes)}`)}</div>`;
     },
     export() {
       const xs = D.exports.filter((x) => x.kind === "shards");
