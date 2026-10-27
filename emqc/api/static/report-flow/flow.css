@@ -28,7 +28,7 @@ button { font: inherit; color: inherit; }
 .rf-run .rt { display: inline; }
 .rf-run .pg { display: block; height: 4px; border-radius: 4px; background: rgba(220,226,232,.12); overflow: visible; }
 .rf-run .pg i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #9aa3ad, #eef2f6 70%, #ffffff);
-  box-shadow: 0 0 6px rgba(235,240,246,.9), 0 0 14px rgba(200,210,222,.6); transition: width .8s ease; position: relative; }
+  box-shadow: 0 0 6px rgba(235,240,246,.9), 0 0 14px rgba(200,210,222,.6); position: relative; }
 .rf-run .pg i::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.85), transparent); background-size: 60px 100%;
   background-repeat: no-repeat; animation: rf-shine 1.4s linear infinite; }
 @keyframes rf-shine { from { background-position: -60px 0; } to { background-position: calc(100% + 60px) 0; } }

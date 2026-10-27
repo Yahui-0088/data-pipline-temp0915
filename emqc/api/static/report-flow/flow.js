@@ -569,16 +569,35 @@
   });
 
   // ------------------------------------------------------------------ 正在跑的清洗
+  // 进度条（页面中间下方，只有一根银白辉光的条）：开始清洗就出现，从左往右连续流到头；
+  // 速度按这个数据集上次清洗的用时估，真实进度（块 / 步骤）走得更快时以真实进度为准；跑完补满到 100% 再淡出
+  const PG = { run: null, t0: 0, est: 6000, real: 0, raf: 0, fin: 0 };
+  function pgFrame(now) {
+    const bar = $("rf-run"), i = bar.querySelector(".pg i"); if (!i) return;
+    let f;
+    if (PG.fin) f = 1;
+    else { const u = (now - PG.t0) / PG.est; f = Math.max(PG.real, 0.95 * (1 - Math.exp(-2.2 * u))); }
+    i.style.width = (Math.max(0.02, f) * 100).toFixed(2) + "%";
+    bar.querySelector(".pg").setAttribute("aria-valuenow", Math.round(f * 100));
+    if (PG.fin && now - PG.fin > 700) { bar.hidden = true; bar.innerHTML = ""; PG.run = null; PG.fin = 0; return; }
+    PG.raf = requestAnimationFrame(pgFrame);
+  }
   function showLive() {
     const bar = $("rf-run"), r = active[0];
-    bar.hidden = !r;
-    if (!r) return;
-    // 进度：已完成的块 + 当前块走到第几步（读取 → 切片检查 → 序列检查 → 汇总 → 落库）
+    if (!r) {                                  // 跑完了：补满再淡出
+      if (PG.run && !PG.fin) PG.fin = performance.now();
+      return;
+    }
     const ST = ["ingest", "slice_qc", "serial_qc", "aggregate", "persist"], st = (r.stage || "").split(" · ")[0];
     const k = ST.indexOf(st), nb = r.n_blocks || 0;
-    const frac = nb ? Math.min(1, (r.n_blocks_done + (k >= 0 ? (k + 0.5) / ST.length : 0)) / nb) : 0.03;
-    // 只有一根进度条（页面中间下方），不写文字；读屏软件仍能读到是哪次清洗
-    bar.innerHTML = `<span class="pg" role="progressbar" aria-label="清洗 #${r.run_id} · ${esc(r.dataset_id)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}"><i style="width:${Math.max(3, frac * 100)}%"></i></span>`;
+    PG.real = nb ? Math.min(0.97, (r.n_blocks_done + (k >= 0 ? (k + 0.5) / ST.length : 0)) / nb) : 0;
+    if (PG.run !== r.run_id) {                 // 新的一次清洗：从头开始流
+      const prev = D && D.runs.find((x) => x.dataset_id === r.dataset_id && x.wall_s);
+      PG.run = r.run_id; PG.t0 = performance.now(); PG.fin = 0; PG.est = Math.max(3000, (prev ? prev.wall_s * 1000 : 6000));
+      bar.hidden = false;
+      bar.innerHTML = `<span class="pg" role="progressbar" aria-label="清洗 #${r.run_id} · ${esc(r.dataset_id)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i style="width:2%"></i></span>`;
+      cancelAnimationFrame(PG.raf); PG.raf = requestAnimationFrame(pgFrame);
+    }
   }
   let pollT = 0;
   async function poll() {
