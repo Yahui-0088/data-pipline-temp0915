@@ -103,7 +103,7 @@
     const U = [(e1[0] - e0[0]) / ul, (e1[1] - e0[1]) / ul], V = [(e0[0] - b0[0]) / vl, (e0[1] - b0[1]) / vl];
     const c1 = add("div", "hcap edge", (e0[0] + e1[0]) / 2 + V[0] * 30, (e0[1] + e1[1]) / 2 + V[1] * 30, `<b>${cap}</b>`);
     c1.style.color = capCol; c1.style.transformOrigin = "0 0"; c1.style.transform = `matrix(${U[0]},${U[1]},${V[0]},${V[1]},0,0) translate(-50%,-50%)`;
-    add("div", "hcap", cx, y0 + h + lift + 34, `<span>${sub}</span>`);
+    if (sub) add("div", "hcap", cx, y0 + h + lift + 34, `<span>${sub}</span>`);
     return { l: x0, r: x0 + w, t: y0, b: y0 + h };
   }
 
@@ -117,15 +117,15 @@
     FLOWS.length = 0; comets = [];
     defs(); host.replaceChildren();
     const L = D.latest, k = D.kpi, dl = D.delivery;
-    const A = node("crawl", 170, 300, 200, `数据采集<small>${D.crawl.presets.length} 个预设 · 采集任务 ${D.crawl.jobs.length}</small>`, "", "数据采集");
+    const A = node("crawl", 170, 300, 200, "数据采集", "", "数据采集");
     const ds = holo("dataset", 470, 300, 240, "/static/report-flow/em_block.png", 401 / 640, [[.0176, .5026], [.5048, .9949], [.9952, .5982]],
-      "DATASET", `数据集 ${num(k.n_datasets)} 个 · ${num(k.n_sections)} 张切片`, "#c9b8f0");
+      "DATASET", "", "#c9b8f0");
     path([[A.r + 2, 300], [ds.l + 4, 300]], { stage: 0 }); label((A.r + ds.l) / 2, 278, "写入数据集");
     // 数据清洗：菱形判断
     const dm = add("div", "diamond", 470, 560, `<svg viewBox="0 0 230 150"><polygon points="115,2 228,75 115,148 2,75" fill="#0b0b08" stroke="#f3e27a" stroke-width="2" stroke-dasharray="7 6"/></svg>
       <span>数据清洗<small>${D.checks.length} 项检查 · ${L ? num(L.n_slices) + " 张" : "还没有结果"}</small></span>`, nodeAttrs("clean", "数据清洗"));
     dm.id = "rf-clean";
-    path([[470, ds.b + 34 + 36], [470, 560 - 77]], { stage: 1 }); label(530, (ds.b + 70 + 483) / 2, "读取切片");
+    path([[470, ds.b + 30], [470, 560 - 77]], { stage: 1 }); label(530, (ds.b + 30 + 483) / 2, "读取切片");
     const G = node("passed", 470, 820, 200, L ? `合格 ${num(L.n_passed)} 张<small>可用率 ${pct(L.retention)}</small>` : "合格<small>–</small>", "green", "合格");
     path([[470, 560 + 77], [470, G.t - 4]], { stage: 2 }); label(505, (637 + G.t) / 2, "通过");
     const Q = node("issues", 170, 820, 200, `问题图片<small>${num(problems())} 条 · 截图 ${num(L ? L.n_shots : 0)}</small>`, "org", "问题图片");
