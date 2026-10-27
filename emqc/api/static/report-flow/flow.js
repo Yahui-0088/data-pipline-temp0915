@@ -368,19 +368,19 @@
       if (!D.datasets.some((x) => x.dataset_id === selDs) && D.datasets.length) selDs = D.datasets[0].dataset_id;
       const opts = (withGrade) => D.datasets.map((x) => `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)} · ${num(x.n_blocks)} blocks${withGrade && x.grade ? " · " + esc(x.grade) : ""}</option>`).join("");
       const hint = (lt, ht) => `<label class="hint"><span class="lt">${lt}</span><span class="ht">${ht}</span></label>`;
-      const step = (n, t) => `<h4><span class="stepn">${n}</span>${t}</h4>`;
-      const forms = CAN && D.datasets.length ? `<div class="box form">${step(1, "训练分片 · 新建导出")}
+      const seg = `<div class="tabs dvt" role="tablist">${["训练分片 · 新建导出", "推理流 · 新建会话"].map((n, i) => `<button type="button" role="tab" data-dvtab="${i}" aria-selected="${dvTab === i}">${n}</button>`).join("")}</div>`;
+      const forms = !(CAN && D.datasets.length) ? "" : seg + (dvTab === 0 ? `<div class="box form">
             <label>数据集</label><select id="dv-ds">${opts(true)}</select>
             <div class="row2e"><div><label>最短连续段</label><input id="dv-minrun" type="number" min="1" value="8"></div><div><label>每片最多张数</label><input id="dv-shardz" type="number" min="0" value="16"></div></div>
             <div class="row2e"><div>${hint("最低综合分", "可空")}<input id="dv-minq" type="number" step="0.05" min="0" max="1" placeholder="0.8"></div><div>${hint("一并拷贝的资产", "同一批 z，原样复制")}<input id="dv-assets" placeholder="gt_segmentation" spellcheck="false"></div></div>
             ${hint("block", "留空 = 全部；填 block id，逗号分隔")}<input id="dv-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
             <label class="chk"><input type="checkbox" id="dv-resume" checked> 续传（已存在的分片跳过）</label>
             <div class="acts one"><button type="button" class="p" data-act="dv-export">开始导出</button></div><div id="dv-msg1"></div></div>`
-        + `<div class="box form">${step(2, "推理流 · 新建会话")}
+        : `<div class="box form">
             <label>数据集</label><select id="dv-ds2">${opts(false)}</select>
             <div class="row3e"><div><label>每个子块张数</label><input id="dv-zchunk" type="number" min="1" value="16"></div><div><label>顺序</label><select id="dv-order"><option value="z">空间顺序</option><option value="grade">等级好的先</option></select></div><div><label>客户端名</label><input id="dv-client" placeholder="unet-infer" spellcheck="false"></div></div>
             <label class="chk"><input type="checkbox" id="dv-skip"> 跳过含未通过切片的子块</label>
-            <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>` : "";
+            <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>`);
       return head("", "数据交付")
         + kps([["训练导出", `${num(d.n_shard_jobs)} 次`], ["导出切片", num(d.shard_sections), "g"], ["推理流", `${num(d.n_streams)} 个`]])
         + forms
@@ -420,7 +420,7 @@
             : `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="w" colspan="2"><span class="st">${esc(c.reason || "不能做")}</span></td></tr>`; }).join("")}</table></div>`
       + `<div id="pk-msg"></div>`;
   }
-  let selDs = null;
+  let selDs = null, dvTab = 0;
   function render(id) {
     body.innerHTML = R[id]();
     body.scrollTop = 0;
@@ -494,6 +494,8 @@
     if (e.target.closest("[data-csv]")) { exportRuns(); return; }
     const al = e.target.closest("[data-alb]");
     if (al) { const img = e.target.closest("img[data-i]"); lightbox(+al.dataset.alb, img ? +img.dataset.i : 0); return; }
+    const dt = e.target.closest("[data-dvtab]");
+    if (dt) { dvTab = +dt.dataset.dvtab; render("delivery"); return; }
     const ck = e.target.closest("[data-chk]");
     if (ck) { e.preventDefault(); body.querySelectorAll("input[name=cl-chk]").forEach((c) => { c.checked = ck.dataset.chk === "1"; }); return; }
     const row = e.target.closest("[data-ds]");
