@@ -327,10 +327,10 @@
     },
     passed() {
       const L = D.latest;
-      if (!L) return head("合格", "合格切片") + noRun;
-      return head("合格", "合格切片", `运行 #${L.run_id}`, "通过全部检查的切片：可以直接用于训练和推理，后面的分级、数据包都只用这些。")
-        + kps([["合格", num(L.n_passed), "g"], ["可用率", pct(L.retention), "g"], ["不可用", num(L.n_failed), "y"]]) + rateBox("这次运行可用率", L.retention)
-        + `<div class="box"><h4>每个数据集的可用比例</h4>${bars(D.datasets.filter((d) => d.retention != null).map((d) => [d.dataset_id, d.retention, pct(d.retention)]), "g")}</div>`;
+      if (!L) return head("", "合格切片") + noRun;
+      return head("", "合格切片", `运行 #${L.run_id}`, "通过全部检查的切片：可以直接用于训练和推理，后面的分级、数据包都只用这些。")
+        + kps([["合格", num(L.n_passed), "g"], ["可用率", pct(L.retention), "g"], ["不可用", num(L.n_failed), "y"]]).replace('class="kps"', 'class="kps mini"') + rateBox("这次运行可用率", L.retention)
+        + `<div class="box"><h4>当前每个数据集的可用比例</h4>${bars(D.datasets.filter((d) => d.retention != null).map((d) => [d.dataset_id, d.retention, pct(d.retention)]), "g")}</div>`;
     },
     grade() {
       const L = D.latest, g = (L && L.grades) || {};
