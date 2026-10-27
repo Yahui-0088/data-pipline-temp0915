@@ -299,3 +299,9 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
   border: 1px solid rgba(255,255,255,.14); box-shadow: 0 8px 22px rgba(0,0,0,.45); color: #d8d8d8; font-size: 13px; line-height: 1.9; white-space: nowrap; }
 .box h4 .rtip b { display: inline-block; width: 18px; color: #fff; }
 .box h4 .rule:hover .rtip, .box h4 .rule:focus-visible .rtip { display: block; }
+
+/* 标题行右侧的「导出」：和问题图片的导出按钮同款 */
+.ph .dl.hd { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 8px; border: 1px solid rgba(255,154,60,.5);
+  background: none; color: #ffc58f; font: 500 14px inherit; font-family: inherit; cursor: pointer; transition: background .2s; }
+.ph .dl.hd:hover { background: rgba(255,154,60,.14); }
+.ph .dl.hd:disabled { opacity: .5; cursor: default; }
