@@ -245,6 +245,23 @@
   const link = (href, txt) => (CAN ? `<a class="lk" href="${href}">${txt} ↗</a>` : "");
   const tabs = (names, sel) => `<div class="tabs" role="tablist">${names.map((n, i) => `<button type="button" role="tab" data-tab="${i}" aria-selected="${i === sel}">${n}</button>`).join("")}</div>`;
   const rateBox = (label, r) => `<div class="box"><div class="rate">${label}<b>${pct(r)}</b></div><div class="rbar"><span style="width:${(r || 0) * 100}%"></span></div></div>`;
+  // 数据集可用比例：横向条形图 + 0–100% 坐标轴；点一根条 = 选中这个数据集；悬停看切片数 / 等级 / 最近一次清洗
+  function dsChart() {
+    const ds = D.datasets, W = 520, L = 176, R = 446, row = 38, top = 10, H = top + ds.length * row + 34;
+    const X = (v) => L + (R - L) * Math.max(0, Math.min(1, v || 0));
+    const ticks = [0, .25, .5, .75, 1].map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 4}" y2="${top + ds.length * row}" class="gd"/>
+      <text x="${X(v)}" y="${top + ds.length * row + 20}" text-anchor="middle" class="ax">${v * 100}%</text>`).join("");
+    const bars = ds.map((x, i) => {
+      const y = top + i * row + row / 2, v = x.retention, on = x.dataset_id === selDs, w = Math.max(0, X(v) - L);
+      return `<g class="dsb ${on ? "on" : ""}" ${CAN ? `data-ds="${esc(x.dataset_id)}"` : ""} data-tip="${esc(x.dataset_id)}|${num(x.n_sections)}|${pct(v)}|${esc(x.grade || "–")}|${when(x.last_run)}">
+        <rect x="0" y="${y - row / 2}" width="${W}" height="${row}" class="hit"/>
+        <text x="${L - 12}" y="${y + 4}" text-anchor="end" class="nm">${esc(x.dataset_id)}</text>
+        <rect x="${L}" y="${y - 7}" width="${R - L}" height="14" rx="4" class="tr"/>
+        ${v == null ? "" : `<rect x="${L}" y="${y - 7}" width="${w}" height="14" rx="4" class="br"/>`}
+        <text x="${R + 10}" y="${y + 4}" class="vl">${v == null ? "未清洗" : pct(v)}<tspan class="gr"> ${esc(x.grade || "")}</tspan></text></g>`;
+    }).join("");
+    return `<div class="box dsc"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="各数据集可用比例">${ticks}${bars}</svg><div class="tip" hidden></div></div>`;
+  }
   const noRun = `<p class="empty">还没有清洗结果：先在「数据集」里选一个数据集运行清洗。</p>`;
 
   const R = {
@@ -286,9 +303,7 @@
       const pick = CAN ? `<div class="box form"><h4>选择数据集</h4><select id="ds-sel" aria-label="数据集">${D.datasets.map((x) =>
             `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>
           <div class="acts"><button type="button" class="p" data-act="run-ds">运行清洗 →</button><a href="/datasets/${encodeURIComponent(selDs)}">查看数据集 →</a></div><div id="ds-msg"></div></div>` : "";
-      return top + pick
-        + `<div class="box"><table class="tb"><tr><th>数据集</th><th>切片</th><th>可用</th><th>等级</th><th>最近</th></tr>${D.datasets.map((x) =>
-          `<tr ${CAN ? `data-ds="${esc(x.dataset_id)}" style="cursor:pointer${x.dataset_id === selDs ? ";background:rgba(201,184,240,.08)" : ""}"` : ""}><td>${esc(x.dataset_id)}</td><td class="m">${num(x.n_sections)}</td><td class="m">${pct(x.retention)}</td><td class="m">${esc(x.grade || "–")}</td><td class="m">${when(x.last_run)}</td></tr>`).join("")}</table></div>`;
+      return top + pick + dsChart();
     },
     clean() {
       const top = head("", "数据清洗", `${D.checks.length} 项检查`);
@@ -517,6 +532,18 @@
       say(act === "volume" ? "cw-res" : act === "precheck" ? "cw-pre" : act === "register" || act === "fetch" ? "cw-reg" : act === "pack" ? "pk-msg" : act === "run-ds" ? "ds-msg" : "cl-msg", err.message || "出错了", true);
     } finally { b.disabled = false; }
   });
+  body.addEventListener("pointermove", (e) => {
+    const g = e.target.closest(".dsb"), box = e.target.closest(".dsc"); const tip = box && box.querySelector(".tip");
+    body.querySelectorAll(".dsc .tip").forEach((x) => { if (x !== tip) x.hidden = true; });
+    if (!tip) return;
+    if (!g) { tip.hidden = true; return; }
+    const [n, s, v, gr, t] = g.dataset.tip.split("|"), rb = box.getBoundingClientRect();
+    tip.innerHTML = `<b>${n}</b><span>可用 ${v} · 等级 ${gr}</span><span>${s} 张切片 · 最近 ${t}</span>`;
+    tip.hidden = false;
+    const x = Math.min(e.clientX - rb.left + 14, rb.width - tip.offsetWidth - 8), y = e.clientY - rb.top + 16;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  });
+  body.addEventListener("pointerleave", () => body.querySelectorAll(".dsc .tip").forEach((x) => { x.hidden = true; }));
   body.addEventListener("change", (e) => {
     if (e.target.id === "ds-sel") { selDs = e.target.value; render("dataset"); return; }
     if (e.target.id === "cl-ds") { selDs = e.target.value; render("clean"); return; }
