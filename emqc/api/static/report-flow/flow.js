@@ -33,9 +33,9 @@
   const FLOWS = [];
   function defs() {
     svg.innerHTML = `<defs>
-      <marker id="ahg" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#3fdf93"/></marker>
-      <marker id="aho" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#ff9a3c"/></marker>
-      <marker id="ahw" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 Z" fill="#9a9da6"/></marker>
+      <marker id="ahg" viewBox="0 0 11 8" refX="1" refY="4" markerWidth="11" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L11 4 L0 8 Z" fill="#3fdf93"/></marker>
+      <marker id="aho" viewBox="0 0 11 8" refX="1" refY="4" markerWidth="11" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L11 4 L0 8 Z" fill="#ff9a3c"/></marker>
+      <marker id="ahw" viewBox="0 0 11 8" refX="1" refY="4" markerWidth="11" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L11 4 L0 8 Z" fill="#9a9da6"/></marker>
       <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
   }
   // 直角折线 + 圆角转弯；stage = 这段线在数据流里的先后（流光一段接一段走）
@@ -48,7 +48,9 @@
       const d1 = Math.hypot(x1 - x0, y1 - y0), d2 = Math.hypot(x2 - x1, y2 - y1), rr = Math.min(r, d1 / 2, d2 / 2);
       d += ` L ${x1 - (x1 - x0) / d1 * rr} ${y1 - (y1 - y0) / d1 * rr} Q ${x1} ${y1} ${x1 + (x2 - x1) / d2 * rr} ${y1 + (y2 - y1) / d2 * rr}`;
     }
-    d += ` L ${pts.at(-1)[0]} ${pts.at(-1)[1]}`;
+    // 线停在箭头底边，三角形尖头正好落在终点（细线 + 小实心三角）
+    const [ex, ey] = pts.at(-1), [px, py] = pts.at(-2), el = Math.hypot(ex - px, ey - py) || 1, AH = 10;
+    d += ` L ${ex - (ex - px) / el * AH} ${ey - (ey - py) / el * AH}`;
     const c = opt.c || "#3fdf93";
     const p = document.createElementNS(NS, "path");
     p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", c); p.setAttribute("stroke-width", opt.w || 2); p.setAttribute("stroke-opacity", opt.o ?? 0.85);
