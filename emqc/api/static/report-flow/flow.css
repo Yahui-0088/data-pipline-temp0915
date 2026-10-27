@@ -331,3 +331,5 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .kps:not(.mini) b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kps:not(.mini) div { font-size: clamp(11px, 2.9cqi, 14px); padding: clamp(9px, 2.6cqi, 14px) clamp(10px, 3cqi, 16px); }
 .kps:not(.mini) b { font-size: clamp(16px, 5.6cqi, 30px); }
+.dsc .br.run { fill: var(--amber); } .dsc .br.bad { fill: #ff6b7d; }
+.jc .br { fill: #9d86e0; } .jc .dsb:hover .br { fill: #b9a7f0; }

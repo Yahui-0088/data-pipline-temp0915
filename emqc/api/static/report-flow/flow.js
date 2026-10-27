@@ -245,6 +245,25 @@
   const link = (href, txt) => (CAN ? `<a class="lk" href="${href}">${txt} ↗</a>` : "");
   const tabs = (names, sel) => `<div class="tabs" role="tablist">${names.map((n, i) => `<button type="button" role="tab" data-tab="${i}" aria-selected="${i === sel}">${n}</button>`).join("")}</div>`;
   const rateBox = (label, r) => `<div class="box"><div class="rate">${label}<b>${pct(r)}</b></div><div class="rbar"><span style="width:${(r || 0) * 100}%"></span></div></div>`;
+  // 导出 / 数据包任务：横向条形图，横轴 = 大小（MB，整齐的刻度）；条右边写大小和数量，悬停看状态和时间
+  function jobChart(xs, unit) {
+    const W = 520, L = 176, R = 418, row = 38, top = 10, H = top + xs.length * row + 34;
+    const mbv = (x) => (x.n_bytes || 0) / 1048576, mx = Math.max(1, ...xs.map(mbv));
+    const p10 = 10 ** Math.floor(Math.log10(mx / 4)), step = [1, 2, 5, 10].map((k) => k * p10).find((s) => mx / s <= 5) || 10 * p10;
+    const tmax = Math.ceil(mx / step) * step, X = (v) => L + (R - L) * (v / tmax);
+    const ticks = Array.from({ length: Math.round(tmax / step) + 1 }, (_, k) => k * step).map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${top - 4}" y2="${top + xs.length * row}" class="gd"/>
+      <text x="${X(v)}" y="${top + xs.length * row + 20}" text-anchor="middle" class="ax">${v >= 1000 ? (v / 1024).toFixed(1) + " GB" : +v.toFixed(1) + (v ? " MB" : "")}</text>`).join("");
+    const bars = xs.map((x, i) => {
+      const y = top + i * row + row / 2, st = x.status === "done" ? "" : x.status === "error" || x.status === "aborted" ? " bad" : " run";
+      return `<g class="dsb" data-tip="#${x.id} · ${esc(x.dataset_id)}|${num(x.n_sections)} ${unit}|${mb(x.n_bytes)}|${esc(x.status)}|${when(x.at)}">
+        <rect x="0" y="${y - row / 2}" width="${W}" height="${row}" class="hit"/>
+        <text x="${L - 12}" y="${y + 4}" text-anchor="end" class="nm">#${x.id} ${esc(x.dataset_id)}</text>
+        <rect x="${L}" y="${y - 7}" width="${R - L}" height="14" rx="4" class="tr"/>
+        <rect x="${L}" y="${y - 7}" width="${Math.max(2, X(mbv(x)) - L)}" height="14" rx="4" class="br${st}"/>
+        <text x="${R + 10}" y="${y + 4}" class="vl">${mb(x.n_bytes)}<tspan class="gr"> · ${num(x.n_sections)}</tspan></text></g>`;
+    }).join("");
+    return `<div class="dsc jc"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="各次任务的大小">${ticks}${bars}</svg><div class="tip" hidden></div></div>`;
+  }
   // 数据集可用比例：横向条形图 + 0–100% 坐标轴；点一根条 = 选中这个数据集；悬停看切片数 / 等级 / 最近一次清洗
   function dsChart() {
     const ds = D.datasets, W = 520, L = 176, R = 446, row = 38, top = 10, H = top + ds.length * row + 34;
@@ -360,12 +379,11 @@
     pack() {
       const P = D.plan, ready = P && P.cells ? P.cells.filter((c) => c.ready) : [];
       const packs = D.exports.filter((x) => x.kind === "pack");
-      return head("数据包", "训练数据包", P ? esc(P.dataset_id) : "", "按「用途 × 形态」把合格的切片打成训练侧拿到就能用的包：带标签、train / val / test 划分和索引。")
+      return head("", "训练数据包", P ? esc(P.dataset_id) : "")
         + kps([["能做的格子", num(ready.length)], ["已生成", num(D.delivery.n_packs)], ["样本", num(D.delivery.pack_samples)]])
         + (P && P.error ? `<div class="res err">${esc(P.error)}</div>` : `<div class="box"><h4>原图 · 三种形态</h4>${bars(["slice", "segment", "patch"].map((lv) => [LEVEL_ZH[lv], rawN(lv) || 0]), "l")}</div>`)
-        + `<div class="box"><h4>最近生成的数据包</h4>${packs.length ? `<table class="tb"><tr><th>#</th><th>数据集</th><th>状态</th><th>样本</th><th>大小</th><th>时间</th></tr>${packs.map((x) => `<tr><td class="m">${x.id}</td><td>${esc(x.dataset_id)}</td><td><span class="st ${x.status === "done" ? "ok2" : x.status === "error" ? "bad" : ""}">${esc(x.status)}</span></td><td class="m">${num(x.n_sections)}</td><td class="m">${mb(x.n_bytes)}</td><td class="m">${when(x.at)}</td></tr>`).join("")}</table>` : "<p class='note'>还没有生成过。</p>"}</div>`
-        + (CAN && P && !P.error ? `<div class="acts"><button type="button" class="p" data-act="pack">生成原图数据包</button><a href="/training">选用途 · 形态 →</a></div><div id="pk-msg"></div>` : "")
-        + link("/training", "打开「训练数据包」页");
+        + `<div class="box"><h4>最近生成的数据包<small>横轴：大小 · 条右边：大小 · 样本数</small></h4>${packs.length ? jobChart(packs, "个样本") : "<p class='note'>还没有生成过数据包。</p>"}</div>`
+        + (CAN && P && !P.error ? `<div class="acts one"><button type="button" class="p" data-act="pack">生成原图数据包</button></div><div id="pk-msg"></div>` : "");
     },
     delivery() {
       const d = D.delivery;
@@ -393,8 +411,7 @@
       const xs = D.exports.filter((x) => x.kind === "shards");
       return head("数据交付 / <b>训练导出</b>", "训练导出", `${num(D.delivery.n_shard_jobs)} 次`)
         + kps([["切片", num(D.delivery.shard_sections), "g"], ["大小", mb(D.delivery.shard_bytes)]])
-        + `<div class="box"><h4>最近的导出</h4>${xs.length ? `<table class="tb"><tr><th>#</th><th>数据集</th><th>状态</th><th>切片</th><th>大小</th><th>时间</th></tr>${xs.map((x) =>
-          `<tr><td class="m">${x.id}</td><td>${esc(x.dataset_id)}</td><td><span class="st ${x.status === "done" ? "ok2" : x.status === "error" ? "bad" : ""}">${esc(x.status)}</span></td><td class="m">${num(x.n_sections)}</td><td class="m">${mb(x.n_bytes)}</td><td class="m">${when(x.at)}</td></tr>`).join("")}</table>` : "<p class='note'>还没有导出过。</p>"}</div>`
+        + `<div class="box"><h4>最近的导出<small>横轴：大小 · 条右边：大小 · 切片数</small></h4>${xs.length ? jobChart(xs, "张切片") : "<p class='note'>还没有导出过。</p>"}</div>`
         + link("/delivery", "去导出");
     },
     stream() {
@@ -581,7 +598,7 @@
     if (!tip) return;
     if (!g) { tip.hidden = true; return; }
     const [n, s, v, gr, t] = g.dataset.tip.split("|"), rb = box.getBoundingClientRect();
-    tip.innerHTML = `<b>${n}</b><span>可用 ${v} · 等级 ${gr}</span><span>${s} 张切片 · 最近 ${t}</span>`;
+    tip.innerHTML = box.classList.contains("jc") ? `<b>${n}</b><span>${s} · ${v}</span><span>状态 ${gr} · ${t}</span>` : `<b>${n}</b><span>可用 ${v} · 等级 ${gr}</span><span>${s} 张切片 · 最近 ${t}</span>`;
     tip.hidden = false;
     const x = Math.min(e.clientX - rb.left + 14, rb.width - tip.offsetWidth - 8), y = e.clientY - rb.top + 16;
     tip.style.left = x + "px"; tip.style.top = y + "px";
