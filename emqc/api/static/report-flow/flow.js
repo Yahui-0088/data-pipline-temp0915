@@ -397,8 +397,8 @@
     const cells = cellsOf(lv), ready = cells.filter((c) => c.ready);
     const ex = CAN && ready.length ? `<button type="button" class="dl hd" data-act="pack-lv" data-lv="${lv}" aria-label="导出${LEVEL_ZH[lv]}数据包"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</button>` : "";
     return head("", LEVEL_ZH[lv]).replace("</h3>", "</h3>" + ex)
-      + kps([["能做的用途", `${ready.length} / ${cells.length}`], ["原图样本", num(rawN(lv))], ["原图大小", mb((cells.find((c) => c.task === "raw" && c.ready) || {}).est_bytes)]]).replace('class="kps"', 'class="kps mini"')
-      + `<div class="box"><h4>每种用途</h4><table class="tb"><tr><th>用途</th><th>样本</th><th>大小</th></tr>${cells.map((c) => {
+      + kps([["能做的用途", `${ready.length} / ${cells.length}`], ["原图样本", num(rawN(lv))], ["原图大小", mb((cells.find((c) => c.task === "raw" && c.ready) || {}).est_bytes)]])
+      + `<div class="box"><h4>每种用途</h4><table class="tb lg"><tr><th>用途</th><th>样本</th><th>大小</th></tr>${cells.map((c) => {
           const t = (D.plan.tasks || []).find((x) => x.task === c.task);
           return c.ready ? `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="m">${num(c.n)}</td><td class="m">${mb(c.est_bytes)}</td></tr>`
             : `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="w" colspan="2"><span class="st">${esc(c.reason || "不能做")}</span></td></tr>`; }).join("")}</table></div>`

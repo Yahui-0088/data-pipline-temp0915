@@ -305,3 +305,10 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
   background: none; color: #ffc58f; font: 500 14px inherit; font-family: inherit; cursor: pointer; transition: background .2s; }
 .ph .dl.hd:hover { background: rgba(255,154,60,.14); }
 .ph .dl.hd:disabled { opacity: .5; cursor: default; }
+
+/* 2D / 3D 操作台：「每种用途」表格放大 */
+.tb.lg { font-size: 16px; }
+.tb.lg th { font-size: 14px; padding: 8px 10px; }
+.tb.lg td { padding: 12px 10px; }
+.tb.lg td.m { font-size: 15px; }
+.tb.lg .st { font-size: 13.5px; }
