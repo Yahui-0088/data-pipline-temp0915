@@ -279,12 +279,12 @@
     },
     dataset() {
       const k = D.kpi;
-      const top = head("", "数据集", `${num(k.n_datasets)} 个`, "平台里登记的电镜体数据。清洗从这里按块读切片；数据包只取通过的切片；推理流直接从这里逐块读。")
-        + kps([["数据集", num(k.n_datasets)], ["已检查切片", num(k.n_sections)], ["可用比例", pct(k.retention), "g"]]);
+      const top = head("", "数据集", `${num(k.n_datasets)} 个`)
+        + kps([["已检查切片", num(k.n_sections)], ["可用比例", pct(k.retention), "g"]]);
       if (!D.datasets.length) return top + `<p class="empty">这个账号能看的项目里还没有数据集。</p>`;
       if (!D.datasets.some((x) => x.dataset_id === selDs)) selDs = D.datasets[0].dataset_id;
       // 选择数据集 → 运行清洗；下面是每个数据集的清洗记录（点一行也能选中）
-      const pick = CAN ? `<div class="box form"><h4>选择数据集，运行清洗</h4><select id="ds-sel" aria-label="数据集">${D.datasets.map((x) =>
+      const pick = CAN ? `<div class="box form"><h4>选择数据集</h4><select id="ds-sel" aria-label="数据集">${D.datasets.map((x) =>
             `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)}${x.project ? ` · ${esc(x.project)}` : ""}</option>`).join("")}</select>
           <div class="acts"><button type="button" class="p" data-act="run-ds">运行清洗 →</button><a href="/datasets/${encodeURIComponent(selDs)}">查看数据集 →</a></div><div id="ds-msg"></div></div>` : "";
       return top + pick
