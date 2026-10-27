@@ -1,20 +1,21 @@
 {# 由 ui/tailwind/gen_overview_graph.py 生成，改流程图请改那个脚本 #}
 <div class="relative" style="width:630px;height:848px">
-<svg class="absolute inset-0" width="630" height="848" viewBox="0 0 630 848" aria-hidden="true"><defs><marker id="ov-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="currentColor"/></marker></defs>
-<path d="M 240 48 L 240 79" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 142 L 240 169" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 256 L 240 289" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 352 L 240 379" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 442 L 240 469" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 532 L 240 559" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 622 L 240 649" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 240 736 L 240 769" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 350 214 L 437 214" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 395 214 L 395 412 L 437 412" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="5 5" marker-end="url(#ov-head)"/>
-<path d="M 530 244 L 530 303" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 530 382 L 530 341" class="text-neutral-600" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="5 5" marker-end="url(#ov-head)"/>
-<path d="M 130 694 L 86 694 L 86 412 L 127 412" class="text-neutral-500" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
-<path d="M 130 802 L 30 802 L 30 214 L 127 214" class="text-neutral-500" stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#ov-head)"/>
+<svg class="absolute inset-0" width="630" height="848" viewBox="0 0 630 848" aria-hidden="true"><defs><marker id="ov-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="rgba(255,255,255,0.32)"/></marker></defs>
+<path d="M 240 48 L 240 79" data-a="start" data-b="prepare" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 142 L 240 169" data-a="prepare" data-b="next_group" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 256 L 240 289" data-a="next_group" data-b="ingest" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 352 L 240 379" data-a="ingest" data-b="slice_qc" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 442 L 240 469" data-a="slice_qc" data-b="serial_qc" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 532 L 240 559" data-a="serial_qc" data-b="aggregate" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 622 L 240 649" data-a="aggregate" data-b="persist" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 240 736 L 240 769" data-a="persist" data-b="group_done" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 350 214 L 437 214" data-a="next_group" data-b="finalize" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 395 214 L 395 402 Q 395 412 405 412 L 437 412" data-a="next_group" data-b="cancel" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke-dasharray="4 4" marker-end="url(#ov-head)"/>
+<path d="M 530 244 L 530 303" data-a="finalize" data-b="end" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 530 382 L 530 341" data-a="cancel" data-b="end" data-kind="call" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke-dasharray="4 4" marker-end="url(#ov-head)"/>
+<path d="M 130 694 L 96 694 Q 86 694 86 684 L 86 422 Q 86 412 96 412 L 127 412" data-a="persist" data-b="slice_qc" data-kind="answer" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<path d="M 130 802 L 40 802 Q 30 802 30 792 L 30 224 Q 30 214 40 214 L 127 214" data-a="group_done" data-b="next_group" data-kind="answer" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none" marker-end="url(#ov-head)"/>
+<g id="ov-flow" fill="none" stroke-linecap="round"></g>
 </svg>
 <div class="absolute flex items-center justify-center rounded-full border border-dashed border-neutral-700 bg-ink-900 font-mono text-[12px] text-neutral-400" style="left:192px;top:16px;width:96px;height:32px">__start__</div>
 <button type="button" data-node="prepare" aria-pressed="false" class="ov-node ov-box" style="left:130px;top:82px;width:220px;height:60px"><span class="block text-[16px] font-semibold leading-tight">打开数据</span></button>

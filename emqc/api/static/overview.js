@@ -38,7 +38,76 @@
   const bar = $("ov-bar"), results = theater ? [...theater.querySelectorAll(".ov-result")] : [], stepLbl = $("ov-bar-step"), totalLbl = $("ov-bar-total"), line = $("ov-progress");
   let current = -1, live = false, zLabel = "";
   // 运行中一闪而过的分支节点（取下一个 z 段 / 本段完成只要几毫秒），在流程图上亮一下
+  // ---------------- 连线上的流光：底线静止；活跃的线上叠一小段流光，从源节点沿完整路径流到目标节点
+  // 流光 = 同一条 path 叠 5 层，每层只有一小段实线（stroke-dasharray），长度从 6 到 34px、越短越亮；
+  // 所有层的「头」对齐在同一个位置，所以头部清晰、尾巴逐层变淡。用 stroke-dashoffset 推进，严格贴着路径，过弯连续。
+  const NS = "http://www.w3.org/2000/svg";
+  const flowLayer = document.getElementById("ov-flow");
+  const edges = [...document.querySelectorAll(".ov-edge")];
+  const FLOW_COL = { call: "#6aa8ff", answer: "#3fd0b4", wait: "#f0b44c", fail: "#ff6b7d" };
+  const TAIL = [[34, 0.12], [26, 0.22], [18, 0.4], [11, 0.7], [5, 1]];
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const comets = new Set();
+  let flowTo = null, flowKind = "call", flowTimer = 0, flowRaf = 0;
+  function nodeEl(id) { return nodes.find((x) => x.dataset.node === id); }
+  function pulseNode(id, kind) {
+    const el = nodeEl(id); if (!el || reduceMotion) return;
+    el.style.setProperty("--pulse", FLOW_COL[kind] || FLOW_COL.call);
+    el.classList.remove("is-pulse"); void el.offsetWidth; el.classList.add("is-pulse");
+  }
+  function launch(edge, kind, onArrive) {
+    if (!flowLayer || reduceMotion) { onArrive && onArrive(); return; }
+    const len = edge.getTotalLength(), d = edge.getAttribute("d"), col = FLOW_COL[kind] || FLOW_COL.call;
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("class", "ov-comet"); g.style.color = col;
+    const layers = TAIL.map(([l, op]) => {
+      const pth = document.createElementNS(NS, "path");
+      pth.setAttribute("d", d); pth.setAttribute("stroke", col); pth.setAttribute("stroke-opacity", op);
+      pth.setAttribute("stroke-width", l <= 5 ? 2.2 : 1.6); pth.setAttribute("stroke-dasharray", `${l} ${len + 60}`);
+      g.append(pth); return [pth, l];
+    });
+    flowLayer.append(g);
+    // 时长 2–4 s，按路径长短在这个范围里取，速度大致一致
+    const dur = Math.max(2000, Math.min(4000, len * 9)), c = { g, layers, len, t0: 0, dur, onArrive, edge };
+    comets.add(c);
+    if (!flowRaf) flowRaf = requestAnimationFrame(tickFlow);
+  }
+  function tickFlow(now) {
+    for (const c of comets) {
+      if (!c.t0) c.t0 = now;
+      const u = Math.min(1, (now - c.t0) / c.dur), ease = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;   // 起步和到达都平缓
+      const head = ease * c.len;
+      for (const [pth, l] of c.layers) pth.setAttribute("stroke-dashoffset", String(l - head));
+      // 快到终点时整段淡出（尾巴不会「卡」在节点上）
+      c.g.style.opacity = u > 0.86 ? String(Math.max(0, 1 - (u - 0.86) / 0.14)) : "1";
+      if (u >= 1) { c.g.remove(); comets.delete(c); c.onArrive && c.onArrive(); }
+    }
+    flowRaf = comets.size ? requestAnimationFrame(tickFlow) : 0;
+  }
+  // 活跃路径：舞台显示到哪一步，通向它的线就一直有流光在传（每条错开起步，传完隔一会儿再来一束）
+  function flowInto(id, kind = "call") {
+    if (id === flowTo && kind === flowKind) return;
+    flowTo = id; flowKind = kind;
+    clearTimeout(flowTimer);
+    for (const e of edges) e.classList.toggle("is-active", !!id && e.dataset.b === id);
+    if (!id) return;
+    const ins = edges.filter((e) => e.dataset.b === id);
+    ins.forEach((e, k) => {
+      const run = () => {
+        if (flowTo !== id) return;
+        launch(e, kind === "call" ? e.dataset.kind || "call" : kind, () => {
+          pulseNode(id, kind === "call" ? e.dataset.kind || "call" : kind);
+          if (flowTo === id) e._t = setTimeout(run, 700 + Math.random() * 900);
+        });
+      };
+      e._t = setTimeout(run, 120 + k * 650);            // 错峰启动
+    });
+  }
+  function pulseEdges(id) {      // 运行中一闪而过的分支节点：从它出去的线各送一束
+    for (const e of edges) if (e.dataset.a === id) launch(e, e.dataset.kind || "call", () => pulseNode(e.dataset.b, e.dataset.kind || "call"));
+  }
   function flash(id) {
+    pulseEdges(id);
     const el = nodes.find((x) => x.dataset.node === id);
     if (!el) return;
     el.setAttribute("data-flash", "");
@@ -64,6 +133,7 @@
       }
       current = i;
     }
+    flowInto(steps[i]);
     if (secs != null) {
       const s = acts[i].querySelector(".ov-act-secs");
       if (s) s.firstChild.nodeValue = secs.toFixed(2);
@@ -137,7 +207,11 @@
     }
     acts[i].focus({ preventScroll: true });
   }
-  for (const n of nodes) n.addEventListener("click", () => jumpTo(n.dataset.node));
+  // 单击流程图里的块：这个块变绿（一直保持，直到点别的块），同时右边跳到这一步
+  for (const n of nodes) n.addEventListener("click", () => {
+    for (const x of nodes) x.classList.toggle("is-sel", x === n);
+    jumpTo(n.dataset.node);
+  });
 
   // 触屏没有悬停：点一下这一行切换景深（再点一次恢复）；点别处恢复。鼠标设备用 CSS :hover，键盘用 :focus-visible
   const finePointer = matchMedia("(hover: hover) and (pointer: fine)");
@@ -237,6 +311,7 @@
       show(done ? steps.length - 1 : idx, p, total || (performance.now() - t0) / 1000);
       if (totalLbl) totalLbl.textContent = `${(total || 0).toFixed(2)} s`;
       if (done) {
+        if (w.status === "error") flowInto(steps[Math.max(0, current)], "fail");   // 失败：通向出错那一步的线流红光
         if (status) { status.textContent = w.status === "done" ? "完成" : w.status === "error" ? "出错" : "已取消"; status.className = w.status === "done" ? "ov-pill-ok" : "inline-flex h-6 items-center rounded-full bg-[#2c1a20] px-2.5 text-[12px] text-[#e5566f]"; }
         if (msg) msg.textContent = w.status === "done" ? "运行完成，正在刷新数据…" : "运行没有正常完成，点运行编号看详情。";
         if (w.status === "done") {

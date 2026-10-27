@@ -14,20 +14,36 @@ W, HH = 630, 848
 fin_top, end_top, can_top = cy("next_group") - H // 2, cy("ingest") - 16, cy("slice_qc") - H // 2
 
 paths = []
-def seg(pts, head=True, dash=False, cls="text-neutral-600"):
-    d = "M " + " L ".join(f"{x} {y}" for x, y in pts)
-    paths.append(f'<path d="{d}" class="{cls}" stroke="currentColor" stroke-width="1.5" fill="none"{" stroke-dasharray=&quot;5 5&quot;" if dash else ""}{" marker-end=&quot;url(#ov-head)&quot;" if head else ""}/>'.replace("&quot;", '"'))
+def rounded(pts, r=10):
+    """水平 / 垂直折线 → 拐角处用圆弧（二次贝塞尔）过渡的 path；流光沿它走，过弯连续不跳。"""
+    if len(pts) < 3:
+        return "M " + " L ".join(f"{x} {y}" for x, y in pts)
+    out = [f"M {pts[0][0]} {pts[0][1]}"]
+    for i in range(1, len(pts) - 1):
+        (x0, y0), (x1, y1), (x2, y2) = pts[i - 1], pts[i], pts[i + 1]
+        l1 = max(abs(x1 - x0), abs(y1 - y0)); l2 = max(abs(x2 - x1), abs(y2 - y1)); rr = min(r, l1 / 2, l2 / 2)
+        ax = x1 - (x1 - x0) / l1 * rr if l1 else x1; ay = y1 - (y1 - y0) / l1 * rr if l1 else y1
+        bx = x1 + (x2 - x1) / l2 * rr if l2 else x1; by = y1 + (y2 - y1) / l2 * rr if l2 else y1
+        out.append(f"L {ax:g} {ay:g} Q {x1} {y1} {bx:g} {by:g}")
+    out.append(f"L {pts[-1][0]} {pts[-1][1]}")
+    return " ".join(out)
+
+
+def seg(pts, head=True, dash=False, cls="text-neutral-600", ends=("", ""), kind="call"):
+    # kind：call = 往下调用（蓝）/ answer = 回到前面的循环（青绿）；流光颜色按它来
+    d = rounded(pts)
+    paths.append(f'<path d="{d}" data-a="{ends[0]}" data-b="{ends[1]}" data-kind="{kind}" class="ov-edge" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" fill="none"{" stroke-dasharray=&quot;4 4&quot;" if dash else ""}{" marker-end=&quot;url(#ov-head)&quot;" if head else ""}/>'.replace("&quot;", '"'))
 seq = ["prepare", "next_group", "ingest", "slice_qc", "serial_qc", "aggregate", "persist", "group_done"]
-seg([(A_C, bot("start")), (A_C, top("prepare") - 3)])
+seg([(A_C, bot("start")), (A_C, top("prepare") - 3)], ends=("start", "prepare"))
 for a, b in zip(seq, seq[1:]):
-    seg([(A_C, bot(a)), (A_C, top(b) - 3)])
+    seg([(A_C, bot(a)), (A_C, top(b) - 3)], ends=(a, b))
 y = cy("next_group")
-seg([(A_R, y), (B_L - 3, y)])
-seg([(JX, y), (JX, cy("slice_qc")), (B_L - 3, cy("slice_qc"))], dash=True)
-seg([(B_C, fin_top + H), (B_C, end_top - 3)])
-seg([(B_C, can_top), (B_C, end_top + 32 + 3)], dash=True)
-seg([(A_L, cy("persist")), (TILE_X, cy("persist")), (TILE_X, cy("slice_qc")), (A_L - 3, cy("slice_qc"))], cls="text-neutral-500")
-seg([(A_L, cy("group_done")), (Z_X, cy("group_done")), (Z_X, cy("next_group")), (A_L - 3, cy("next_group"))], cls="text-neutral-500")
+seg([(A_R, y), (B_L - 3, y)], ends=("next_group", "finalize"))
+seg([(JX, y), (JX, cy("slice_qc")), (B_L - 3, cy("slice_qc"))], dash=True, ends=("next_group", "cancel"))
+seg([(B_C, fin_top + H), (B_C, end_top - 3)], ends=("finalize", "end"))
+seg([(B_C, can_top), (B_C, end_top + 32 + 3)], dash=True, ends=("cancel", "end"))
+seg([(A_L, cy("persist")), (TILE_X, cy("persist")), (TILE_X, cy("slice_qc")), (A_L - 3, cy("slice_qc"))], ends=("persist", "slice_qc"), kind="answer")
+seg([(A_L, cy("group_done")), (Z_X, cy("group_done")), (Z_X, cy("next_group")), (A_L - 3, cy("next_group"))], ends=("group_done", "next_group"), kind="answer")
 
 def node(k, title, sub_tpl, diamond=False, left=A_L, width=A_W, t=None):
     t = rows[k][0] if t is None else t
@@ -44,7 +60,7 @@ loop = "{% if n_tiles %} · ×{{ n_tiles }}{% endif %}"
 out = [f'<div class="relative" style="width:{W}px;height:{HH}px">',
        f'<svg class="absolute inset-0" width="{W}" height="{HH}" viewBox="0 0 {W} {HH}" aria-hidden="true">'
        '<defs><marker id="ov-head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
-       '<path d="M0 0 L8 4 L0 8 Z" fill="currentColor"/></marker></defs>', *paths, "</svg>",
+       '<path d="M0 0 L8 4 L0 8 Z" fill="rgba(255,255,255,0.32)"/></marker></defs>', *paths, '<g id="ov-flow" fill="none" stroke-linecap="round"></g>', "</svg>",
        pill(A_C - 48, top("start"), "__start__"),
        node("prepare", "打开数据", ""),
        node("next_group", "取下一个 z 段", "条件分支", diamond=True),

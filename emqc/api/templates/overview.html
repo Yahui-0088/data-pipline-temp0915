@@ -92,6 +92,7 @@
           <div id="ov-graph-fit" class="origin-top">
             {% include "_overview_graph.html" %}
           </div>
+          <div class="ov-flow-legend" aria-hidden="true"><span class="k-call">调用</span><span class="k-answer">返回</span><span class="k-wait">等待用户</span><span class="k-fail">失败</span></div>
         </div>
 
         <div id="ov-theater" class="ov-theater" data-total="{{ stage[-1].at if stage else 0 }}">

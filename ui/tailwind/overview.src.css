@@ -636,3 +636,26 @@ select.dl-in { cursor: pointer; }
   .dt-sl, .cub.is-win, .dl-world .pl, .dl-bar span, .dl-in, .dl-check > span, .dl-go, .dl-chip span { transition: none !important; animation: none !important; }
   .dl-file-card.is-run em::before, .dl-spin::before { animation: none; }
 }
+
+/* 流程图：单击选中的块变绿 */
+.ov-box.is-sel { border-color: #3fc07a !important; background-color: rgba(44, 240, 138, 0.14) !important; box-shadow: 0 0 0 3px rgba(63, 192, 122, 0.18), 0 0 20px rgba(63, 192, 122, 0.35); }
+.ov-diamond.is-sel { background-color: #2f6b46 !important; filter: drop-shadow(0 0 10px rgba(63, 192, 122, 0.55)); }
+.ov-node.is-sel > span:first-child { color: #c9f7dc; }
+
+/* 流程图连线：底线是低对比的浅灰细线、静止不动；活跃的线稍亮一点，上面跑一小段流光（delivery 风格，见 overview.js 的 launch） */
+.ov-edge { color: rgba(255, 255, 255, 0.2); transition: color 300ms ease; }
+.ov-edge.is-active { color: rgba(255, 255, 255, 0.42); }
+.ov-comet { filter: drop-shadow(0 0 2.5px currentColor); pointer-events: none; }
+/* 流光到达：目标节点一次很轻的光晕脉冲（颜色跟流光一致） */
+.ov-node.is-pulse { animation: ov-node-pulse 700ms ease-out; }
+@keyframes ov-node-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse, #6aa8ff) 55%, transparent); } 100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--pulse, #6aa8ff) 0%, transparent); } }
+.ov-diamond.is-pulse { animation: ov-dia-pulse 700ms ease-out; }
+@keyframes ov-dia-pulse { 0% { filter: drop-shadow(0 0 0 transparent) brightness(1.35); } 40% { filter: drop-shadow(0 0 8px var(--pulse, #6aa8ff)) brightness(1.25); } 100% { filter: drop-shadow(0 0 0 transparent) brightness(1); } }
+/* 图例：调用 / 返回 / 等待用户 / 失败 */
+.ov-flow-legend { position: absolute; right: 18px; top: 14px; z-index: 3; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #8a8a8a; pointer-events: none; }
+.ov-flow-legend span::before { content: ""; display: inline-block; width: 16px; height: 2px; margin-right: 7px; vertical-align: 3px; border-radius: 2px; }
+.ov-flow-legend .k-call::before { background: linear-gradient(90deg, transparent, #6aa8ff); }
+.ov-flow-legend .k-answer::before { background: linear-gradient(90deg, transparent, #3fd0b4); }
+.ov-flow-legend .k-wait::before { background: linear-gradient(90deg, transparent, #f0b44c); }
+.ov-flow-legend .k-fail::before { background: linear-gradient(90deg, transparent, #ff6b7d); }
+@media (prefers-reduced-motion: reduce) { .ov-node.is-pulse, .ov-diamond.is-pulse { animation: none; } }
