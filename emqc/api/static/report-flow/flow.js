@@ -314,7 +314,7 @@
     issues() {
       const A = D.albums || [];
       // 相册：每类问题一个文件夹；悬停时三张图从夹子里冒出一点；点图 → 屏幕中央大图，滚轮翻前后
-      const albums = A.length ? `<div class="box"><h4>样例图片<small>${A.length} 类 · 点开看大图，滚轮翻页</small><a class="dl" href="/api/v1/report/issues.zip" title="导出全部问题图片（按类型分文件夹的 zip）" aria-label="导出问题图片压缩包"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</a></h4><div class="albums">${A.map((a, ai) =>
+      const albums = A.length ? `<div class="box"><h4>样例图片<a class="dl" href="/api/v1/report/issues.zip" title="导出全部问题图片（按类型分文件夹的 zip）" aria-label="导出问题图片压缩包"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</a></h4><div class="albums">${A.map((a, ai) =>
         `<button type="button" class="alb" data-alb="${ai}" aria-label="${esc(a.zh)}，${a.shots.length} 张">
           <span class="fb"></span>
           ${a.shots.slice(0, 3).map((s, i) => `<img class="pp p${i}" src="${esc(s.src)}" alt="" loading="lazy" data-alb="${ai}" data-i="${i}">`).join("")}
