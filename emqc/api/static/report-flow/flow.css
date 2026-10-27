@@ -324,3 +324,10 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .ptabs button[aria-selected="true"] .stepn { background: rgba(157,134,224,.45); color: #fff; }
 .box[hidden] { display: none; }
 .box.form > label:first-child { margin-top: 0; }
+
+/* 数字卡片：不管面板多宽，都一排放下（名字在上、数字在下），窄的时候字跟着缩小 */
+.kps:not(.mini) { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); grid-template-columns: none; container-type: inline-size; }
+.kps:not(.mini) div { min-width: 0; padding: 14px 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kps:not(.mini) b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kps:not(.mini) div { font-size: clamp(11px, 2.9cqi, 14px); padding: clamp(9px, 2.6cqi, 14px) clamp(10px, 3cqi, 16px); }
+.kps:not(.mini) b { font-size: clamp(16px, 5.6cqi, 30px); }
