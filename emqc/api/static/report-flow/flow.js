@@ -321,7 +321,7 @@
           <span class="ff"><b>${esc(a.zh)}</b><em>${num(a.shots.length)} 张${a.n > a.shots.length ? ` / ${num(a.n)} 条` : ""}</em></span>
         </button>`).join("")}</div></div>` : `<div class="box"><h4>样例图片</h4><p class="note">最近一次清洗没有留下问题截图。</p></div>`;
       return head("", "问题图片")
-        + kps([["严重问题", num(problems()), "o"], ["不可用切片", num(D.latest ? D.latest.n_failed : 0), "y"], ["截图", num(D.latest ? D.latest.n_shots : 0)]])
+        + kps([["严重问题图片", num(problems()), "o"], ["不可用切片", num(D.latest ? D.latest.n_failed : 0), "y"], ["截图", num(D.latest ? D.latest.n_shots : 0)]])
         + albums
         + `<div class="box"><h4>问题统计</h4>${D.failures.length ? bars(D.failures.slice(0, 8).map((f) => [f.zh, f.n]), "o") : "<p class='note'>没有高等级问题。</p>"}</div>`;
     },
