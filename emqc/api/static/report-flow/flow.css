@@ -383,3 +383,5 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .kps b.sm { font-size: 20px; margin-top: 10px; }
 .tscroll { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
 .tscroll .tb { min-width: 100%; font-size: 14.5px; }
+.rf.open .diamond { opacity: .32; filter: blur(1.2px); }
+.diamond:not([data-node]) { cursor: default; }
