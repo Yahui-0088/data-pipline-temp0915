@@ -306,7 +306,7 @@
       // 清洗记录：所选数据集的每一次运行
       const rs = D.runs.filter((r) => r.dataset_id === selDs);
       const grades = (g) => Object.entries(g || {}).sort().map(([k, n]) => `${esc(k)}×${n}`).join(" ") || "–";
-      const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small></h4>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
+      const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small>${rs.length ? `<button type="button" class="dl" data-csv="1" aria-label="导出清洗记录 CSV"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>导出</button>` : ""}</h4>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
           `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">${r.run_id}</a>` : r.run_id}</td><td class="m">${num(r.n_sections)}</td><td class="m">${pct(r.retention)}</td><td class="m">${grades(r.grades)}</td><td class="m">${num(r.n_findings)}</td><td class="m">${secs(r.wall_s)}</td><td class="m">${when(r.finished_at)}</td></tr>`).join("")}</table>`
           : `<p class="note">这个数据集还没清洗过。</p>`}</div>`;
       return top + cfg + rec;
@@ -405,6 +405,19 @@
     if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : (d.detail && d.detail.message) || `出错了（${r.status}）`);
     return d;
   }
+  // 清洗记录导出为 CSV（所选数据集的每一次运行）；带 BOM，Excel 打开中文不乱码
+  function exportRuns() {
+    const rs = D.runs.filter((r) => r.dataset_id === selDs);
+    const q = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const head = ["运行编号", "数据集", "切片数", "可用比例", "等级", "问题数", "用时(秒)", "完成时间"];
+    const lines = rs.map((r) => [r.run_id, r.dataset_id, r.n_sections, r.retention == null ? "" : (r.retention * 100).toFixed(1) + "%",
+      Object.entries(r.grades || {}).sort().map(([k, n]) => `${k}×${n}`).join(" "), r.n_findings, r.wall_s == null ? "" : (+r.wall_s).toFixed(1), (r.finished_at || "").replace("T", " ")].map(q).join(","));
+    const blob = new Blob(["\ufeff" + [head.join(","), ...lines].join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `clean-runs-${selDs.replace(/[^\w.-]+/g, "_")}.csv`; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
   // 大图：屏幕中央显示一张，滚轮 / ← → 翻同一类的前后张，Esc 或点空白关闭
   let LB = null;
   function lightbox(ai, i) {
@@ -449,6 +462,7 @@
   };
   const say = (id, txt, err) => { const el = $(id); if (el) el.innerHTML = `<div class="res ${err ? "err" : ""}">${esc(txt)}</div>`; };
   body.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-csv]")) { exportRuns(); return; }
     const al = e.target.closest("[data-alb]");
     if (al) { const img = e.target.closest("img[data-i]"); lightbox(+al.dataset.alb, img ? +img.dataset.i : 0); return; }
     const ck = e.target.closest("[data-chk]");
