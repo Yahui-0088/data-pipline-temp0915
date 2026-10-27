@@ -314,10 +314,13 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tb.lg .st { font-size: 13.5px; }
 .row3e { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
 
-/* 数据交付：两个并排的小块，点击切换 */
-.tabs.dvt { gap: 0; padding: 4px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(255,255,255,.03); margin: 20px 0 14px; }
-.tabs.dvt button { flex: 1; padding: 10px 12px; margin: 0; border: 0; border-radius: 9px; font-size: 15px; color: #a8a8a8; }
-.tabs.dvt button[aria-selected="true"] { background: rgba(157,134,224,.18); color: #e5dcff; box-shadow: inset 0 0 0 1px rgba(157,134,224,.5); }
-.tabs.dvt button:hover:not([aria-selected="true"]) { color: #e5e5e5; background: rgba(255,255,255,.04); }
-.tabs.dvt + .box.form { margin-top: 0; }
+/* 分开的几块小卡片，点击切换下面显示哪一块 */
+.ptabs { display: flex; gap: 12px; margin: 20px 0 14px; }
+.ptabs button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 2px; padding: 14px 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.03); color: #a8a8a8; font: 500 15px inherit; font-family: inherit; cursor: pointer; transition: background .2s, border-color .2s, color .2s; white-space: nowrap; }
+.ptabs button .stepn { width: 22px; height: 22px; margin-right: 8px; font-size: 12px; }
+.ptabs button:hover:not([aria-selected="true"]) { color: #e5e5e5; border-color: rgba(255,255,255,.22); }
+.ptabs button[aria-selected="true"] { background: rgba(157,134,224,.16); border-color: rgba(157,134,224,.65); color: #fff; box-shadow: 0 0 0 1px rgba(157,134,224,.25), 0 6px 18px rgba(0,0,0,.25); }
+.ptabs button[aria-selected="true"] .stepn { background: rgba(157,134,224,.45); color: #fff; }
+.box[hidden] { display: none; }
 .box.form > label:first-child { margin-top: 0; }

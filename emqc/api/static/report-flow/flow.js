@@ -262,6 +262,11 @@
     }).join("");
     return `<div class="box dsc"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="各数据集可用比例">${ticks}${bars}</svg><div class="tip" hidden></div></div>`;
   }
+  // 分成几块、点击切换：上面一排分开的小卡片，下面只显示选中的那一块（其余隐藏，输入内容保留）
+  const PT = { cw: 0, dv: 0 };
+  const paneTabs = (g, names) => `<div class="ptabs" role="tablist">${names.map((n, i) =>
+    `<button type="button" role="tab" data-pt="${g}" data-i="${i}" aria-selected="${PT[g] === i}"><span class="stepn">${i + 1}</span>${n}</button>`).join("")}</div>`;
+  const pane = (g, i) => `data-pane="${g}" data-i="${i}" ${PT[g] === i ? "" : "hidden"}`;
   const noRun = `<p class="empty">还没有清洗结果：先在「数据集」里选一个数据集运行清洗。</p>`;
 
   const R = {
@@ -274,20 +279,19 @@
         + kps([["已登记数据集", num(D.datasets.length)], ["采集任务", num(D.crawl.jobs.length)], ["公开数据预设", num(D.crawl.presets.length)]]);
       const jobBox = jobs ? `<div class="box"><h4>最近的采集任务</h4>${jobs}</div>` : "";
       if (!CAN) return top + jobBox;
-      const step = (n, t) => `<h4><span class="stepn">${n}</span>${t}</h4>`;
-      return top
+      return top + paneTabs("cw", ["URL", "ROI", "数据集注册"])
         // 1 · 卷信息：看分辨率、尺寸、编码，不下载体素
-        + `<div class="box form">${step(1, "URL")}
+        + `<div class="box form" ${pane("cw", 0)}>
             <label>预设</label><select id="cw-preset">${D.crawl.presets.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join("")}</select>
             <div class="row2r"><div><label>卷 URL</label><input id="cw-url" value="${esc(p.url)}" spellcheck="false"></div><div><label>mip</label><input id="cw-mip" type="number" min="0" value="${p.mip}"></div></div>
             <div class="acts one"><button type="button" class="p" data-act="volume">查看</button></div><div id="cw-res"></div></div>`
         // 2 · ROI 预判：用组织类型图几秒判断这块值不值得爬
-        + `<div class="box form">${step(2, "ROI")}
+        + `<div class="box form" ${pane("cw", 1)}>
             <label>ROI</label><input id="cw-roi" value="260000-260512,210000-210512,2600-2632" spellcheck="false">
             <label>组织类型图 URL</label><input id="cw-mask" value="${esc(p.mask_url || "")}" spellcheck="false">
             <div class="acts one"><button type="button" class="p" data-act="precheck">预判</button></div><div id="cw-pre"></div></div>`
         // 3 · 注册 / 下载
-        + `<div class="box form">${step(3, "数据集注册")}
+        + `<div class="box form" ${pane("cw", 2)}>
             <div class="row2e"><div><label>dataset_id</label><input id="cw-dsid" placeholder="h01_roi_x260k" spellcheck="false"></div><div><label>分割卷</label><input id="cw-seg" value="${esc(p.seg_url || "")}" spellcheck="false"></div></div>
             <div class="row3"><div><label>物种</label><input id="cw-sp" value="${esc(p.species || "")}"></div><div><label>脑区</label><input id="cw-br" value="${esc(p.brain_region || "")}"></div><div><label>分割 mip</label><input id="cw-segmip" type="number" min="0" value="${p.seg_mip ?? 0}"></div></div>
             <label class="chk"><input type="checkbox" id="cw-req"> 预判不合格则拒绝</label>
@@ -368,19 +372,18 @@
       if (!D.datasets.some((x) => x.dataset_id === selDs) && D.datasets.length) selDs = D.datasets[0].dataset_id;
       const opts = (withGrade) => D.datasets.map((x) => `<option value="${esc(x.dataset_id)}" ${x.dataset_id === selDs ? "selected" : ""}>${esc(x.dataset_id)} · ${num(x.n_blocks)} blocks${withGrade && x.grade ? " · " + esc(x.grade) : ""}</option>`).join("");
       const hint = (lt, ht) => `<label class="hint"><span class="lt">${lt}</span><span class="ht">${ht}</span></label>`;
-      const seg = `<div class="tabs dvt" role="tablist">${["训练分片 · 新建导出", "推理流 · 新建会话"].map((n, i) => `<button type="button" role="tab" data-dvtab="${i}" aria-selected="${dvTab === i}">${n}</button>`).join("")}</div>`;
-      const forms = !(CAN && D.datasets.length) ? "" : seg + (dvTab === 0 ? `<div class="box form">
+      const forms = !(CAN && D.datasets.length) ? "" : paneTabs("dv", ["训练分片 · 新建导出", "推理流 · 新建会话"]) + `<div class="box form" ${pane("dv", 0)}>
             <label>数据集</label><select id="dv-ds">${opts(true)}</select>
             <div class="row2e"><div><label>最短连续段</label><input id="dv-minrun" type="number" min="1" value="8"></div><div><label>每片最多张数</label><input id="dv-shardz" type="number" min="0" value="16"></div></div>
             <div class="row2e"><div>${hint("最低综合分", "可空")}<input id="dv-minq" type="number" step="0.05" min="0" max="1" placeholder="0.8"></div><div>${hint("一并拷贝的资产", "同一批 z，原样复制")}<input id="dv-assets" placeholder="gt_segmentation" spellcheck="false"></div></div>
             ${hint("block", "留空 = 全部；填 block id，逗号分隔")}<input id="dv-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
             <label class="chk"><input type="checkbox" id="dv-resume" checked> 续传（已存在的分片跳过）</label>
             <div class="acts one"><button type="button" class="p" data-act="dv-export">开始导出</button></div><div id="dv-msg1"></div></div>`
-        : `<div class="box form">
+        + `<div class="box form" ${pane("dv", 1)}>
             <label>数据集</label><select id="dv-ds2">${opts(false)}</select>
             <div class="row3e"><div><label>每个子块张数</label><input id="dv-zchunk" type="number" min="1" value="16"></div><div><label>顺序</label><select id="dv-order"><option value="z">空间顺序</option><option value="grade">等级好的先</option></select></div><div><label>客户端名</label><input id="dv-client" placeholder="unet-infer" spellcheck="false"></div></div>
             <label class="chk"><input type="checkbox" id="dv-skip"> 跳过含未通过切片的子块</label>
-            <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>`);
+            <div class="acts one"><button type="button" class="p" data-act="dv-stream">创建会话</button></div><div id="dv-msg2"></div></div>`;
       return head("", "数据交付")
         + kps([["训练导出", `${num(d.n_shard_jobs)} 次`], ["导出切片", num(d.shard_sections), "g"], ["推理流", `${num(d.n_streams)} 个`]])
         + forms
@@ -420,7 +423,7 @@
             : `<tr><td>${esc(t ? t.zh : c.task)}</td><td class="w" colspan="2"><span class="st">${esc(c.reason || "不能做")}</span></td></tr>`; }).join("")}</table></div>`
       + `<div id="pk-msg"></div>`;
   }
-  let selDs = null, dvTab = 0;
+  let selDs = null;
   function render(id) {
     body.innerHTML = R[id]();
     body.scrollTop = 0;
@@ -494,8 +497,13 @@
     if (e.target.closest("[data-csv]")) { exportRuns(); return; }
     const al = e.target.closest("[data-alb]");
     if (al) { const img = e.target.closest("img[data-i]"); lightbox(+al.dataset.alb, img ? +img.dataset.i : 0); return; }
-    const dt = e.target.closest("[data-dvtab]");
-    if (dt) { dvTab = +dt.dataset.dvtab; render("delivery"); return; }
+    const pt = e.target.closest("[data-pt]");
+    if (pt) {
+      const g = pt.dataset.pt, i = +pt.dataset.i; PT[g] = i;
+      body.querySelectorAll(`[data-pt="${g}"]`).forEach((x) => x.setAttribute("aria-selected", String(+x.dataset.i === i)));
+      body.querySelectorAll(`[data-pane="${g}"]`).forEach((x) => { x.hidden = +x.dataset.i !== i; });
+      return;
+    }
     const ck = e.target.closest("[data-chk]");
     if (ck) { e.preventDefault(); body.querySelectorAll("input[name=cl-chk]").forEach((c) => { c.checked = ck.dataset.chk === "1"; }); return; }
     const row = e.target.closest("[data-ds]");
