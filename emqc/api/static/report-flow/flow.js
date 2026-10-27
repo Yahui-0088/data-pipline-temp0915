@@ -117,44 +117,44 @@
     FLOWS.length = 0; comets = [];
     defs(); host.replaceChildren();
     const L = D.latest, k = D.kpi, dl = D.delivery;
-    const A = node("crawl", 170, 470, 220, `数据采集<small>${D.crawl.presets.length} 个预设 · 采集任务 ${D.crawl.jobs.length}</small>`, "", "数据采集");
-    const ds = holo("dataset", 470, 236, 300, "/static/report-flow/em_block.png", 401 / 640, [[.0176, .5026], [.5048, .9949], [.9952, .5982]],
+    const A = node("crawl", 170, 300, 200, `数据采集<small>${D.crawl.presets.length} 个预设 · 采集任务 ${D.crawl.jobs.length}</small>`, "", "数据采集");
+    const ds = holo("dataset", 470, 300, 240, "/static/report-flow/em_block.png", 401 / 640, [[.0176, .5026], [.5048, .9949], [.9952, .5982]],
       "DATASET", `数据集 ${num(k.n_datasets)} 个 · ${num(k.n_sections)} 张切片`, "#c9b8f0");
-    path([[170, A.t - 2], [170, 236], [ds.l + 6, 236]], { stage: 0 }); label(238, 212, "写入数据集");
+    path([[A.r + 2, 300], [ds.l + 4, 300]], { stage: 0 }); label((A.r + ds.l) / 2, 278, "写入数据集");
     // 数据清洗：菱形判断
     const dm = add("div", "diamond", 470, 560, `<svg viewBox="0 0 230 150"><polygon points="115,2 228,75 115,148 2,75" fill="#0b0b08" stroke="#f3e27a" stroke-width="2" stroke-dasharray="7 6"/></svg>
       <span>数据清洗<small>${D.checks.length} 项检查 · ${L ? num(L.n_slices) + " 张" : "还没有结果"}</small><em class="live" id="rf-live"></em></span>`, nodeAttrs("clean", "数据清洗"));
     dm.id = "rf-clean";
     path([[470, ds.b + 34 + 36], [470, 560 - 77]], { stage: 1 }); label(530, (ds.b + 70 + 483) / 2, "读取切片");
-    const G = node("passed", 470, 790, 210, L ? `合格 ${num(L.n_passed)} 张<small>可用率 ${pct(L.retention)}</small>` : "合格<small>–</small>", "green", "合格");
-    path([[470, 560 + 77], [470, G.t - 4]], { stage: 2 }); label(505, 690, "通过");
-    const Q = node("issues", 170, 790, 220, `问题图片<small>${num(problems())} 条 · 截图 ${num(L ? L.n_shots : 0)}</small>`, "org", "问题图片");
-    path([[470 - 117, 560], [170, 560], [170, Q.t - 4]], { c: "#ff9a3c", m: "aho", stage: 2 }); label(260, 540, "不通过", "org");
+    const G = node("passed", 470, 820, 200, L ? `合格 ${num(L.n_passed)} 张<small>可用率 ${pct(L.retention)}</small>` : "合格<small>–</small>", "green", "合格");
+    path([[470, 560 + 77], [470, G.t - 4]], { stage: 2 }); label(505, (637 + G.t) / 2, "通过");
+    const Q = node("issues", 170, 820, 200, `问题图片<small>${num(problems())} 条 · 截图 ${num(L ? L.n_shots : 0)}</small>`, "org", "问题图片");
+    path([[470 - 117, 560], [170, 560], [170, Q.t - 4]], { c: "#ff9a3c", m: "aho", stage: 2 }); label(262, 538, "不通过", "org");
     // 汇总分级 → 三种形态 → 格式 → 数据包
-    const S = node("grade", 800, 560, 190, `汇总 · 分级<small>${L ? gradeTxt(L.grades) : "–"}</small>`, "dark", "汇总分级");
-    path([[G.r + 2, 790], [640, 790], [640, 560], [S.l - 6, 560]], { stage: 3 });
+    const S = node("grade", 800, 560, 200, `汇总 · 分级<small>${L ? gradeTxt(L.grades) : "–"}</small>`, "dark", "汇总分级");
+    path([[G.r + 2, 820], [640, 820], [640, 560], [S.l - 6, 560]], { stage: 3 });
     const FX = 1090, CX2 = 1290, BX = 1430;
-    for (const [lv, y] of [["slice", 330], ["segment", 560], ["patch", 790]]) {
-      path(y === 560 ? [[S.r + 2, 560], [FX - 92, 560]] : [[S.r + 2, 560], [950, 560], [950, y], [FX - 92, y]], { stage: 4 });
+    for (const [lv, y] of [["slice", 300], ["segment", 560], ["patch", 820]]) {
+      path(y === 560 ? [[S.r + 2, 560], [FX - 106, 560]] : [[S.r + 2, 560], [945, 560], [945, y], [FX - 106, y]], { stage: 4 });
       icon(FX, y - 62, ICONS[lv]);
       const n = rawN(lv);
-      node(lv, FX, y, 170, `${LEVEL_ZH[lv]}<small>${n == null ? "–" : num(n) + (lv === "slice" ? " 张" : lv === "segment" ? " 段" : " 个")}</small>`, "", LEVEL_ZH[lv]);
+      node(lv, FX, y, 200, `${LEVEL_ZH[lv]}<small>${n == null ? "–" : num(n) + (lv === "slice" ? " 张" : lv === "segment" ? " 段" : " 个")}</small>`, "", LEVEL_ZH[lv]);
       node(null, CX2, y, 120, "npy / png", "chip");
-      path([[FX + 86, y], [CX2 - 64, y]], { r: 0, stage: 5 });
+      path([[FX + 102, y], [CX2 - 64, y]], { r: 0, stage: 5 });
       path([[CX2 + 62, y], [BX - 4, y]], { r: 0, stage: 6 });
     }
-    const bar = add("div", "bar", BX, 250, `<div>数据包<small>原图<br>train / val / test<br>${esc(D.plan ? D.plan.dataset_id : "–")}<br>已生成 ${num(dl.n_packs)} 个</small></div>`, nodeAttrs("pack", "数据包"));
+    const bar = add("div", "bar", BX, 240, `<div>数据包<small>原图<br>train / val / test<br>${esc(D.plan ? D.plan.dataset_id : "–")}<br>已生成 ${num(dl.n_packs)} 个</small></div>`, nodeAttrs("pack", "数据包"));
     Object.assign(bar.style, { width: "130px", height: "640px" });
     // 交付
-    holo("delivery", 1720, 322, 240, "/static/report-flow/stack_block.png", 391 / 520, [[.0017, .5556], [.457, .9978], [.9975, .6656]], "DELIVERY", "数据交付", "#7ff0b8");
-    path([[BX + 132, 322], [1720 - 132, 322]], { stage: 7 });
-    const T = node("export", 1720, 560, 250, `训练导出<small>${num(dl.n_shard_jobs)} 次 · ${num(dl.shard_sections)} 张 · ${mb(dl.shard_bytes)}</small>`, "teal", "训练导出");
-    path([[1720, 498], [1720, T.t - 4]], { r: 0, stage: 8 });
+    const dv = holo("delivery", 1720, 300, 240, "/static/report-flow/stack_block.png", 391 / 520, [[.0017, .5556], [.457, .9978], [.9975, .6656]], "DELIVERY", "数据交付", "#7ff0b8");
+    path([[BX + 132, 300], [1720 - 126, 300]], { stage: 7 });
+    const T = node("export", 1720, 560, 240, `训练导出<small>${num(dl.n_shard_jobs)} 次 · ${num(dl.shard_sections)} 张 · ${mb(dl.shard_bytes)}</small>`, "teal", "训练导出");
+    path([[1720, dv.b + 70], [1720, T.t - 4]], { r: 0, stage: 8 });
     const nOpen = D.streams.filter((x) => x.status === "open").length;
-    const R = node("stream", 1720, 790, 250, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
-    path([[BX + 132, 790], [R.l - 4, 790]], { stage: 7 }); label(1720, 728, "逐块读取 · 不落地", "top");
-    add("div", "factory", 1720, 150, `Patch Factory Backup<span>运行 ${num(D.n_runs)} 次 · 检查 ${D.checks.length} 项 · API 文档</span>`, nodeAttrs("factory", "Patch Factory Backup"));
-    path([[1720, 178], [1720, 214]], { r: 0, c: "#9a9da6", m: "ahw" });
+    const R = node("stream", 1720, 820, 240, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
+    path([[BX + 132, 820], [R.l - 4, 820]], { stage: 7 }); label(1720, 760, "逐块读取 · 不落地", "top");
+    add("div", "factory", 1720, 128, `Patch Factory Backup<span>运行 ${num(D.n_runs)} 次 · 检查 ${D.checks.length} 项 · API 文档</span>`, nodeAttrs("factory", "Patch Factory Backup"));
+    path([[1720, 156], [1720, 196]], { r: 0, c: "#9a9da6", m: "ahw" });
     makeComets();
     if (openId) mark(openId);
     showLive();

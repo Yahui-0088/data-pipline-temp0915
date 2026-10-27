@@ -54,6 +54,7 @@ button { font: inherit; color: inherit; }
   background: var(--card); border: 1.5px solid var(--line); border-radius: 4px; color: var(--text); font-size: 17px; line-height: 1.35; padding: 10px 16px; white-space: nowrap;
   transition: transform 600ms var(--ease), box-shadow 400ms, opacity 400ms, filter 400ms, border-color 250ms; }
 .n small { display: block; font-size: 13.5px; color: var(--muted); margin-top: 3px; }
+.n { box-sizing: border-box; } .n:not(.chip) { min-height: 66px; }   /* 所有节点同宽同高，排在三行七列的网格上 */
 .n.dark { background: #0b0c10; border-color: #d9d9d9; }
 .n.green { background: var(--green-d); border-color: var(--green-d); color: #06210f; font-weight: 700; }
 .n.green small { color: #0b3a1b; }
