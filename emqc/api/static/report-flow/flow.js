@@ -307,7 +307,7 @@
       const rec = `<div class="box"><h4>清洗记录<small>${esc(selDs)} · ${rs.length} 次</small></h4>${rs.length ? `<table class="tb"><tr><th>#</th><th>切片</th><th>可用</th><th>等级</th><th>问题</th><th>用时</th><th>完成</th></tr>${rs.map((r) =>
           `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">${r.run_id}</a>` : r.run_id}</td><td class="m">${num(r.n_sections)}</td><td class="m">${pct(r.retention)}</td><td class="m">${grades(r.grades)}</td><td class="m">${num(r.n_findings)}</td><td class="m">${secs(r.wall_s)}</td><td class="m">${when(r.finished_at)}</td></tr>`).join("")}</table>`
           : `<p class="note">这个数据集还没清洗过。</p>`}</div>`;
-      return top + cfg + rec + `<div class="acts one"><button type="button" data-go="issues">▣ 查看问题图片 →</button></div>` + link("/pipeline", "打开完整的「运行」页");
+      return top + cfg + rec + link("/pipeline", "打开完整的「运行」页");
     },
     issues() {
       const shots = D.examples.flatMap((e) => e.shots.map((s) => ({ ...s, zh: e.zh })));
