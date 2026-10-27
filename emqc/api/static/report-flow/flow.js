@@ -348,10 +348,9 @@
     },
     grade() {
       const L = D.latest, g = (L && L.grades) || {};
-      return head("汇总 · 分级", "汇总与分级", L ? `运行 #${L.run_id}` : "", "把每个 tile 的问题汇总起来打质量分、定等级。")
-        + kps([["tile", num(Object.values(g).reduce((a, b) => a + b, 0))], ["质量分", L && L.quality != null ? L.quality.toFixed(2) : "–", "l"], ["可用率", pct(L && L.retention), "g"]])
-        + `<div class="box"><h4>tile 等级</h4>${["A", "B", "C", "D"].map((x) => `<div class="cat">${x} 级<div class="t ${x === "A" || x === "B" ? "g" : x === "C" ? "" : "o"}"><span style="width:${((g[x] || 0) / Math.max(1, ...Object.values(g))) * 100}%"></span></div><b>${num(g[x] || 0)}</b></div>`).join("")}</div>`
-        + `<div class="box"><h4>分级规则</h4><p class="note">A：可用 ≥ 95% 且没有致命问题　B：可用 ≥ 85%　C：可用 ≥ 60%　D：可用 &lt; 60% 或整块出问题</p></div>`;
+      return head("", "汇总与分级", L ? `运行 #${L.run_id}` : "")
+        + kps([["tile", num(Object.values(g).reduce((a, b) => a + b, 0))], ["质量分", L && L.quality != null ? L.quality.toFixed(2) : "–", "l"], ["可用率", pct(L && L.retention), "g"]]).replace('class="kps"', 'class="kps mini"')
+        + `<div class="box"><h4>tile 等级<span class="rule" tabindex="0" aria-describedby="rule-tip">分级规则<i aria-hidden="true">?</i><span class="rtip" role="tooltip" id="rule-tip"><b>A</b>可用 ≥ 95% 且没有致命问题<br><b>B</b>可用 ≥ 85%<br><b>C</b>可用 ≥ 60%<br><b>D</b>可用 &lt; 60% 或整块出问题</span></span></h4>${["A", "B", "C", "D"].map((x) => `<div class="cat">${x} 级<div class="t ${x === "A" || x === "B" ? "g" : x === "C" ? "" : "o"}"><span style="width:${((g[x] || 0) / Math.max(1, ...Object.values(g))) * 100}%"></span></div><b>${num(g[x] || 0)}</b></div>`).join("")}</div>`; 
     },
     slice() { return levelPanel("slice"); }, segment() { return levelPanel("segment"); }, patch() { return levelPanel("patch"); },
     pack() {
