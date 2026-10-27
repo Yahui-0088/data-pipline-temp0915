@@ -279,8 +279,7 @@
     },
     dataset() {
       const k = D.kpi;
-      const top = head("", "数据集", `${num(k.n_datasets)} 个`)
-        + kps([["已检查切片", num(k.n_sections)], ["可用比例", pct(k.retention), "g"]]);
+      const top = head("", "数据集", `${num(k.n_datasets)} 个`);
       if (!D.datasets.length) return top + `<p class="empty">这个账号能看的项目里还没有数据集。</p>`;
       if (!D.datasets.some((x) => x.dataset_id === selDs)) selDs = D.datasets[0].dataset_id;
       // 选择数据集 → 运行清洗；下面是每个数据集的清洗记录（点一行也能选中）
