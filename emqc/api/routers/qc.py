@@ -16,6 +16,8 @@ from emqc.qc.workflow import WORKFLOW_STAGE, topology as workflow_topology
 
 from ..serializers import event_to_dict, finding_to_dict, metric_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict
 
+from emqc.qc.verdicts import set_verdict, not_false_positive
+from fastapi import Request
 from .auth import require_reviewer
 
 router = APIRouter(prefix="/api/v1/qc", tags=["qc"])
@@ -225,6 +227,33 @@ def run_graph(s: Session, run: QCRun) -> dict:
         out_groups.append({"z_start": z0, "z_end": z1, "ingest": ingest_node, "tiles": tiles})
     return {"run_id": run.id, "dataset_id": run.dataset_id, "status": run.status, "stage": run.stage, "stages": STAGE_ORDER, "groups": out_groups,
             "n_events": len(events), "n_warn": sum(1 for e in events if e.level == "warn"), "n_error": sum(1 for e in events if e.level == "error")}
+
+
+class VerdictIn(BaseModel):
+    block_id: str
+    z: int
+    failure_type: str
+    verdict: str | None = None  # confirmed | false_positive；null = 撤销
+
+
+@router.post("/runs/{run_id}/verdicts")
+def post_verdict(run_id: int, body: VerdictIn, request: Request, user=Depends(require_reviewer), s: Session = Depends(get_session)):
+    """人对一条问题下判断：确认是问题 / 误报（null 撤销）。误报会让这片切片按通过算，可用比例、导出、数据包都跟着变。
+    返回改完以后的这片切片、这次运行，以及总览页顶部的几个数字。"""
+    try:
+        out = set_verdict(s, run_id, body.block_id, body.z, body.failure_type, body.verdict,
+                          by_user=getattr(user, "username", None), by_name=getattr(user, "display_name", None) or getattr(user, "username", None))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    s.commit()
+    k = pipeline_dashboard(days=0, dataset_id=None, s=s)["kpi"]
+    out["kpi"] = {"retention": k["retention"], "n_problems": k["n_problems"], "n_sections": k["n_sections"]}
+    from .dashboard import SERIAL_TYPES  # 流程图角标：这次运行切片检查 / 序列检查各剩几条问题（不算误报）
+    own = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id == run_id, not_false_positive()).group_by(QCFinding.failure_type)).all()
+    out["step_counts"] = {"slice_qc": sum(n for t, n in own if t not in SERIAL_TYPES), "serial_qc": sum(n for t, n in own if t in SERIAL_TYPES)}
+    return out
 
 
 @router.get("/runs/{run_id}/graph")
@@ -546,7 +575,8 @@ def pipeline_dashboard(days: int = 0, dataset_id: str | None = None, s: Session 
         m = dsm.get(d.latest_run_id, {})
         datasets.append({"dataset_id": d.dataset_id, "run_id": d.latest_run_id, "retention": d.latest_retention_rate, "grade": d.latest_grade,
                          "block_grades": grades, "n_sections": m.get("n_slices_input"), "n_bad": bad.get(d.latest_run_id, 0)})
-    fq = select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest or [-1]), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.failure_type)
+    fq = (select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest or [-1]), QCFinding.severity.in_(["high", "critical"]), not_false_positive())
+          .group_by(QCFinding.failure_type))  # 人标为误报的不算问题
     failures = sorted(({"type": t, "zh": FAILURE_ZH.get(t, t), "n": n} for t, n in s.execute(fq).all()), key=lambda x: -x["n"])
     checks: dict[str, dict] = {}
     for chk, sev, n in s.execute(select(QCFinding.check_name, QCFinding.severity, func.count()).where(QCFinding.run_id.in_(latest or [-1])).group_by(QCFinding.check_name, QCFinding.severity)):

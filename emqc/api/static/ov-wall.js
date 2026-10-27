@@ -71,7 +71,8 @@
   const plane = wall.querySelector(".ov-wall-plane");
   const scroller = document.getElementById("ov-wall-scroll");
   const sThumb = scroller && scroller.querySelector(".ov-wall-scroll-thumb");
-  const maxStart = Math.max(0, cols.length - SHOW);
+  // vis：现在显示的行（点流程图节点时只留这一步的问题类型）
+  let vis = cols.slice(), maxStart = Math.max(0, vis.length - SHOW);
   let start = 0, quietUntil = 0;
   function follow(ms) {  // 平面在动的这段时间里，分类名跟着投影位置走
     const t0 = performance.now();
@@ -81,23 +82,24 @@
   function setStart(s, instant) {
     s = Math.max(0, Math.min(maxStart, s));
     const changed = s !== start; start = s;
-    const row = cols[0] ? cols[0].col : null;
+    const row = (vis[0] || cols[0] || {}).col || null;  // 量行高要用看得见的行（筛掉的行 display: none，高度是 0）
     const unit = row ? row.offsetHeight + parseFloat(getComputedStyle(plane).rowGap || 22) : 190;
     if (instant) plane.style.transition = "none";
-    plane.style.setProperty("--shift", `${(cols.length - SHOW - start) * unit}px`);
+    plane.style.setProperty("--shift", `${Math.max(0, vis.length - SHOW - start) * unit}px`);
     if (instant) { plane.offsetHeight; plane.style.transition = ""; }
-    cols.forEach((c, i) => {
-      const out = i < start || i >= start + SHOW;
+    cols.forEach((c) => {
+      const i = vis.indexOf(c), out = i < 0 || i < start || i >= start + SHOW;
       c.col.classList.toggle("is-out", out);
       c.col.querySelectorAll(".ov-wall-card").forEach((b) => { if (!b.hasAttribute("aria-hidden")) b.tabIndex = out ? -1 : 0; });
     });
-    wall.querySelectorAll(".ov-wall-label").forEach((lb) => { const i = +lb.dataset.row; lb.classList.toggle("is-out", i < start || i >= start + SHOW); });
+    wall.querySelectorAll(".ov-wall-label").forEach((lb) => { const i = vis.indexOf(cols[+lb.dataset.row]); lb.classList.toggle("is-out", i < 0 || i < start || i >= start + SHOW); });
+    if (scroller) scroller.hidden = vis.length <= SHOW;
     if (sThumb) {
-      const h = scroller.clientHeight, th = Math.max(24, (h * SHOW) / cols.length);
+      const h = scroller.clientHeight, th = Math.max(24, (h * SHOW) / Math.max(1, vis.length));
       sThumb.style.height = `${th}px`;
       sThumb.style.top = `${maxStart ? (start / maxStart) * (h - th) : 0}px`;
       scroller.setAttribute("aria-valuemin", "0"); scroller.setAttribute("aria-valuemax", String(maxStart)); scroller.setAttribute("aria-valuenow", String(start));
-      scroller.setAttribute("aria-valuetext", `第 ${start + 1}–${Math.min(cols.length, start + SHOW)} 类，共 ${cols.length} 类`);
+      scroller.setAttribute("aria-valuetext", `第 ${start + 1}–${Math.min(vis.length, start + SHOW)} 类，共 ${vis.length} 类`);
     }
     if (instant) placeLabels(); else if (changed) follow(reduce ? 50 : 620);
   }
@@ -160,7 +162,17 @@
       <div class="ov-focus-frame"></div>
       <div class="ov-focus-side">
         <div class="ov-focus-bar" role="slider" aria-orientation="vertical" tabindex="0"><span class="ov-focus-thumb"></span></div>
-        <div class="ov-focus-cap"><p class="ov-focus-title"></p><p class="ov-focus-desc"></p></div>
+        <div class="ov-focus-cap"><p class="ov-focus-title"></p><p class="ov-focus-desc"></p>
+          <div class="ov-verdict">
+            <p class="ov-verdict-meta"></p>
+            <div class="ov-verdict-acts">
+              <button type="button" class="ok" data-v="confirmed" aria-pressed="false"><span>✓ 确认是问题</span><kbd>Y</kbd></button>
+              <button type="button" class="fp" data-v="false_positive" aria-pressed="false"><span>✕ 标为误报（这张能用）</span><kbd>N</kbd></button>
+              <a class="open" href="#"><span>↗ 在详细页打开</span><kbd>O</kbd></a>
+            </div>
+            <p class="ov-verdict-eff" role="status" aria-live="polite"></p>
+          </div>
+        </div>
       </div>
     </div>`;
   layer.hidden = true;
@@ -169,6 +181,8 @@
   const bar = layer.querySelector(".ov-focus-bar"), thumb = layer.querySelector(".ov-focus-thumb");
   const title = layer.querySelector(".ov-focus-title"), desc = layer.querySelector(".ov-focus-desc");
   const pad = (n, w) => String(n).padStart(w, "0");
+  const vMeta = layer.querySelector(".ov-verdict-meta"), vEff = layer.querySelector(".ov-verdict-eff"), vOpen = layer.querySelector(".ov-verdict-acts .open");
+  const vBtns = [...layer.querySelectorAll(".ov-verdict-acts button")];
 
   // 画面上看得见的那一张（同一张图在胶片上有好几份）
   function visibleCard(c, k) {
@@ -191,7 +205,7 @@
     const maxW = mobile ? innerWidth - 40 : Math.min(620, innerWidth * 0.5), maxH = Math.min(560, innerHeight * 0.66);
     let w = maxW, h = w / ar;
     if (h > maxH) { h = maxH; w = h * ar; }
-    const sideW = mobile ? 0 : 6 + 16 + 208 + 18;  // 浏览条 + 说明
+    const sideW = mobile ? 0 : 6 + 16 + 240 + 18;  // 浏览条 + 说明
     const cy = Math.min(Math.max(wr.top + wr.height / 2, h / 2 + 24), innerHeight - h / 2 - (mobile ? 110 : 24));
     const cx = wr.left + wr.width / 2;
     return { w, h, x: Math.round(cx - (w + sideW) / 2), y: Math.round(cy - h / 2) };
@@ -214,6 +228,12 @@
     thumb.style.top = `${n > 1 ? (k / (n - 1)) * (bar.clientHeight - th) : 0}px`;
     bar.setAttribute("aria-valuemin", "1"); bar.setAttribute("aria-valuemax", String(n)); bar.setAttribute("aria-valuenow", String(k + 1));
     bar.setAttribute("aria-valuetext", `${c.data.zh} 第 ${k + 1} 张，共 ${n} 张`);
+    const it = c.data.items[k];
+    vMeta.textContent = `${it.dataset_id} · ${it.block_id} · z ${it.z} · 运行 #${it.run_id}`;
+    vBtns.forEach((b) => b.setAttribute("aria-pressed", String(it.v === b.dataset.v)));
+    vOpen.href = it.href;
+    if (!focus.keepEff) vEff.textContent = "";
+    focus.keepEff = false;
   }
 
   function hold(c, k) {
@@ -343,6 +363,9 @@
     else if (e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); go(focus.k - 1); }
     else if (e.key === "Home") { e.preventDefault(); go(0); }
     else if (e.key === "End") { e.preventDefault(); go(focus.c.data.items.length - 1); }
+    else if (e.key === "y" || e.key === "Y") { e.preventDefault(); judge("confirmed"); }
+    else if (e.key === "n" || e.key === "N") { e.preventDefault(); judge("false_positive"); }
+    else if (e.key === "o" || e.key === "O") { e.preventDefault(); location.href = vOpen.href; }
   });
   addEventListener("resize", () => { if (focus) close(); });
   addEventListener("scroll", () => { if (focus && !focus.closing) { const L = layout(frame.querySelector("img")); place(L); } }, { passive: true });
@@ -392,4 +415,73 @@
     const dy = e.changedTouches[0].clientY - ty; ty = null;
     if (Math.abs(dy) > 40) go(focus.k + (dy < 0 ? 1 : -1));
   });
+  // ------------------------------------------------------------------ 人工判断：确认是问题 / 误报（POST /api/v1/qc/runs/{id}/verdicts）
+  // 误报 → 这片切片按通过算：可用比例、问题记录、流程图角标、导出数据包当场跟着变（数字都是接口算好返回的）
+  const pctTxt = (x) => (x == null ? "–" : `${(x * 100).toFixed(1)}%`);
+  function markCards(c, k, v) {
+    c.reel.querySelectorAll(`.ov-wall-card[data-k="${k}"]`).forEach((el) => { if (v) el.dataset.v = v; else delete el.dataset.v; });
+  }
+  let busy = false;
+  async function judge(v) {
+    if (!focus || focus.closing || busy) return;
+    const { c, k } = focus, it = c.data.items[k];
+    const next = it.v === v ? null : v;  // 再点一次同一个 = 撤销
+    busy = true; vBtns.forEach((b) => (b.disabled = true));
+    try {
+      const r = await fetch(`/api/v1/qc/runs/${it.run_id}/verdicts`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ block_id: it.block_id, z: it.z, failure_type: c.data.type, verdict: next }) });
+      if (r.status === 401 || r.status === 403) { vEff.textContent = "需要审核员权限才能标注。"; return; }
+      if (!r.ok) { vEff.textContent = "没有保存成功，稍后再试。"; return; }
+      const d = await r.json();
+      const before = window.OvKpi ? window.OvKpi.get() : null;
+      it.v = next; markCards(c, k, next);
+      vBtns.forEach((b) => b.setAttribute("aria-pressed", String(it.v === b.dataset.v)));
+      if (window.OvKpi) window.OvKpi.set(d.kpi);
+      if (window.OvGraph && d.step_counts) window.OvGraph.badges(d.step_counts);
+      if (window.OvPack) window.OvPack.refresh(it.dataset_id);
+      vEff.replaceChildren();
+      const line = (txt, a, b) => { const s = document.createElement("span"); s.append(txt + " "); const x = document.createElement("b"); x.textContent = a === b ? a : `${a} → ${b}`; s.append(x); vEff.append(s, document.createElement("br")); };
+      vEff.append(next === "false_positive" ? (d.slice_passed ? "已标为误报，这张切片按可用算：" : "已标为误报（这张还有别的问题，仍不可用）：") : next === "confirmed" ? "已确认是问题：" : "已撤销判断：", document.createElement("br"));
+      if (before) {
+        line("可用比例", pctTxt(before.retention), pctTxt(d.kpi.retention));
+        line("问题记录", String(before.n_problems), String(d.kpi.n_problems));
+      }
+      line(`运行 #${d.run_id} 可用率`, pctTxt(d.run_retention), pctTxt(d.run_retention));
+      focus.keepEff = true;
+    } catch { vEff.textContent = "网络出错，没有保存。"; }
+    finally { busy = false; vBtns.forEach((b) => (b.disabled = false)); }
+  }
+  vBtns.forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); judge(b.dataset.v); }));
+  for (const c of cols) c.data.items.forEach((it, k) => { if (it.v) markCards(c, k, it.v); });
+
+  // ------------------------------------------------------------------ 按流程图的一步筛选（overview.js 点节点时调）
+  const chip = document.getElementById("ov-wall-filter");
+  let empty = null;
+  function filter(step, title) {
+    if (focus) close();
+    vis = step ? cols.filter((c) => c.data.step === step) : cols.slice();
+    maxStart = Math.max(0, vis.length - SHOW);
+    cols.forEach((c, i) => {
+      const hide = !vis.includes(c);
+      c.col.classList.toggle("is-hidden", hide);
+      wall.querySelectorAll(`.ov-wall-label[data-row="${i}"]`).forEach((lb) => lb.classList.toggle("is-hidden", hide));
+    });
+    if (!vis.length && step) {
+      if (!empty) { empty = document.createElement("p"); empty.className = "ov-wall-empty"; wall.append(empty); }
+      empty.textContent = `这次运行里，「${title}」没有带截图的问题。`; empty.hidden = false;
+    } else if (empty) empty.hidden = true;
+    if (chip) {
+      chip.hidden = !step;
+      if (step) {
+        const n = vis.reduce((a, c) => a + c.data.n, 0);
+        chip.querySelector("[data-t]").textContent = title;
+        chip.querySelector("[data-n]").textContent = `${vis.length} 类 · ${n} 张截图`;
+      }
+    }
+    plane.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: reduce ? 1 : 420, easing: EASE });
+    setStart(0, true);
+    return { types: vis.length, shots: vis.reduce((a, c) => a + c.data.n, 0) };
+  }
+  if (chip) chip.querySelector("button").addEventListener("click", () => { filter(null); document.dispatchEvent(new CustomEvent("ov-wall-filter", { detail: null })); });
+  window.OvWall = { filter, steps: () => new Set(cols.map((c) => c.data.step)) };
 })();

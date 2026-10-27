@@ -207,11 +207,47 @@
     }
     acts[i].focus({ preventScroll: true });
   }
-  // 单击流程图里的块：这个块变绿（一直保持，直到点别的块），同时右边跳到这一步
+  // 单击流程图里的块：这个块变绿（一直保持，直到点别的块），同时右边跳到这一步；
+  // 「切片检查」「序列检查」还会把下面的问题切片筛成这一步查出来的问题，流程图底部出现一个跳过去的链接
+  const STEP_ZH = { slice_qc: "切片检查", serial_qc: "序列检查" };
+  const gJump = $("ov-graph-jump");
   for (const n of nodes) n.addEventListener("click", () => {
     for (const x of nodes) x.classList.toggle("is-sel", x === n);
     jumpTo(n.dataset.node);
+    const step = STEP_ZH[n.dataset.node] ? n.dataset.node : null;
+    if (!window.OvWall) return;
+    const r = window.OvWall.filter(step, STEP_ZH[step]);
+    if (gJump) {
+      gJump.hidden = !step;
+      if (step) gJump.textContent = r.types ? `↓ 看「${STEP_ZH[step]}」查出的 ${r.shots} 张问题截图` : `「${STEP_ZH[step]}」这次没有带截图的问题`;
+    }
   });
+  document.addEventListener("ov-wall-filter", () => { for (const x of nodes) x.classList.remove("is-sel"); if (gJump) gJump.hidden = true; });
+
+  // 节点右上角的小标：这一步查出来的问题数（红）、分级结果（琥珀）；人工标误报以后由 ov-wall.js 更新
+  function setBadges(b) {
+    for (const [id, v] of Object.entries(b || {})) {
+      const el = nodes.find((x) => x.dataset.node === id); if (!el) continue;
+      let s = el.querySelector(".ov-badge");
+      if (!s) { s = document.createElement("span"); s.className = "ov-badge" + (id === "aggregate" ? " is-grade" : ""); s.setAttribute("aria-hidden", "true"); el.append(s); }
+      s.textContent = String(v);
+      s.hidden = v === 0 || v === "";
+      el.setAttribute("aria-description", id === "aggregate" ? `tile 等级 ${v}` : `这一步查出 ${v} 条问题`);
+    }
+  }
+  try { setBadges(JSON.parse(($("ov-badges") || {}).textContent || "{}")); } catch {}
+  window.OvGraph = { badges: setBadges };
+  // 顶部的数字：人工判断后由接口返回新值，闪一下
+  const kpiEl = (k) => document.querySelector(`[data-kpi="${k}"]`);
+  window.OvKpi = {
+    get: () => ({ retention: parseFloat((kpiEl("retention") || {}).textContent) / 100 || null, n_problems: parseInt((kpiEl("n_problems") || {}).textContent, 10) || 0 }),
+    set(k) {
+      if (!k) return;
+      const put = (key, txt) => { const el = kpiEl(key); if (!el || el.textContent === txt) return; el.textContent = txt; el.classList.remove("ov-kpi-flash"); void el.offsetWidth; el.classList.add("ov-kpi-flash"); };
+      put("retention", k.retention == null ? "–" : `${(k.retention * 100).toFixed(1)}%`);
+      put("n_problems", String(k.n_problems));
+    },
+  };
 
   // 触屏没有悬停：点一下这一行切换景深（再点一次恢复）；点别处恢复。鼠标设备用 CSS :hover，键盘用 :focus-visible
   const finePointer = matchMedia("(hover: hover) and (pointer: fine)");
@@ -267,6 +303,8 @@
     live = true;
     const runLink = $("ov-run-id"), ds = $("ov-run-ds"), status = $("ov-run-status");
     if (runLink) { runLink.textContent = `#${runId}`; runLink.href = `/runs/${runId}`; }
+    const h = $("run-h"); if (h) h.textContent = "正在运行";
+    document.querySelectorAll("#run .ov-chip.is-run").forEach((c) => c.remove());   // 刚才在回看旧运行：现在看的是新的这一次
     if (ds) ds.textContent = datasetId;
     if (status) { status.textContent = "运行中"; status.className = "inline-flex h-6 items-center rounded-full bg-[#2a2a2a] px-2.5 text-[12px] text-neutral-200"; }
     const run = $("run");

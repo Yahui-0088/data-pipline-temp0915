@@ -16,6 +16,7 @@ from emqc.db.base import get_session
 from emqc.db.models import AgentTrace, Block, Dataset, ETLMetric, ExportJob, QCBlock, QCFinding, QCRun, QCSlice, ServeLog, StreamSession
 
 from emqc.qc import catalog
+from emqc.qc.verdicts import not_false_positive, verdict_map
 
 from ..serializers import block_to_dict, dataset_to_dict, export_job_to_dict, finding_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict, stream_to_dict, trace_to_dict
 from .auth import current_user, page_user, safe_next
@@ -357,10 +358,13 @@ OVERVIEW_STEPS = [  # (节点 id, 类型, 标题, 说明)
 ]
 
 
-def _overview_ctx(s: Session) -> dict:
+def _overview_ctx(s: Session, run_id: int | None = None) -> dict:
+    """run_id：总览页显示哪一次运行（从运行记录点过来的）；不给 / 找不到就是最新一次。整页（舞台、流程图角标、问题切片、导出数据包）都围绕这一次。"""
     d = pipeline_dashboard(days=0, dataset_id=None, s=s)
     kpi, runs = d["kpi"], d["runs"]
-    latest = max(runs, key=lambda r: (r.get("finished_at") or "", r["run_id"])) if runs else None
+    newest = max(runs, key=lambda r: (r.get("finished_at") or "", r["run_id"])) if runs else None
+    latest = next((r for r in runs if r["run_id"] == run_id), None) or newest
+    is_latest = latest is newest
     pct = lambda x: "–" if x is None else f"{x * 100:.1f}%"
     secs = lambda x: "–" if x is None else (f"{x:.2f} s" if x < 10 else f"{x:.1f} s")
     st = (latest or {}).get("stages") or {}
@@ -368,7 +372,7 @@ def _overview_ctx(s: Session) -> dict:
     n_tiles = sum(((latest or {}).get("grades") or {}).values())
     fails = d["failures"]
     # 这次运行自己的问题，按类型拆成「单张切片」和「相邻切片之间」两组（和落库写入的条数对得上）
-    own = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id == latest["run_id"]).group_by(QCFinding.failure_type).order_by(func.count().desc())).all() if latest else []
+    own = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id == latest["run_id"], not_false_positive()).group_by(QCFinding.failure_type).order_by(func.count().desc())).all() if latest else []
     own_f = [{"type": ft, "zh": FAILURE_ZH.get(ft, ft), "n": n} for ft, n in own]
     slice_f = [f for f in own_f if f["type"] not in SERIAL_TYPES]
     serial_f = [f for f in own_f if f["type"] in SERIAL_TYPES]
@@ -399,7 +403,7 @@ def _overview_ctx(s: Session) -> dict:
     finding = []  # 标题下面的几点：这次运行最要紧的结论（能不能用、问题出在哪），一行一点
     if latest:
         top = max(fails, key=lambda f: f["n"])["zh"] if fails else None
-        finding = [f"最新运行 #{latest['run_id']}（{latest['dataset_id']}）",
+        finding = [f"{'最新运行' if is_latest else '运行'} #{latest['run_id']}（{latest['dataset_id']}）",
                    f"{pct(latest.get('retention'))} 的切片可用于训练"]
         if ds_grade:
             finding.append(f"数据集等级 {ds_grade}")
@@ -420,21 +424,28 @@ def _overview_ctx(s: Session) -> dict:
             stage.append({"id": nid, "title": title, "desc": desc, "s": round(secs_of[nid], 2), "at": round(acc, 2), "p": round(acc / total, 4),
                           "rows": items[nid]})  # 这一步的结果：跑完以后列在进度条下面
     datasets = [x for (x,) in s.execute(select(Dataset.dataset_id).order_by(Dataset.dataset_id)).all()]
-    # 问题图片墙：每个数据集最新一次运行里、真实存下来的问题截图，按问题类型分行（问题多的类型在上，最多 6 行、每行最多 40 张）
+    # 问题图片墙：这一次运行里真实存下来的问题截图，按问题类型分行（问题多的在上，最多 12 行、每行最多 40 张）。
+    # 每行标上它属于流程图的哪一步（切片检查 / 序列检查），点流程图节点时按这个筛选；每张带上人已经下过的判断（确认 / 误报）。
     wall = []
-    latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None))
-    rows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
-                            QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
-                     .where(QCFinding.run_id.in_(latest_ids), QCFinding.preview_path.is_not(None))
-                     .order_by(QCFinding.dataset_id, QCFinding.z, QCFinding.block_id)).all()
-    by_type: dict[str, list] = {}
-    for it in _viewer_items(rows, limit=5000):
-        by_type.setdefault(it["type"], []).append(it)
-    for ft, its in sorted(by_type.items(), key=lambda kv: -len(kv[1]))[:6]:
-        wall.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "n": len(its),
-                     "items": [{"url": i["url"], "z": i["z"], "dataset_id": i["dataset_id"], "href": i["href"]} for i in its[:40]]})
+    if latest:
+        rows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
+                                QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
+                         .where(QCFinding.run_id == latest["run_id"], QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None))  # 只要切片（整块的问题不在这里判）
+                         .order_by(QCFinding.z, QCFinding.block_id)).all()
+        vmap = verdict_map(s, latest["run_id"])
+        by_type: dict[str, list] = {}
+        for it in _viewer_items(rows, limit=5000):
+            by_type.setdefault(it["type"], []).append(it)
+        for ft, its in sorted(by_type.items(), key=lambda kv: -len(kv[1]))[:12]:
+            wall.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "n": len(its), "step": "serial_qc" if ft in SERIAL_TYPES else "slice_qc",
+                         "items": [{"url": i["url"], "z": i["z"], "dataset_id": i["dataset_id"], "block_id": i["block_id"], "run_id": i["run_id"],
+                                    "href": i["href"], "v": vmap.get((i["block_id"], i["z"], ft))} for i in its[:40]]})
+    # 流程图节点右上角的小标：这一步查出来的问题数（和舞台上这一步的结果是同一个数）、分级结果
+    badges = {"slice_qc": sum(f["n"] for f in slice_f), "serial_qc": sum(f["n"] for f in serial_f)} if latest else {}
+    if latest and grades:
+        badges["aggregate"] = " ".join(f"{g}{grades[g]}" for g in sorted(grades))
     return {
-        "stage": stage, "datasets": datasets, "wall": wall,
+        "stage": stage, "datasets": datasets, "wall": wall, "badges": badges, "is_latest": is_latest, "newest": newest,
         "kpi": kpi, "latest": latest, "steps": steps, "finding": finding, "node_time": node_time, "n_tiles": n_tiles, "ds_grade": ds_grade,
         "runs": sorted(runs, key=lambda r: r["run_id"], reverse=True)[:8], "delivery": d["delivery"],
         # 运行记录图：最近 24 次运行，按时间从旧到新
@@ -446,8 +457,8 @@ def _overview_ctx(s: Session) -> dict:
 
 
 @router.get("/overview", response_class=HTMLResponse)
-def overview_page(request: Request, s: Session = Depends(get_session)):
-    return _render("overview.html", request, active="overview", fail_meta={"zh": FAILURE_ZH, "serial": sorted(SERIAL_TYPES)}, **_overview_ctx(s))
+def overview_page(request: Request, run: int | None = None, s: Session = Depends(get_session)):
+    return _render("overview.html", request, active="overview", fail_meta={"zh": FAILURE_ZH, "serial": sorted(SERIAL_TYPES)}, **_overview_ctx(s, run))
 
 
 @router.get("/overview/classic", response_class=HTMLResponse)

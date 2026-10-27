@@ -56,16 +56,16 @@
   {% set k = kpi %}
   <dl class="ov-card mt-4 grid grid-cols-2 md:grid-cols-5">
     {% set cells = [
-        ("可用比例", pct(k.retention), "", True),
-        ("数据集", k.n_datasets, "", False),
-        ("已检查切片", (k.n_sections or 0)|int, "", False),
-        ("问题记录", k.n_problems or 0, "条", False),
-        ("吞吐", "%.1f"|format(k.sections_per_s) if k.sections_per_s else "–", "张/秒", False)] %}
-    {% for label, value, unit, lead in cells %}
+        ("可用比例", pct(k.retention), "", True, "retention"),
+        ("数据集", k.n_datasets, "", False, ""),
+        ("已检查切片", (k.n_sections or 0)|int, "", False, ""),
+        ("问题记录", k.n_problems or 0, "条", False, "n_problems"),
+        ("吞吐", "%.1f"|format(k.sections_per_s) if k.sections_per_s else "–", "张/秒", False, "")] %}
+    {% for label, value, unit, lead, key in cells %}
     {# 手机两列：第一格占满一行；桌面五列：竖线分隔。所有分隔线都是同一个颜色 #}
     <div class="border-line px-5 py-4 {{ 'col-span-2 border-b md:col-span-1 md:border-b-0' if lead else '' }} {{ 'border-r' if (not lead and loop.index is even) else '' }} {{ 'border-b md:border-b-0' if loop.index in (2, 3) else '' }} {{ 'md:border-r' if loop.index < 5 else 'md:border-r-0' }}">
       <dt class="text-[13px] text-neutral-400">{{ label }}</dt>
-      <dd class="mt-1 {{ 'text-[30px]' if lead else 'text-[24px]' }} font-semibold leading-9 tabular-nums text-white">{{ value }}{% if unit %}<span class="ml-1 text-[13px] font-normal text-neutral-400">{{ unit }}</span>{% endif %}</dd>
+      <dd class="mt-1 {{ 'text-[30px]' if lead else 'text-[24px]' }} font-semibold leading-9 tabular-nums text-white"><span{% if key %} data-kpi="{{ key }}"{% endif %}>{{ value }}</span>{% if unit %}<span class="ml-1 text-[13px] font-normal text-neutral-400">{{ unit }}</span>{% endif %}</dd>
     </div>
     {% endfor %}
   </dl>
@@ -76,9 +76,10 @@
   <div class="ov-stage-pin">
     <div class="flex h-full flex-col px-4 lg:px-6">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pb-4 pt-6">
-        <h2 id="run-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">最新运行</h2>
+        <h2 id="run-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">{{ '最新运行' if is_latest else '运行 #' ~ latest.run_id }}</h2>
         {% if latest %}
-        <a id="ov-run-id" href="/runs/{{ latest.run_id }}" class="font-mono text-[13px] text-neutral-300 hover:text-white">#{{ latest.run_id }}</a>
+        {% if not is_latest %}<span class="ov-chip is-run">从运行记录切过来 · {{ (latest.finished_at or '')[5:16]|replace('T', ' ') }}<a class="x" href="/overview#run">回到最新 ↺</a></span>{% endif %}
+        <a id="ov-run-id" href="/runs/{{ latest.run_id }}" class="font-mono text-[13px] text-neutral-300 hover:text-white" title="打开这次运行的详细页">{{ '#' ~ latest.run_id if is_latest else '详细页 ↗' }}</a>
         <span id="ov-run-ds" class="text-neutral-300">{{ latest.dataset_id }}</span>
         <span id="ov-run-status" class="ov-pill-ok">完成</span>
         {% endif %}
@@ -92,6 +93,8 @@
           <div id="ov-graph-fit" class="origin-top">
             {% include "_overview_graph.html" %}
           </div>
+          <script type="application/json" id="ov-badges">{{ badges|tojson }}</script>
+          <a id="ov-graph-jump" class="ov-graph-jump" href="#ov-wall-section" hidden></a>
           <div class="ov-flow-legend" aria-hidden="true"><span class="k-call">调用</span><span class="k-answer">返回</span><span class="k-wait">等待用户</span><span class="k-fail">失败</span></div>
         </div>
 
@@ -136,6 +139,7 @@
 <section id="ov-wall-section" aria-labelledby="wall-h" class="mx-auto mt-20 max-w-[1200px] px-6">
   <div class="flex flex-wrap items-baseline justify-between gap-2">
     <h2 id="wall-h" class="text-[30px] font-bold tracking-[-0.02em] text-white">问题切片</h2>
+    <span id="ov-wall-filter" class="ov-chip mr-auto ml-4 self-center" hidden>来自流程图：<b data-t></b><span data-n></span><button type="button" aria-label="取消筛选，显示全部问题类型">✕</button></span>
   </div>
   <div class="ov-wall-box mt-5" id="ov-wall-box">
   <div class="ov-wall" id="ov-wall">
@@ -229,7 +233,7 @@
       <a href="/pipeline" class="ov-link">全部运行 →</a>
     </div>
     {# 运行记录图：三块共用一条横轴（每次运行），可用比例 / 问题数 / 用时各一块；悬停十字线 + 提示，点击进运行详情（ov-runs.js） #}
-    <div class="ov-card mt-5 px-4 pb-4 pt-5 sm:px-6" id="rc">
+    <div class="ov-card mt-5 px-4 pb-4 pt-5 sm:px-6" id="rc" data-sel="{{ latest.run_id if latest else '' }}" data-newest="{{ newest.run_id if newest else '' }}">
       {% if run_series %}
       <div class="rc-tabs" role="tablist" aria-label="看哪一项">
         <button type="button" role="tab" data-m="keep" aria-selected="true">可用率</button><button type="button" role="tab" data-m="f" aria-selected="false">问题数</button><button type="button" role="tab" data-m="s" aria-selected="false">用时</button>

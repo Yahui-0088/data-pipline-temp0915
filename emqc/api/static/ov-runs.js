@@ -1,5 +1,6 @@
 // 总览页「运行记录」：一张折线图，横轴是完成时间（按真实时间间隔），纵轴可切换 可用率 / 问题数 / 用时。
-// 只有折线是淡紫色；悬停：最近的那次运行出提示框 + 一条虚线落到横轴；下面「回放运行」按时间顺序一次一次走过去。
+// 只有折线是淡紫色；悬停：最近的那次运行出提示框（和同一数据集上一次的对比）+ 一条虚线落到横轴；点一次运行 = 整页切到那一次；
+// 下面「回放运行」按时间顺序一次一次走过去。
 (() => {
   "use strict";
   const host = document.getElementById("rc-chart");
@@ -25,6 +26,11 @@
     const top = nice(Math.max(...D.map((d) => M[k].val(d) || 0)) * 1.15);
     M[k].max = () => top; M[k].step = top / 5;
   }
+  // 页面现在显示的是哪一次运行（总览页 ?run=）；点图上的点 = 整页切到那一次
+  const SEL = +(document.getElementById("rc").dataset.sel || 0), NEWEST = +(document.getElementById("rc").dataset.newest || 0);
+  const goRun = (i) => { const id = D[i].id; location.href = id === NEWEST ? "/overview#run" : `/overview?run=${id}#run`; };
+  // 同一个数据集里的上一次运行（对比用）
+  const prevOf = (i) => { for (let j = i - 1; j >= 0; j--) if (D[j].ds === D[i].ds) return D[j]; return null; };
   let metric = "keep", hover = -1, svg = null, G = null, cur = D.map((d) => M.keep.val(d)), tween = 0;
 
   const tip = document.createElement("div");
@@ -66,7 +72,7 @@
     el("text", { x: W - R, y: H - 4, class: "rc-xtitle", "text-anchor": "end" }, svg).textContent = "完成时间";
     G.drop = el("line", { class: "rc-drop", x1: -9, x2: -9, y1: 0, y2: H - B }, svg);
     G.line = el("path", { class: "rc-line" }, svg);
-    G.dots = D.map(() => el("circle", { r: 5, class: "rc-dot" }, svg));
+    G.dots = D.map((d) => el("circle", { r: 5, class: d.id === SEL ? "rc-dot is-sel" : "rc-dot" }, svg));
     G.hit = el("rect", { x: L, y: T - 10, width: W - L - R, height: H - T - B + 10, class: "rc-hit" }, svg);
     draw(cur);
     const near = (clientX) => {
@@ -75,10 +81,10 @@
     };
     G.hit.addEventListener("pointermove", (e) => { stopPlay(); setHover(near(e.clientX)); });
     G.hit.addEventListener("pointerleave", () => { if (!playing) setHover(-1); });
-    G.hit.addEventListener("click", (e) => { location.href = `/runs/${D[near(e.clientX)].id}`; });
+    G.hit.addEventListener("click", (e) => goRun(near(e.clientX)));
     svg.addEventListener("keydown", (e) => {
       if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); stopPlay(); setHover(Math.max(0, Math.min(D.length - 1, (hover < 0 ? D.length - 1 : hover) + (e.key === "ArrowRight" ? 1 : -1)))); }
-      else if (e.key === "Enter" && hover >= 0) location.href = `/runs/${D[hover].id}`;
+      else if (e.key === "Enter" && hover >= 0) goRun(hover);
       else if (e.key === "Escape") setHover(-1);
     });
     const h = hover; hover = -1; if (h >= 0) setHover(h);
@@ -132,6 +138,25 @@
       const a = document.createElement("span"); a.textContent = k; const b = document.createElement("b"); b.textContent = v;
       row.append(a, b); tip.append(row);
     }
+    // 和同一个数据集的上一次比：变好绿色、变差红色
+    const p = prevOf(i);
+    if (p) {
+      const c = document.createElement("div"); c.className = "rc-tip-cmp";
+      const t = document.createElement("div"); t.className = "rc-tip-sub"; t.textContent = `对比上一次 #${p.id}`; c.append(t);
+      const diff = (k, v, better, fmt) => {
+        const row = document.createElement("div"); row.className = "rc-tip-r";
+        const a = document.createElement("span"); a.textContent = k; const b = document.createElement("b");
+        if (v == null || Math.abs(v) < 1e-9) { b.textContent = "持平"; } else { b.textContent = fmt(v); b.className = (v > 0) === better ? "up" : "down"; }
+        row.append(a, b); c.append(row);
+      };
+      diff("可用率", d.keep != null && p.keep != null ? (d.keep - p.keep) * 100 : null, true, (v) => `${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(1)} 个点`);
+      diff("问题记录", d.f - p.f, false, (v) => `${v > 0 ? "+" : "−"}${Math.abs(v)}`);
+      diff("用时", d.s != null && p.s != null ? d.s - p.s : null, false, (v) => `${v > 0 ? "+" : "−"}${secs(Math.abs(v))}`);
+      tip.append(c);
+    }
+    const hint = document.createElement("div"); hint.className = "rc-tip-hint";
+    hint.textContent = d.id === SEL ? "页面现在显示的就是这一次" : "点击：整页切到这一次运行";
+    tip.append(hint);
     tip.hidden = false;
     placeHover();
     setPlayHead(i);

@@ -173,7 +173,7 @@
 .ov-focus-thumb { position: absolute; left: -2px; right: -2px; border-radius: 6px; background: #C9B8F0; box-shadow: 0 0 10px rgba(201, 184, 240, 0.45); cursor: grab;
   transition: top 380ms var(--ease-out); }
 .ov-focus-thumb.is-drag { cursor: grabbing; transition: none; }
-.ov-focus-cap { align-self: flex-end; width: 13rem; padding-bottom: 4px; }
+.ov-focus-cap { align-self: flex-end; width: 15rem; padding-bottom: 4px; }
 .ov-focus-title { margin: 0; color: #fff; font-size: 17px; font-weight: 600; white-space: nowrap; }
 .ov-focus-title b { margin-left: 2px; font: 500 14px/1 theme("fontFamily.mono"); color: #C9B8F0; font-variant-numeric: tabular-nums; }
 .ov-focus-desc { margin: 8px 0 0; color: #a3a3a3; font-size: 13px; line-height: 1.6; }
@@ -321,6 +321,10 @@
 .rc-line { fill: none; stroke: #C9B8F0; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 5px rgba(201, 184, 240, 0.45)); }
 .rc-dot { fill: #111111; stroke: #e5e5e5; stroke-width: 2; transform-box: fill-box; transform-origin: center; transition: transform 200ms var(--ease-out), stroke 200ms ease, opacity 200ms ease; }
 .rc-svg.has-hover .rc-dot:not(.on) { opacity: 0.55; }
+/* 页面现在显示的那一次运行：紫色实心 + 一圈光 */
+.rc-dot.is-sel { fill: #a78bfa; stroke: #fff; transform: scale(1.3); filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.9)); }
+.rc-svg.has-hover .rc-dot.is-sel { opacity: 1; }
+.rc-hit { cursor: pointer; }
 .rc-dot.on { transform: scale(1.45); stroke: #fff; fill: #fff; filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8)); }
 .rc-drop { stroke: rgba(255, 255, 255, 0.45); stroke-width: 1; stroke-dasharray: 4 4; pointer-events: none; }
 .rc-hit { fill: transparent; cursor: pointer; }
@@ -335,6 +339,11 @@
 .rc-tip-sub { margin: 2px 0 6px; color: #8a8a8a; white-space: nowrap; }
 .rc-tip-r { display: flex; justify-content: space-between; gap: 18px; line-height: 20px; }
 .rc-tip-r b { font-weight: 500; color: #fff; font-variant-numeric: tabular-nums; }
+.rc-tip-r b.up { color: #7be3a9; }
+.rc-tip-r b.down { color: #ff8b98; }
+.rc-tip-cmp { margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.rc-tip-cmp .rc-tip-sub { margin: 0 0 2px; }
+.rc-tip-hint { margin-top: 8px; color: #b9a7f0; font-size: 12px; white-space: nowrap; }
 /* 回放运行 */
 .rc-play { display: flex; align-items: center; gap: 14px; margin-top: 10px; padding: 10px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07); }
 .rc-play-btn { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; color: #fff; cursor: pointer;
@@ -659,3 +668,46 @@ select.dl-in { cursor: pointer; }
 .ov-flow-legend .k-wait::before { background: linear-gradient(90deg, transparent, #f0b44c); }
 .ov-flow-legend .k-fail::before { background: linear-gradient(90deg, transparent, #ff6b7d); }
 @media (prefers-reduced-motion: reduce) { .ov-node.is-pulse, .ov-diamond.is-pulse { animation: none; } }
+
+/* ---------- 功能联动：流程图角标 / 问题墙筛选 / 正在看哪一次运行 / 问题判断 ---------- */
+.ov-badge { position: absolute; top: -9px; right: -9px; z-index: 5; min-width: 22px; height: 20px; padding: 0 6px; border-radius: 999px; pointer-events: none;
+  background: #ff6b7d; color: #fff; font: 600 11px/20px theme("fontFamily.mono"); text-align: center; box-shadow: 0 0 0 2px #111; font-variant-numeric: tabular-nums; }
+.ov-badge.is-grade { background: #f0b44c; color: #1a1200; }
+.ov-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-radius: 999px; font-size: 14px; font-weight: 500; letter-spacing: 0;
+  border: 1px solid rgba(63, 192, 122, 0.55); background: rgba(63, 192, 122, 0.12); color: #9ff0c4; vertical-align: middle; }
+.ov-chip b { color: #fff; font-weight: 600; }
+.ov-chip button, .ov-chip a.x { all: unset; cursor: pointer; padding: 0 6px; border-radius: 999px; color: #9a9a9a; line-height: 20px; }
+.ov-chip button:hover, .ov-chip a.x:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.ov-chip button:focus-visible, .ov-chip a.x:focus-visible { outline: 2px solid #9ff0c4; }
+.ov-chip.is-run { border-color: rgba(124, 92, 255, 0.5); background: rgba(124, 92, 255, 0.12); color: #d9d1ff; }
+.ov-chip.is-run a.x { color: #a9a0d6; }
+.ov-wall-row.is-hidden, .ov-wall-label.is-hidden { display: none; }
+.ov-wall-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #8a8a8a; font-size: 14px; z-index: 3; }
+/* 判断过的截图：误报变暗 + 绿标，确认 = 红点 */
+.ov-wall-card[data-v]::after { content: ""; position: absolute; top: 8px; right: 8px; width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6); }
+.ov-wall-card[data-v="confirmed"]::after { background: #ff6b7d; }
+.ov-wall-card[data-v="false_positive"]::after { background: #3fc07a; }
+.ov-wall-card[data-v="false_positive"] img { opacity: 0.45; }
+.ov-verdict { margin-top: 14px; }
+.ov-verdict-meta { font: 12px/1.6 theme("fontFamily.mono"); color: #9a9a9a; word-break: break-all; }
+.ov-verdict-acts { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.ov-verdict-acts button, .ov-verdict-acts a { all: unset; box-sizing: border-box; display: flex; justify-content: space-between; align-items: center; gap: 12px; cursor: pointer;
+  padding: 8px 12px; border-radius: 10px; font-size: 13.5px; border: 1px solid rgba(255, 255, 255, 0.14); color: #e8e8e8; background: rgba(255, 255, 255, 0.04);
+  transition: background 150ms ease, border-color 150ms ease; }
+.ov-verdict-acts button:hover, .ov-verdict-acts a:hover { background: rgba(255, 255, 255, 0.08); }
+.ov-verdict-acts button:focus-visible, .ov-verdict-acts a:focus-visible { outline: 2px solid #b9a7f0; outline-offset: 1px; }
+.ov-verdict-acts kbd { font: 11px theme("fontFamily.mono"); color: #777; }
+.ov-verdict-acts .ok[aria-pressed="true"] { border-color: rgba(255, 107, 125, 0.6); background: rgba(255, 107, 125, 0.14); color: #ffb3bd; }
+.ov-verdict-acts .fp[aria-pressed="true"] { border-color: rgba(63, 192, 122, 0.6); background: rgba(63, 192, 122, 0.14); color: #9ff0c4; }
+.ov-verdict-acts button[disabled] { opacity: 0.5; cursor: progress; }
+.ov-verdict-eff { margin-top: 12px; padding: 9px 11px; border-radius: 10px; background: rgba(124, 92, 255, 0.12); border: 1px solid rgba(124, 92, 255, 0.35);
+  font-size: 12.5px; line-height: 1.7; color: #cfc4ff; }
+.ov-verdict-eff b { color: #fff; font-weight: 600; }
+.ov-verdict-eff:empty { display: none; }
+/* KPI 数字被人工判断改动时，闪一下 */
+.ov-kpi-flash { animation: ov-kpi-flash 1.2s ease-out; }
+@keyframes ov-kpi-flash { 0% { color: #9ff0c4; text-shadow: 0 0 12px rgba(63, 192, 122, 0.8); } 100% { color: #fff; text-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .ov-kpi-flash { animation: none; } }
+.ov-graph-jump { position: absolute; left: 16px; top: 14px; z-index: 6; white-space: nowrap; padding: 7px 14px; border-radius: 999px;
+  font-size: 13px; color: #9ff0c4; background: rgba(17, 17, 17, 0.9); border: 1px solid rgba(63, 192, 122, 0.5); box-shadow: 0 0 16px rgba(63, 192, 122, 0.18); }
+.ov-graph-jump:hover { background: rgba(63, 192, 122, 0.16); color: #fff; }

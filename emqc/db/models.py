@@ -278,6 +278,27 @@ class QCFinding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class FindingVerdict(Base):
+    """人对一条 QC 问题的判断：确认是问题 / 误报。键 = 运行 + 数据块 + z + 问题类型（同一片同一类问题在这次运行里只判一次）。
+    标为误报会改这片切片的 passed（见 emqc/qc/verdicts.py），之后导出、数据包、可用比例都按改过的算；
+    slice_was_passed 记下第一次下判断前这片原来的结果，撤销 / 改判时据此还原。"""
+
+    __tablename__ = "qc_finding_verdicts"
+    __table_args__ = (UniqueConstraint("run_id", "block_id", "z", "failure_type", name="uq_finding_verdict"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("qc_runs.id", ondelete="CASCADE"), index=True)
+    dataset_id: Mapped[str] = mapped_column(String(128), index=True)
+    block_id: Mapped[str] = mapped_column(String(64), index=True)
+    z: Mapped[int] = mapped_column(Integer)
+    failure_type: Mapped[str] = mapped_column(String(64))
+    verdict: Mapped[str] = mapped_column(String(16))  # confirmed | false_positive
+    slice_was_passed: Mapped[bool | None] = mapped_column(Boolean)
+    by_user: Mapped[str | None] = mapped_column(String(32))
+    by_name: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class ETLMetric(Base):
     """ETL indicators per run / block / stage (retention rate, counts, durations, bytes)."""
 

@@ -93,7 +93,7 @@
   }
 
   // ------------------------------------------------------------------ 数据
-  async function load() {
+  async function load(keepSel) {
     const ds = st.ds;
     if (!cache.has(ds)) {
       setBusy(true);
@@ -109,7 +109,7 @@
     if (ds !== st.ds) return;
     st.plan = cache.get(ds);
     // 默认勾选：数据包的默认组合里能做的那几格
-    st.sel = new Set((st.plan.params.cells || []).filter(([t, l]) => (cell(t, l) || {}).ready).map(([t, l]) => key(t, l)));
+    if (!keepSel) st.sel = new Set((st.plan.params.cells || []).filter(([t, l]) => (cell(t, l) || {}).ready).map(([t, l]) => key(t, l)));
     setBusy(false);
     render();
   }
@@ -255,4 +255,6 @@
   texture();
   render();
   load();
+  // 问题切片里标了误报 / 确认：这个数据集的统计重新取一次（数量会变），保留现在勾选的格子
+  window.OvPack = { refresh(ds) { cache.delete(ds); if (ds === st.ds) load(true); } };
 })();
