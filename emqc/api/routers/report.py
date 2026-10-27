@@ -164,3 +164,81 @@ def report_thumb(finding_id: int, request: Request, s: Session = Depends(get_ses
     if root not in p.parents or not p.is_file():
         raise HTTPException(404, "没有这张图")
     return FileResponse(p, headers={"Cache-Control": "private, max-age=3600"})
+
+
+# ----------------------------------------------------------------------------- 汇报页的数据流程图（/report）
+@router.get("/flow")
+def report_flow(request: Request, s: Session = Depends(get_session)):
+    """/report 流程图要的全部真实数据：采集 → 数据集 → 清洗 → 问题图片 / 合格 → 汇总分级 → 2D / 3D 段 / 3D patch → 数据包 → 交付。
+    只看这个账号能看的项目（汇报账号 = 分配给它的项目）。数字都来自平台已有的表，不做任何估算。"""
+    from emqc.api.routers.crawl import PRESETS
+    from emqc.db.models import CrawlJob, QCSlice
+    from emqc.qc import catalog
+    from emqc.qc.verdicts import not_false_positive
+
+    from .dashboard import FAILURE_ZH, SERIAL_TYPES
+    from .qc import pipeline_dashboard
+
+    base = report_data(request, None, 8, s)
+    dss, _, _ = _scoped_datasets(request, s, None)
+    ids = [d.dataset_id for d in dss] or ["\x00"]
+
+    # 最新一次完成的运行（流程图中间那一段就讲它）
+    run = s.scalars(select(QCRun).where(QCRun.dataset_id.in_(ids), QCRun.status == "done").order_by(QCRun.finished_at.desc(), QCRun.id.desc())).first()
+    runs_all = [r for r in pipeline_dashboard(days=0, dataset_id=None, s=s)["runs"] if r["dataset_id"] in ids]
+    latest = None
+    if run:
+        info = next((r for r in runs_all if r["run_id"] == run.id), {})
+        n_slices = s.scalar(select(func.count()).select_from(QCSlice).where(QCSlice.run_id == run.id)) or 0
+        n_passed = s.scalar(select(func.count()).select_from(QCSlice).where(QCSlice.run_id == run.id, QCSlice.passed.is_(True))) or 0
+        n_unread = s.scalar(select(func.count()).select_from(QCSlice).where(QCSlice.run_id == run.id, QCSlice.status != "ok")) or 0
+        hi = dict(s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id == run.id, QCFinding.severity.in_(["high", "critical"]), not_false_positive())
+                            .group_by(QCFinding.failure_type)).all())
+        n_find = s.scalar(select(func.count()).select_from(QCFinding).where(QCFinding.run_id == run.id, not_false_positive())) or 0
+        n_shots = s.scalar(select(func.count()).select_from(QCFinding).where(QCFinding.run_id == run.id, QCFinding.preview_path.is_not(None))) or 0
+        latest = {"run_id": run.id, "dataset_id": run.dataset_id, "finished_at": run.finished_at.isoformat(timespec="minutes") if run.finished_at else None,
+                  "n_slices": n_slices, "n_passed": n_passed, "n_failed": n_slices - n_passed, "n_unreadable": n_unread, "retention": run.retention_rate,
+                  "quality": run.quality_score, "grades": run.grade_counts_json or {}, "n_findings": n_find, "n_shots": n_shots, "n_blocks": run.n_blocks,
+                  "failures": sorted(({"type": t, "zh": FAILURE_ZH.get(t, t), "n": n, "step": "serial_qc" if t in SERIAL_TYPES else "slice_qc"} for t, n in hi.items()), key=lambda x: -x["n"]),
+                  "stages": info.get("stages") or {}, "wall_s": info.get("wall_s")}
+
+    # 数据包：最新那次运行的数据集，能做哪些格子、各多少样本（不写任何东西）
+    plan = None
+    if run:
+        from emqc.patches.pack import plan_pack
+
+        try:
+            p = plan_pack(s, s.get(Dataset, run.dataset_id), {})
+            plan = {"dataset_id": p["dataset_id"], "tasks": p["tasks"], "levels": p["levels"],
+                    "cells": [{k: c.get(k) for k in ("task", "level", "applicable", "ready", "reason", "n", "est_bytes")} for c in p["cells"]]}
+        except Exception as e:  # 数据集文件不在了之类：流程图照样画，只是这一格说明原因
+            plan = {"dataset_id": run.dataset_id, "error": f"{type(e).__name__}: {e}"}
+
+    exports = list(s.scalars(select(ExportJob).where(ExportJob.dataset_id.in_(ids)).order_by(ExportJob.id.desc()).limit(12)))
+    streams = list(s.scalars(select(StreamSession).where(StreamSession.dataset_id.in_(ids)).order_by(StreamSession.id.desc()).limit(12)))
+    iso = lambda t: t.isoformat(timespec="minutes") if t else None
+    crawl_jobs = list(s.scalars(select(CrawlJob).where(CrawlJob.dataset_id.in_(ids)).order_by(CrawlJob.id.desc()).limit(8)))
+    checks = [{"name": c["name"], "level": c["level"], "zh": FAILURE_ZH.get(c["failure_type"], c["failure_type"]), "description": c["description"]} for c in catalog()]
+    n_err = s.scalar(select(func.count()).select_from(QCRun).where(QCRun.dataset_id.in_(ids), QCRun.status == "error")) or 0
+    return {
+        "kpi": base["kpi"], "datasets": base["datasets"], "failures": base["failures"], "examples": base["examples"], "delivery": base["delivery"],
+        "latest": latest, "plan": plan, "checks": checks,
+        "runs": [{"run_id": r["run_id"], "dataset_id": r["dataset_id"], "finished_at": r.get("finished_at"), "retention": r.get("retention"),
+                  "n_findings": r.get("n_findings"), "wall_s": r.get("wall_s")} for r in sorted(runs_all, key=lambda r: r["run_id"], reverse=True)[:10]],
+        "n_runs": len(runs_all), "n_runs_error": n_err,
+        "crawl": {"presets": [{"key": k, "label": v["label"], "url": v["em"]["url"], "mip": v["em"]["mip"], "note": v["em"].get("note"), "seg_url": (v.get("seg") or {}).get("url")}
+                              for k, v in PRESETS.items()],
+                  "jobs": [{"id": j.id, "dataset_id": j.dataset_id, "status": j.status, "n_done": j.n_done, "n_sections": j.n_sections, "at": iso(j.finished_at or j.created_at)} for j in crawl_jobs]},
+        "exports": [{"id": j.id, "dataset_id": j.dataset_id, "kind": "pack" if (j.params_json or {}).get("kind") == "pack" else "shards", "status": j.status,
+                     "n_sections": j.n_sections, "n_bytes": j.n_bytes, "at": iso(j.finished_at or j.created_at)} for j in exports],
+        "streams": [{"id": x.id, "dataset_id": x.dataset_id, "status": x.status, "n_items": x.n_items, "n_acked": x.n_acked, "n_bytes": x.n_bytes, "at": iso(x.created_at)} for x in streams],
+    }
+
+
+@router.get("/active")
+def report_active(request: Request, s: Session = Depends(get_session)):
+    """正在跑的清洗（流程图上的线据此流光）。只看能看的项目。"""
+    dss, _, _ = _scoped_datasets(request, s, None)
+    ids = [d.dataset_id for d in dss] or ["\x00"]
+    rs = list(s.scalars(select(QCRun).where(QCRun.dataset_id.in_(ids), QCRun.status.in_(["queued", "running"])).order_by(QCRun.id)))
+    return {"runs": [{"run_id": r.id, "dataset_id": r.dataset_id, "status": r.status, "stage": r.stage, "n_blocks": r.n_blocks, "n_blocks_done": r.n_blocks_done} for r in rs]}

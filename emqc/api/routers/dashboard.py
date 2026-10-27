@@ -503,8 +503,17 @@ def delivery_classic_page(request: Request, dataset: str | None = None, s: Sessi
 
 
 @router.get("/report", response_class=HTMLResponse)
+def report_flow_page(request: Request):
+    """汇报工作区的落地页：整条数据流程图（采集 → 数据集 → 清洗 → 汇总分级 → 数据包 → 交付），点一个节点在右侧打开操作台。
+    数据走 /api/v1/report/flow（按账号的项目范围过滤）。汇报账号只看不操作：操作台里不出现会改数据的按钮。"""
+    user = current_user(request)
+    can_act = settings.auth_disabled or (user is not None and user.role in ("reviewer", "admin"))
+    return _render("report_flow.html", request, active="report", can_act=can_act)
+
+
+@router.get("/report/galaxy", response_class=HTMLResponse)
 def galaxy_page(request: Request):
-    """汇报工作区的落地页：数据星球（3D 粒子星球，每片区域一个数据集，绿 = 已处理，灰 = 未处理；可用手势控制视角）。
+    """数据星球（3D 粒子星球，每片区域一个数据集，绿 = 已处理，灰 = 未处理）。原来的汇报落地页，现在挪到这里。
     数据走 /api/v1/report/data（同样按账号的项目范围过滤）。"""
     return _render("galaxy.html", request, active="report")
 

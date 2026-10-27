@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Galaxy</title>
+<link rel="stylesheet" href="/static/report-flow/flow.css?v={{ static_v('report-flow/flow.css') }}">
+</head>
+<body>
+{# 汇报落地页：整条数据流程图。画布（#world）按 1920×1080 的设计坐标画，按视口缩放；点一个节点 → 这个节点放大、整张图缩到左边，右侧滑出操作台。
+   数字全部来自 /api/v1/report/flow；正在跑清洗时（/api/v1/report/active）流程线上有流光。 #}
+<div id="rf" class="rf" data-can-act="{{ 'true' if can_act else 'false' }}">
+  <div id="rf-view" class="rf-view">
+    <div id="rf-world" class="rf-world">
+      <svg id="rf-svg" class="rf-svg" width="1920" height="1080" viewBox="0 0 1920 1080" aria-hidden="true"></svg>
+      <div id="rf-nodes" class="rf-nodes"></div>
+    </div>
+    <header class="rf-head">
+      <div class="rf-title">DATA GALAXY</div>
+      <div class="rf-sub">Interactive Dataset Explorer</div>
+    </header>
+    <div class="rf-tools">
+      <a class="rf-link" href="/report/summary">汇报详情 ↗</a>
+      <a class="rf-link" href="/report/galaxy">数据星球 ↗</a>
+      {% if can_act %}<a class="rf-link" href="/overview">总览 ↗</a>{% endif %}
+    </div>
+    <div id="rf-run" class="rf-run" role="status" aria-live="polite" hidden></div>
+    <div id="rf-hud" class="rf-hud" aria-label="画布缩放">
+      <span class="rf-hint">滚轮缩放 · 拖动平移 · 双击复位 · Esc 退出</span>
+      <button type="button" data-z="-1" aria-label="缩小">−</button><b id="rf-zv">100%</b><button type="button" data-z="1" aria-label="放大">+</button>
+      <button type="button" data-z="0" class="rf-fit">适应屏幕</button>
+    </div>
+    <p id="rf-msg" class="rf-msg" hidden></p>
+  </div>
+  <aside id="rf-panel" class="rf-panel" aria-label="操作台" aria-hidden="true">
+    <button type="button" id="rf-close" class="rf-x" aria-label="关闭操作台">✕</button>
+    <div id="rf-body" class="rf-body"></div>
+    <nav class="rf-nav" aria-label="切换节点">
+      <button type="button" id="rf-prev" class="rf-nv rf-pv"><i aria-hidden="true">←</i><span><small>上一节点</small><b></b></span></button>
+      <button type="button" id="rf-next" class="rf-nv rf-nx"><span><small>下一节点</small><b></b></span><i aria-hidden="true">→</i></button>
+    </nav>
+  </aside>
+</div>
+<script src="/static/report-flow/flow.js?v={{ static_v('report-flow/flow.js') }}" defer></script>
+</body>
+</html>

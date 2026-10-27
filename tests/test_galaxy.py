@@ -13,7 +13,7 @@ def test_galaxy_routes(registered):
     from emqc.api.app import app
 
     c = TestClient(app)
-    page = c.get("/report")
+    page = c.get("/report/galaxy")   # 数据星球挪到这里；/report 现在是数据流程图（test_report_flow.py）
     assert page.status_code == 200 and "DATA GALAXY" in page.text and "importmap" in page.text
     assert "three@0.160.0" in page.text and "/static/galaxy/app.js" in page.text
     assert c.get("/report/summary").status_code == 200

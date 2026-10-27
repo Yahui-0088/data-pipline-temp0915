@@ -57,6 +57,9 @@ def test_reporter_only_sees_report_of_its_projects(app, registered):
         assert page.status_code == 200 and "导出 PDF" in page.text and "/pipeline" not in page.text   # 没有通往平台其他页面的链接
         galaxy = c.get("/report")
         assert galaxy.status_code == 200 and "DATA GALAXY" in galaxy.text and "/report/summary" in galaxy.text and "/overview" not in galaxy.text
+        assert 'data-can-act="false"' in galaxy.text and c.get("/report/galaxy").status_code == 200   # 流程图只看不操作；数据星球还在
+        flow = c.get("/api/v1/report/flow").json()
+        assert [x["dataset_id"] for x in flow["datasets"]] == [registered] and c.get("/api/v1/report/active").status_code == 200
         d = c.get("/api/v1/report/data").json()
         assert d["limited"] and d["projects"] == [proj]
         assert [x["dataset_id"] for x in d["datasets"]] == [registered]
