@@ -300,7 +300,7 @@
       const cfg = CAN ? `<div class="box form"><h4>清洗设置</h4>
           <label>数据集</label>${sel}
           <label class="hint"><span class="lt">block 范围</span><span class="ht">留空 = 全部；填 block id，逗号分隔</span></label><input id="cl-blocks" placeholder="z00000-00099_y00000_x00000, …" spellcheck="false">
-          <label class="hint"><span class="lt">检查项</span><span class="ht">全不选 = 全部</span><span class="hk"><a href="#" data-chk="1">全选</a> · <a href="#" data-chk="0">清空</a></span></label>
+          <label class="hint"><span class="lt">检查项</span><span class="ht">全不选 = 全选</span></label>
           <div class="chks">${D.checks.map((c) => `<label class="${c.implemented === false ? "stub" : ""}"><input type="checkbox" name="cl-chk" value="${esc(c.name)}"><code>${esc(c.name)}</code><span>${esc(c.zh)}</span><em>${c.level === "slice" ? "切片" : "序列"}${c.implemented === false ? " · 未实现" : ""}</em></label>`).join("")}</div>
           <div class="acts one"><button type="button" class="p" data-act="run-cl">运行清洗 →</button></div><div id="cl-msg"></div></div>` : `<div class="box form"><label>数据集</label>${sel}</div>`;
       // 清洗记录：所选数据集的每一次运行
