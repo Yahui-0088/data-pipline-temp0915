@@ -133,28 +133,42 @@
     // 汇总分级 → 三种形态 → 格式 → 数据包
     const S = node("grade", 800, 560, 200, `汇总 · 分级<small>${L ? gradeTxt(L.grades) : "–"}</small>`, "dark", "汇总分级");
     path([[G.r + 2, 820], [640, 820], [640, 560], [S.l - 6, 560]], { stage: 3 });
-    const FX = 1090, CX2 = 1290, BX = 1430;
+    const FX = 1090, DX = 1720;
+    // 数据包：三种形态各一张图（2D 切片叠 / 3D 连续段 / 3D patch），点哪张都打开「训练数据包」操作台
+    // 三张图的「主体」（那一叠切片）一样宽：按每张图里主体占的比例反推整张图的宽度；主体左边对齐到同一条竖线
+    const BODY = 176, L0 = 1222;
+    const PK = { slice: ["pack_slice.png", 428 / 520, 5 / 520, 514 / 520], segment: ["pack_segment.png", 330 / 520, 12 / 520, 441 / 520], patch: ["pack_patch.png", 394 / 600, 0, 486 / 600] };
     for (const [lv, y] of [["slice", 300], ["segment", 560], ["patch", 820]]) {
       path(y === 560 ? [[S.r + 2, 560], [FX - 106, 560]] : [[S.r + 2, 560], [945, 560], [945, y], [FX - 106, y]], { stage: 4 });
       icon(FX, y - 62, ICONS[lv]);
       const n = rawN(lv);
       node(lv, FX, y, 200, `${LEVEL_ZH[lv]}<small>${n == null ? "–" : num(n) + (lv === "slice" ? " 张" : lv === "segment" ? " 段" : " 个")}</small>`, "", LEVEL_ZH[lv]);
-      node(null, CX2, y, 120, "npy / png", "chip");
-      path([[FX + 102, y], [CX2 - 64, y]], { r: 0, stage: 5 });
-      path([[CX2 + 62, y], [BX - 4, y]], { r: 0, stage: 6 });
+      const [src, ratio, f0, fw] = PK[lv], w = BODY / fw, h = w * ratio, left = L0 - w * f0;
+      const im = document.createElement("img");
+      im.src = "/static/report-flow/" + src; im.alt = ""; im.className = "holo pk"; im.draggable = false;
+      for (const [a, v] of Object.entries(nodeAttrs("pack", "数据包"))) im.setAttribute(a, v);
+      Object.assign(im.style, { left: left + "px", top: y - h / 2 + "px", width: w + "px", height: h + "px" });
+      host.append(im);
+      path([[FX + 102, y], [L0 - 4, y]], { r: 0, stage: 5 });
     }
-    const bar = add("div", "bar", BX, 240, `<div>数据包<small>train / val / test</small></div>`, nodeAttrs("pack", "数据包"));
-    Object.assign(bar.style, { width: "130px", height: "640px" });
-    // 交付
-    const dv = holo("delivery", 1720, 300, 240, "/static/report-flow/stack_block.png", 391 / 520, [[.0017, .5556], [.457, .9978], [.9975, .6656]], "DELIVERY", "数据交付", "#7ff0b8");
-    path([[BX + 132, 300], [1720 - 126, 300]], { stage: 7 });
-    const T = node("export", 1720, 560, 240, `训练导出<small>${num(dl.n_shard_jobs)} 次 · ${num(dl.shard_sections)} 张 · ${mb(dl.shard_bytes)}</small>`, "teal", "训练导出");
-    path([[1720, dv.b + 70], [1720, T.t - 4]], { r: 0, stage: 8 });
+    label(L0 + BODY / 2, 170, "数据包 · train / val / test", "top");
+    // 大括号把三种数据包括起来，尖端 → 训练导出 / 推理流
+    const bx = 1446, bw = 14, bt = 300, bb = 820, bm = 560;   // 和左边那条分叉竖线一样高：从第一行到第三行
+    const br = document.createElementNS(NS, "path");
+    br.setAttribute("d", `M ${bx} ${bt} Q ${bx + bw} ${bt} ${bx + bw} ${bt + bw} L ${bx + bw} ${bm - bw} Q ${bx + bw} ${bm} ${bx + 2 * bw} ${bm} Q ${bx + bw} ${bm} ${bx + bw} ${bm + bw} L ${bx + bw} ${bb - bw} Q ${bx + bw} ${bb} ${bx} ${bb}`);
+    br.setAttribute("class", "brace"); svg.append(br);
+    const tip = bx + 2 * bw;
+    // 交付：右上角 API 文档（点开 = 数据交付操作台），下面训练导出、推理流
+    const api = add("div", "n apidoc", DX, 300, `<i class="holes" aria-hidden="true"></i><b>API 文档</b><code>POST /api/v1/exports</code><code>POST /api/v1/streams</code><code>GET&nbsp; /api/v1/packs</code>`, nodeAttrs("delivery", "数据交付 · API 文档"));
+    const A2 = box(api);
+    const T = node("export", DX, 560, 240, `训练导出<small>${num(dl.n_shard_jobs)} 次 · ${num(dl.shard_sections)} 张 · ${mb(dl.shard_bytes)}</small>`, "teal", "训练导出");
+    path([[DX, A2.b + 6], [DX, T.t - 4]], { r: 0, stage: 7 });
     const nOpen = D.streams.filter((x) => x.status === "open").length;
-    const R = node("stream", 1720, 820, 240, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
-    path([[BX + 132, 820], [R.l - 4, 820]], { stage: 7 }); label(1720, 760, "逐块读取 · 不落地", "top");
-    add("div", "factory", 1720, 128, `Patch Factory Backup<span>运行 ${num(D.n_runs)} 次 · 检查 ${D.checks.length} 项 · API 文档</span>`, nodeAttrs("factory", "Patch Factory Backup"));
-    path([[1720, 156], [1720, 196]], { r: 0, c: "#9a9da6", m: "ahw" });
+    const R = node("stream", DX, 820, 240, `推理流<small>${num(dl.n_streams)} 个 · ${num(dl.stream_chunks)} 块 · ${nOpen} 个传输中</small>`, "", "推理流");
+    path([[tip + 2, bm], [T.l - 6, bm]], { r: 0, stage: 6 });
+    path([[tip + 2, bm], [1530, bm], [1530, 820], [R.l - 6, 820]], { r: 30, stage: 6 }); label(DX, 760, "逐块读取 · 不落地", "top");
+    add("div", "factory", DX, 128, `Patch Factory Backup<span>运行 ${num(D.n_runs)} 次 · 检查 ${D.checks.length} 项 · API 文档</span>`, nodeAttrs("factory", "Patch Factory Backup"));
+    path([[DX, 156], [DX, A2.t - 4]], { r: 0, c: "#9a9da6", m: "ahw" });
     makeComets();
     if (openId) mark(openId);
     showLive();
@@ -162,7 +176,7 @@
 
   // ------------------------------------------------------------------ 流光：按数据流的先后一段接一段走到底
   let comets = [], playing = false, raf = 0, t0 = 0, introLeft = 0;   // 打开页面不放流光，只在清洗运行时放
-  const SEG_MS = 900, N_STAGE = 9, GAP = 2;      // 一段 0.9 s，走完 9 段停一下再来
+  const SEG_MS = 900, N_STAGE = 8, GAP = 2;      // 一段 0.9 s，走完 8 段停一下再来
   function makeComets() {
     comets = FLOWS.map(({ p, c, stage }) => {
       const q = p.cloneNode(); q.removeAttribute("marker-end"); q.removeAttribute("stroke-dasharray");
