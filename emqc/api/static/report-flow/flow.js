@@ -334,7 +334,7 @@
       const runs = (D.recent_runs || []).length ? `<div class="box"><h4>最近运行</h4><div class="tscroll"><table class="tb"><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th>quality</th><th>留存率</th><th>开始</th></tr>${D.recent_runs.map((r) =>
           `<tr><td class="m">${CAN ? `<a href="/runs/${r.run_id}">#${r.run_id}</a>` : "#" + r.run_id}</td><td>${esc(r.dataset_id)}</td><td><span class="st ${r.status === "done" ? "ok2" : r.status === "error" ? "bad" : ""}">${esc(r.status)}</span></td>
            <td class="m">${Object.entries(r.grades || {}).sort().map(([g, n]) => `${g}×${n}`).join(" ") || "–"}</td><td class="m">${r.quality == null ? "–" : r.quality.toFixed(3)}</td><td class="m">${r.retention == null ? "–" : Math.round(r.retention * 100) + "%"}</td><td class="m">${esc((r.started_at || "").replace("T", " "))}</td></tr>`).join("")}</table></div></div>` : "";
-      return top + stats + pick + runs;
+      return top + stats + runs;
     },
     clean() {
       const top = head("", "数据清洗", `${D.checks.length} 项检查`);
