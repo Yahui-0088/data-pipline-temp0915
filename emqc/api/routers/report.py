@@ -166,6 +166,47 @@ def report_thumb(finding_id: int, request: Request, s: Session = Depends(get_ses
     return FileResponse(p, headers={"Cache-Control": "private, max-age=3600"})
 
 
+@router.get("/issues.zip")
+def report_issues_zip(request: Request, s: Session = Depends(get_session)):
+    """问题图片打包下载：各数据集最近一次运行里 high / critical、有截图、没被标成误报的切片问题，
+    每类问题一个文件夹（「中文名_类型」），文件名带数据集、z、block、严重度。只含这个账号能看的项目。"""
+    import io
+    import re
+    import zipfile
+
+    from fastapi.responses import Response
+
+    from emqc.qc.verdicts import not_false_positive
+
+    from .dashboard import FAILURE_ZH
+
+    dss, _, _ = _scoped_datasets(request, s, None)
+    lat = [d.latest_run_id for d in dss if d.latest_run_id] or [-1]
+    rows = s.scalars(select(QCFinding).where(QCFinding.run_id.in_(lat), QCFinding.severity.in_(["high", "critical"]), QCFinding.preview_path.is_not(None),
+                                             QCFinding.z.is_not(None), not_false_positive())
+                     .order_by(QCFinding.failure_type, QCFinding.dataset_id, QCFinding.z, QCFinding.id))
+    root = Path(settings.preview_dir).resolve()
+    safe = lambda x: re.sub(r'[\\/:*?"<>|\s]+', "_", str(x)).strip("_") or "_"
+    buf, seen, n = io.BytesIO(), set(), 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:      # 截图本身已压缩，直接存
+        for f in rows:
+            p = Path(f.preview_path).resolve()
+            if root not in p.parents or not p.is_file():
+                continue
+            folder = safe(f"{FAILURE_ZH.get(f.failure_type, f.failure_type)}_{f.failure_type}")
+            name = safe(f"{f.dataset_id}_z{f.z:05d}_{f.block_id or ''}_{f.severity}_{f.id}") + (p.suffix or ".png")
+            if (folder, name) in seen:
+                continue
+            seen.add((folder, name)); n += 1
+            zf.write(p, f"问题图片/{folder}/{name}")
+        if not n:
+            zf.writestr("问题图片/说明.txt", "最近一次清洗没有留下 high / critical 的问题截图。\n")
+    stamp = _now().strftime("%Y%m%d-%H%M")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename=\"issues-{stamp}.zip\"",
+                             "Cache-Control": "no-store"})
+
+
 # ----------------------------------------------------------------------------- 汇报页的数据流程图（/report）
 @router.get("/flow")
 def report_flow(request: Request, s: Session = Depends(get_session)):

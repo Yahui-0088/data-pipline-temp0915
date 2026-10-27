@@ -21,3 +21,24 @@ def test_flow_page_and_data(registered, qc_run):
     assert d["plan"] and ("cells" in d["plan"] or "error" in d["plan"])
     assert d["crawl"]["presets"] and all(k in d["delivery"] for k in ("n_shard_jobs", "n_packs", "n_streams"))
     assert c.get("/api/v1/report/active").json() == {"runs": []}
+
+
+def test_issue_albums_and_zip(registered, qc_run):
+    """问题图片：相册数据按类别分组；导出的 zip 每类一个文件夹，张数和相册的条数对得上。"""
+    import io
+    import zipfile
+
+    from emqc.api.app import app
+
+    c = TestClient(app)
+    albums = c.get("/api/v1/report/flow").json()["albums"]
+    r = c.get("/api/v1/report/issues.zip")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert all(n.startswith("问题图片/") for n in names)
+    if albums:
+        folders = {n.split("/")[1] for n in names}
+        assert len(folders) == len(albums)
+        for a in albums:
+            got = [n for n in names if n.split("/")[1].endswith("_" + a["type"])]
+            assert len(got) == a["n"] and len(a["shots"]) <= a["n"]
