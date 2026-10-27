@@ -214,3 +214,37 @@ table.tb { width: 100%; border-collapse: collapse; font-size: 14px; }
 .rf-toast { position: absolute; left: 50%; bottom: 34px; transform: translate(-50%, 12px); z-index: 7; padding: 10px 18px; border-radius: 12px; background: rgba(20,24,22,.92);
   border: 1px solid rgba(63,223,147,.45); color: #c9f5dc; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s; }
 .rf-toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* 问题图片相册：文件夹，悬停时三张图冒出一点 */
+.albums { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 26px 18px; padding-top: 30px; }
+.alb { position: relative; height: 128px; padding: 0; border: 0; background: none; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.alb .fb { position: absolute; inset: 10px 0 0 0; border-radius: 4px 12px 12px 12px; background: #3a2a18; border: 1px solid rgba(255,154,60,.35); }
+.alb .fb::before { content: ""; position: absolute; left: -1px; top: -12px; width: 44%; height: 14px; border-radius: 8px 10px 0 0; background: #3a2a18; border: 1px solid rgba(255,154,60,.35); border-bottom: 0; }
+.alb .pp { position: absolute; left: 14%; top: 16px; width: 72%; height: 92px; object-fit: cover; border-radius: 6px; border: 2px solid #f4efe8; background: #222;
+  box-shadow: 0 4px 14px rgba(0,0,0,.5); transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+.alb .p0 { z-index: 3; } .alb .p1 { z-index: 2; } .alb .p2 { z-index: 1; }
+.alb .ff { position: absolute; left: 0; right: 0; bottom: 0; height: 74px; z-index: 4; display: flex; flex-direction: column; justify-content: flex-end; padding: 10px 12px;
+  border-radius: 10px 10px 12px 12px; background: linear-gradient(180deg, rgba(120,72,30,.9), rgba(70,42,18,.96)); border: 1px solid rgba(255,154,60,.5);
+  transform-origin: bottom; transition: transform .35s cubic-bezier(.2,.8,.2,1); pointer-events: none; }
+.alb .ff b { font-size: 14.5px; color: #ffe6cc; font-weight: 600; }
+.alb .ff em { font-style: normal; font-size: 12.5px; color: #e0b98f; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.alb:hover .p0, .alb:focus-visible .p0 { transform: translate(0, -34px) rotate(-1deg); }
+.alb:hover .p1, .alb:focus-visible .p1 { transform: translate(-16%, -24px) rotate(-9deg); }
+.alb:hover .p2, .alb:focus-visible .p2 { transform: translate(16%, -24px) rotate(8deg); }
+.alb:hover .ff { transform: perspective(500px) rotateX(-12deg); }
+.alb:focus-visible { outline: 2px solid var(--orange); outline-offset: 6px; border-radius: 12px; }
+.alb .pp:hover { border-color: var(--orange); }
+
+/* 大图：屏幕中央，滚轮翻页 */
+.rf-lb { position: fixed; inset: 0; z-index: 100; display: grid; grid-template-columns: 80px 1fr 80px; align-items: center; background: rgba(5,6,8,.88); backdrop-filter: blur(6px);
+  opacity: 0; pointer-events: none; transition: opacity .25s; }
+.rf-lb.on { opacity: 1; pointer-events: auto; }
+.rf-lb figure { grid-column: 2; margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; transform: scale(.96); transition: transform .25s; }
+.rf-lb.on figure { transform: none; }
+.rf-lb img { width: min(74vh, 80vw); height: min(74vh, 80vw); object-fit: contain; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.6); background: #111; image-rendering: auto; }
+.rf-lb figcaption { color: #cfcfcf; font-size: 14px; display: flex; gap: 6px; align-items: baseline; }
+.rf-lb figcaption b { color: #ffcf9e; } .rf-lb figcaption span { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: #a8a8a8; }
+.rf-lb figcaption i { font-style: normal; margin-left: 14px; color: #8a8a8a; font-variant-numeric: tabular-nums; }
+.rf-lb .lb-a { justify-self: center; width: 52px; height: 52px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: #fff; font-size: 30px; line-height: 1; cursor: pointer; }
+.rf-lb .lb-a:disabled { opacity: .2; cursor: default; }
+.rf-lb .lb-x { position: absolute; top: 24px; right: 28px; width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: #fff; font-size: 18px; cursor: pointer; }

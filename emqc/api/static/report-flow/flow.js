@@ -312,11 +312,18 @@
       return top + cfg + rec;
     },
     issues() {
-      const shots = D.examples.flatMap((e) => e.shots.map((s) => ({ ...s, zh: e.zh })));
-      return head("问题图片", "问题图片", "high / critical", "清洗没通过的切片：截图按问题类型归档。合格的切片继续往后走，问题图片单独留着复核。")
+      const A = D.albums || [];
+      // 相册：每类问题一个文件夹；悬停时三张图从夹子里冒出一点；点图 → 屏幕中央大图，滚轮翻前后
+      const albums = A.length ? `<div class="box"><h4>样例图片<small>${A.length} 类 · 点开看大图，滚轮翻页</small></h4><div class="albums">${A.map((a, ai) =>
+        `<button type="button" class="alb" data-alb="${ai}" aria-label="${esc(a.zh)}，${a.shots.length} 张">
+          <span class="fb"></span>
+          ${a.shots.slice(0, 3).map((s, i) => `<img class="pp p${i}" src="${esc(s.src)}" alt="" loading="lazy" data-alb="${ai}" data-i="${i}">`).join("")}
+          <span class="ff"><b>${esc(a.zh)}</b><em>${num(a.shots.length)} 张${a.n > a.shots.length ? ` / ${num(a.n)} 条` : ""}</em></span>
+        </button>`).join("")}</div></div>` : `<div class="box"><h4>样例图片</h4><p class="note">最近一次清洗没有留下问题截图。</p></div>`;
+      return head("", "问题图片", "high / critical")
         + kps([["问题", num(problems()), "o"], ["不可用切片", num(D.latest ? D.latest.n_failed : 0), "y"], ["截图", num(D.latest ? D.latest.n_shots : 0)]])
-        + `<div class="box"><h4>每类多少条<small>每个数据集最近一次</small></h4>${bars(D.failures.slice(0, 8).map((f) => [f.zh, f.n]), "o")}</div>`
-        + (shots.length ? `<div class="box"><h4>样例</h4><div class="shots">${shots.slice(0, 9).map((s) => `<figure><img src="${esc(s.thumb)}" alt="${esc(s.zh)}" loading="lazy"><figcaption><b>${esc(s.zh)}</b> · ${esc(s.dataset_id)} z${s.z}</figcaption></figure>`).join("")}</div></div>` : "")
+        + albums
+        + `<div class="box"><h4>问题统计</h4>${D.failures.length ? bars(D.failures.slice(0, 8).map((f) => [f.zh, f.n]), "o") : "<p class='note'>没有高等级问题。</p>"}</div>`
         + link("/overview#ov-wall-section", "到总览里逐张确认 / 标误报");
     },
     passed() {
@@ -399,6 +406,39 @@
     if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : (d.detail && d.detail.message) || `出错了（${r.status}）`);
     return d;
   }
+  // 大图：屏幕中央显示一张，滚轮 / ← → 翻同一类的前后张，Esc 或点空白关闭
+  let LB = null;
+  function lightbox(ai, i) {
+    const a = (D.albums || [])[ai]; if (!a || !a.shots.length) return;
+    if (!LB) {
+      LB = document.createElement("div"); LB.className = "rf-lb"; LB.setAttribute("role", "dialog"); LB.setAttribute("aria-modal", "true");
+      LB.innerHTML = `<button type="button" class="lb-x" aria-label="关闭">✕</button><button type="button" class="lb-a lb-p" aria-label="上一张">‹</button>
+        <figure><img alt=""><figcaption></figcaption></figure><button type="button" class="lb-a lb-n" aria-label="下一张">›</button>`;
+      document.body.append(LB);
+      LB.addEventListener("click", (e) => {
+        if (e.target.closest(".lb-p")) step(-1); else if (e.target.closest(".lb-n")) step(1); else if (!e.target.closest("img")) closeLb();
+      });
+      let wheelT = 0;
+      LB.addEventListener("wheel", (e) => { e.preventDefault(); const now = Date.now(); if (now - wheelT < 180) return; wheelT = now; step(e.deltaY > 0 || e.deltaX > 0 ? 1 : -1); }, { passive: false });
+    }
+    LB.a = a; LB.i = i; show();
+    requestAnimationFrame(() => LB.classList.add("on"));
+  }
+  function show() {
+    const s = LB.a.shots[LB.i], img = LB.querySelector("img");
+    img.src = s.src; img.alt = `${LB.a.zh} · ${s.dataset_id} z${s.z}`;
+    LB.querySelector("figcaption").innerHTML = `<b>${esc(LB.a.zh)}</b> · ${esc(s.dataset_id)} · z${s.z}${s.block_id ? ` · <span>${esc(s.block_id)}</span>` : ""} · ${esc(s.severity)}<i>${LB.i + 1} / ${LB.a.shots.length}</i>`;
+    LB.querySelector(".lb-p").disabled = LB.i === 0; LB.querySelector(".lb-n").disabled = LB.i === LB.a.shots.length - 1;
+  }
+  const step = (d) => { const j = Math.max(0, Math.min(LB.a.shots.length - 1, LB.i + d)); if (j !== LB.i) { LB.i = j; show(); } };
+  const closeLb = () => LB && LB.classList.remove("on");
+  addEventListener("keydown", (e) => {
+    if (!LB || !LB.classList.contains("on")) return;
+    if (e.key === "Escape") { closeLb(); e.stopImmediatePropagation(); e.preventDefault(); }
+    else if (e.key === "ArrowRight" || e.key === "ArrowDown") { step(1); e.stopImmediatePropagation(); e.preventDefault(); }
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { step(-1); e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
+
   // 启动类操作成功后：收起操作台，只留流程图，左下角短暂提示一句
   let toastT = 0;
   const done = (txt) => {
@@ -410,6 +450,8 @@
   };
   const say = (id, txt, err) => { const el = $(id); if (el) el.innerHTML = `<div class="res ${err ? "err" : ""}">${esc(txt)}</div>`; };
   body.addEventListener("click", async (e) => {
+    const al = e.target.closest("[data-alb]");
+    if (al) { const img = e.target.closest("img[data-i]"); lightbox(+al.dataset.alb, img ? +img.dataset.i : 0); return; }
     const ck = e.target.closest("[data-chk]");
     if (ck) { e.preventDefault(); body.querySelectorAll("input[name=cl-chk]").forEach((c) => { c.checked = ck.dataset.chk === "1"; }); return; }
     const row = e.target.closest("[data-ds]");

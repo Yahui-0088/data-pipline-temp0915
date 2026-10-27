@@ -219,10 +219,29 @@ def report_flow(request: Request, s: Session = Depends(get_session)):
     iso = lambda t: t.isoformat(timespec="minutes") if t else None
     crawl_jobs = list(s.scalars(select(CrawlJob).where(CrawlJob.dataset_id.in_(ids)).order_by(CrawlJob.id.desc()).limit(8)))
     checks = [{"name": c["name"], "level": c["level"], "zh": FAILURE_ZH.get(c["failure_type"], c["failure_type"]), "description": c["description"], "implemented": c["implemented"]} for c in catalog()]
+    # 问题图片相册：每类问题（各数据集最近一次运行，high / critical，不含标为误报的）最多 40 张有截图的切片
+    from .dashboard import FAILURE_ZH as _ZH
+    lat = [d.latest_run_id for d in dss if d.latest_run_id] or [-1]
+    albums = []
+    for t_, n_ in s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(lat), QCFinding.severity.in_(["high", "critical"]),
+                                                                              QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None), not_false_positive())
+                            .group_by(QCFinding.failure_type).order_by(func.count().desc())).all():
+        rows = s.scalars(select(QCFinding).where(QCFinding.run_id.in_(lat), QCFinding.failure_type == t_, QCFinding.severity.in_(["high", "critical"]),
+                                                 QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None), not_false_positive())
+                         .order_by(QCFinding.dataset_id, QCFinding.z, QCFinding.id).limit(400))
+        seen, shots = set(), []
+        for x in rows:
+            if (x.dataset_id, x.z) in seen:
+                continue
+            seen.add((x.dataset_id, x.z))
+            shots.append({"id": x.id, "dataset_id": x.dataset_id, "z": x.z, "block_id": x.block_id, "severity": x.severity, "src": f"/api/v1/report/thumb/{x.id}"})
+            if len(shots) >= 40:
+                break
+        albums.append({"type": t_, "zh": _ZH.get(t_, t_), "n": n_, "shots": shots})
     n_err = s.scalar(select(func.count()).select_from(QCRun).where(QCRun.dataset_id.in_(ids), QCRun.status == "error")) or 0
     return {
         "kpi": base["kpi"], "datasets": base["datasets"], "failures": base["failures"], "examples": base["examples"], "delivery": base["delivery"],
-        "latest": latest, "plan": plan, "checks": checks,
+        "latest": latest, "plan": plan, "checks": checks, "albums": albums,
         "runs": [{"run_id": r["run_id"], "dataset_id": r["dataset_id"], "finished_at": r.get("finished_at"), "retention": r.get("retention"),
                   "n_findings": r.get("n_findings"), "wall_s": r.get("wall_s"), "n_sections": r.get("n_sections"), "grades": r.get("grades") or {}}
                  for r in sorted(runs_all, key=lambda r: r["run_id"], reverse=True)[:300]],
